@@ -1,0 +1,29 @@
+# 依赖
+node_modules/
+.pnp
+.pnp.js
+
+# 构建产物
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# 环境变量与密钥
+.env
+.env.*
+!.env.example
+
+# 日志
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# 测试/覆盖率产物（保留源码，忽略生成物）
+coverage/
