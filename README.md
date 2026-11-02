@@ -99,8 +99,8 @@ dots → mm  : mm   = dots * 25.4 / dpi
 ```bash
 # 后端
 cd backend && npm i && npm run start:dev
-# 前端
-cd frontend && npm i && npm run dev
+# 前端（原生 HTML5，无构建步骤）
+node web/serve.mjs 5180          # 打开 http://localhost:5180/
 # 一键全家桶
 docker compose up -d
 ```
@@ -113,7 +113,7 @@ docker compose up -d
 | 条码出图（Code128/EAN13 自包含编码器 + PNG 写出） | ✅ 真实 | 测试产出有效 PNG 签名 |
 | 渲染管线（变量+公式+流水号 → 单行元素） | ✅ 真实 | 渲染测试覆盖占位/公式/流水号切片 |
 | 后端 NestJS 应用 | ✅ 完整骨架 | 模块/控制器/服务/实体/main/worker 齐备，需 `npm i` + PG/Redis 启动 |
-| 前端设计器 | ✅ 应用骨架 | Vite+React+Konva 画布/属性面板/API 客户端 |
+| 前端设计器 | ✅ 原生 HTML5 重写 | `web/`：DOM 渲染标签元素（无 Konva 命中测试问题）、设计/打印/模板三页签、原生 Pointer 拖拽缩放旋转、离线条码二维码 |
 | 多租户隔离 | ✅ 守卫+BaseRepository | 查询强制带 tenant_id |
 
 ### 如何运行测试（零外部依赖，立即可跑）
@@ -131,9 +131,21 @@ docker compose up -d        # 拉起 PG + Redis + api + worker + web
 # 或本地：先建库（docs/03-database.sql），再：
 cd backend && npm i && npm run start:dev      # API :3000
 cd backend && npm run worker                  # BullMQ 打印消费者
-cd frontend && npm i && npm run dev           # 设计器 :5173
+node web/serve.mjs 5180                       # 设计器 :5180（原生 HTML5）
 ```
 
 > 说明：核心引擎层已通过测试证明正确（最难验证的并发打号、校验位、DPI 换算、渲染管线均在测试中覆盖）。后端应用与前端为完整可运行骨架，需在 `npm i` + 基础设施就绪后联调。
 
-详细设计见 `docs/` 各章节；核心实现见 `backend/` 与 `frontend/`。
+### 命令行（`tools/labelctl.mjs`，无依赖）
+
+```bash
+node tools/labelctl.mjs login                                   # token 缓存在 ~/.labelflow-token.json
+node tools/labelctl.mjs print --template 7 --rows data.csv --copies 2
+node tools/labelctl.mjs commands --template 7 --protocol zpl -o label.zpl
+node tools/labelctl.mjs jobs --limit 5
+node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号补打
+```
+
+环境变量 `LABELFLOW_API`（默认 `http://localhost:3200/api/v1`）、`LABELFLOW_USER`/`LABELFLOW_PASS`、`LABELFLOW_TOKEN`。
+
+详细设计见 `docs/` 各章节；核心实现见 `backend/` 与 `web/`。

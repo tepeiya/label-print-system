@@ -1,0 +1,15 @@
+{
+  "name": "LabelFlow 标签设计与打印系统",
+  "short_name": "LabelFlow",
+  "description": "浏览器内标签设计、全码制条码、批量数据打印与打印队列管理",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#eef2f7",
+  "theme_color": "#0f172a",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

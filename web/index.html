@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LabelFlow · 标签设计器</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0f172a">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ================= 顶栏 ================= -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">LF</span>
+      <span class="brand-text">
+        <b>LabelFlow</b>
+        <small>标签设计与打印</small>
+      </span>
+    </div>
+
+    <nav id="main-tabs" class="main-tabs">
+      <button type="button" class="tab active" data-tab="design">✎ 标签设计</button>
+      <button type="button" class="tab" data-tab="print">🖨 打印输出</button>
+      <button type="button" class="tab" data-tab="jobs">🧾 打印任务</button>
+      <button type="button" class="tab" data-tab="templates">🗂 模板库</button>
+      <button type="button" class="tab" data-tab="audit">📜 审计日志</button>
+    </nav>
+
+    <input id="tpl-name" class="tpl-name" value="未命名标签" title="模板名称" spellcheck="false">
+
+    <div class="toolbar">
+      <button type="button" class="icon-btn" id="btn-undo" title="撤销 (Ctrl+Z)">↶</button>
+      <button type="button" class="icon-btn" id="btn-redo" title="重做 (Ctrl+Y)">↷</button>
+      <i class="sep"></i>
+      <button type="button" class="icon-btn" id="btn-zoom-out" title="缩小">－</button>
+      <button type="button" class="icon-btn" id="btn-zoom-100" title="100%">100%</button>
+      <button type="button" class="icon-btn" id="btn-zoom-in" title="放大">＋</button>
+      <button type="button" class="icon-btn" id="btn-zoom-fit" title="适应窗口">⤢</button>
+      <i class="sep"></i>
+      <button type="button" class="icon-btn" id="btn-front" title="置顶">⬆</button>
+      <button type="button" class="icon-btn" id="btn-up" title="上移一层">↑</button>
+      <button type="button" class="icon-btn" id="btn-down" title="下移一层">↓</button>
+      <button type="button" class="icon-btn" id="btn-back" title="置底">⬇</button>
+      <i class="sep"></i>
+      <button type="button" class="icon-btn" id="btn-dup" title="复制 (Ctrl+D)">⧉</button>
+      <button type="button" class="icon-btn danger" id="btn-del" title="删除 (Delete)">🗑</button>
+      <i class="sep"></i>
+      <button type="button" class="btn btn-primary" id="btn-save" title="保存模板 (Ctrl+S)">💾 保存</button>
+      <button type="button" class="btn" id="btn-new" title="新建模板">＋ 新建</button>
+      <button type="button" class="btn" id="btn-export" title="导出模板 JSON">导出</button>
+      <button type="button" class="btn" id="btn-import" title="导入模板 JSON">导入</button>
+    </div>
+
+    <span id="auth-badge" class="auth-badge">○ 连接中…</span>
+  </header>
+
+  <!-- ================= 主体 ================= -->
+  <main class="main">
+
+    <!-- ---------- 标签设计 ---------- -->
+    <section id="view-design" class="view active">
+      <div class="design-grid">
+        <aside id="toolbox" class="toolbox"></aside>
+
+        <section class="canvas-area">
+          <div id="viewport" class="viewport">
+            <div class="canvas-stage">
+              <div id="page" class="page">
+                <div id="page-elements" class="page-elements"></div>
+                <div id="page-overlay" class="page-overlay"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <aside id="inspector" class="inspector">
+          <nav id="inspector-tabs" class="inspector-tabs">
+            <button type="button" class="itab active" data-tab="properties">属性</button>
+            <button type="button" class="itab" data-tab="page">页面</button>
+            <button type="button" class="itab" data-tab="layers">图层</button>
+            <button type="button" class="itab" data-tab="variables">变量</button>
+          </nav>
+          <div id="inspector-body" class="inspector-body"></div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ---------- 打印输出 ---------- -->
+    <section id="view-print" class="view">
+      <div class="print-layout">
+        <aside class="print-side">
+          <div class="panel-block">
+            <div class="panel-title">
+              数据源
+              <span class="hint">Excel / CSV / TSV / JSON</span>
+            </div>
+            <textarea id="print-data" class="print-data" spellcheck="false"></textarea>
+            <div class="print-side-actions">
+              <label class="btn file-btn">
+                📂 导入文件
+                <input type="file" id="print-file" accept=".csv,.tsv,.txt,.json,.xlsx,.xls" hidden>
+              </label>
+              <button type="button" class="btn" id="btn-clear-data">清空</button>
+            </div>
+            <div class="print-side-actions">
+              <button type="button" class="btn" id="btn-save-source">💾 存为数据源</button>
+              <button type="button" class="btn" id="btn-load-source">📥 载入数据源</button>
+            </div>
+            <div id="print-source-list" class="source-list" hidden></div>
+          </div>
+
+          <div class="panel-block" id="mapping-block" hidden>
+            <div class="panel-title">
+              字段映射
+              <span class="hint">数据列 → 模板变量</span>
+            </div>
+            <div id="print-mapping" class="mapping-table"></div>
+          </div>
+
+          <div class="panel-block">
+            <div class="panel-title">打印设置</div>
+            <label class="form-row">
+              <span class="form-label">打印机</span>
+              <select id="print-printer" class="form-input">
+                <option value="">（不指定 / 浏览器打印）</option>
+              </select>
+            </label>
+            <div class="print-side-actions">
+              <button type="button" class="btn" id="btn-printer-refresh">刷新</button>
+              <button type="button" class="btn" id="btn-printer-test">测试连接</button>
+            </div>
+            <div class="form-row2">
+              <label class="form-row">
+                <span class="form-label">份数</span>
+                <input type="number" class="form-input num" id="print-copies" value="1" min="1" max="500" step="1">
+              </label>
+              <label class="form-row">
+                <span class="form-label">流水号起始</span>
+                <input type="number" class="form-input num" id="print-serial-start" value="1" min="1" step="1">
+              </label>
+            </div>
+            <div class="form-row2">
+              <label class="form-row">
+                <span class="form-label">预览条数</span>
+                <input type="number" class="form-input num" id="print-preview-rows" value="10" min="1" max="200" step="1">
+              </label>
+              <label class="form-row">
+                <span class="form-label">指令协议</span>
+                <select id="print-protocol" class="form-input">
+                  <option value="browser">浏览器</option>
+                  <option value="zpl">ZPL</option>
+                  <option value="tspl">TSPL</option>
+                </select>
+              </label>
+            </div>
+            <div class="print-side-actions">
+              <button type="button" class="btn btn-primary" id="btn-gen-preview">⟳ 生成预览</button>
+              <button type="button" class="btn btn-accent" id="btn-do-print" disabled>🖨 浏览器打印</button>
+            </div>
+            <div class="print-side-actions">
+              <button type="button" class="btn btn-primary" id="btn-queue-print" disabled>🚀 提交打印队列</button>
+            </div>
+            <div class="print-side-actions">
+              <button type="button" class="btn" id="btn-dl-zpl">⬇ 下载 ZPL</button>
+              <button type="button" class="btn" id="btn-dl-tspl">⬇ 下载 TSPL</button>
+            </div>
+            <div id="print-stat" class="print-stat">待生成预览</div>
+          </div>
+
+          <div class="panel-block">
+            <div class="panel-title">
+              打印前校验
+              <span class="hint">必填 / 唯一码 / 条码规则</span>
+            </div>
+            <div id="print-validate" class="validate-box">—</div>
+            <label class="form-row">
+              <span class="form-label">扫码回读</span>
+              <input id="print-scan" class="form-input" placeholder="扫描或输入条码后回车" spellcheck="false">
+            </label>
+            <div id="print-scan-result" class="scan-result"></div>
+          </div>
+        </aside>
+
+        <section class="print-main">
+          <div class="print-toolbar">
+            <span class="print-toolbar-title">打印预览</span>
+            <label class="print-zoom">
+              缩放
+              <select id="print-zoom" class="form-input">
+                <option value="50">50%</option>
+                <option value="75">75%</option>
+                <option value="100" selected>100%</option>
+                <option value="125">125%</option>
+                <option value="150">150%</option>
+              </select>
+            </label>
+          </div>
+          <div class="print-frame-wrap">
+            <iframe id="print-frame" class="print-frame" title="打印预览"></iframe>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ---------- 打印任务 ---------- -->
+    <section id="view-jobs" class="view">
+      <div class="tpl-layout">
+        <div class="tpl-head">
+          <span class="page-title">🧾 打印任务</span>
+          <select id="jobs-status" class="form-input jobs-status">
+            <option value="">全部状态</option>
+            <option value="queued">排队中</option>
+            <option value="running">打印中</option>
+            <option value="success">成功</option>
+            <option value="partial">部分成功</option>
+            <option value="failed">失败</option>
+            <option value="canceled">已取消</option>
+          </select>
+          <button type="button" class="btn" id="btn-jobs-refresh">刷新</button>
+          <label class="form-check"><input type="checkbox" id="jobs-auto" checked> 自动刷新</label>
+          <span class="st-spacer"></span>
+          <span id="jobs-stat" class="form-hint">—</span>
+        </div>
+        <div class="jobs-layout">
+          <div class="tpl-table-wrap">
+            <table class="tpl-table">
+              <thead>
+                <tr>
+                  <th style="width:6%">ID</th>
+                  <th style="width:10%">模板</th>
+                  <th style="width:10%">打印机</th>
+                  <th style="width:8%">总数</th>
+                  <th style="width:8%">完成</th>
+                  <th style="width:8%">失败</th>
+                  <th style="width:10%">状态</th>
+                  <th style="width:18%">创建时间</th>
+                  <th style="width:22%">操作</th>
+                </tr>
+              </thead>
+              <tbody id="jobs-list-body">
+                <tr><td colspan="9" class="tpl-empty">加载中…</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <aside id="job-detail" class="job-detail">
+            <div class="job-detail-empty">选择左侧任务查看逐张打印明细</div>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 模板库 ---------- -->
+    <section id="view-templates" class="view">
+      <div class="tpl-layout">
+        <div class="tpl-head">
+          <input type="search" id="tpl-search" class="form-input tpl-search" placeholder="搜索模板名称…">
+          <select id="tpl-category" class="form-input jobs-status" title="按分类筛选">
+            <option value="">全部分类</option>
+          </select>
+          <label class="btn tpl-fav-filter" title="只看收藏">
+            <input type="checkbox" id="tpl-fav-only"> ★ 仅收藏
+          </label>
+          <button type="button" class="btn" id="btn-tpl-refresh">刷新</button>
+          <button type="button" class="btn btn-primary" id="btn-tpl-save">💾 保存当前</button>
+          <button type="button" class="btn" id="btn-tpl-saveas">另存为</button>
+          <span class="st-spacer"></span>
+          <button type="button" class="btn" id="btn-tpl-export-pkg">📦 导出模板包</button>
+          <label class="btn file-btn">
+            📦 导入模板包
+            <input type="file" id="tpl-package-file" accept=".ziptpl,.zip,.json" hidden>
+          </label>
+        </div>
+        <div class="tpl-table-wrap">
+          <table class="tpl-table">
+            <thead>
+              <tr>
+                <th style="width:70px">预览</th>
+                <th style="width:30%">名称</th>
+                <th style="width:12%">分类</th>
+                <th style="width:8%">版本</th>
+                <th style="width:22%">更新时间</th>
+                <th style="width:28%">操作</th>
+              </tr>
+            </thead>
+            <tbody id="tpl-list-body">
+              <tr><td colspan="6" class="tpl-empty">加载中…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 审计日志 ---------- -->
+    <section id="view-audit" class="view">
+      <div class="tpl-layout">
+        <div class="tpl-head">
+          <span class="page-title">📜 审计日志</span>
+          <input type="search" id="audit-action" class="form-input tpl-search" placeholder="按动作筛选，如 print.job">
+          <button type="button" class="btn" id="btn-audit-refresh">刷新</button>
+          <span class="st-spacer"></span>
+          <span id="audit-stat" class="form-hint">—</span>
+        </div>
+        <div class="tpl-table-wrap">
+          <table class="tpl-table">
+            <thead>
+              <tr>
+                <th style="width:18%">时间</th>
+                <th style="width:18%">动作</th>
+                <th style="width:16%">对象</th>
+                <th style="width:8%">操作人</th>
+                <th style="width:40%">详情</th>
+              </tr>
+            </thead>
+            <tbody id="audit-list-body">
+              <tr><td colspan="5" class="tpl-empty">加载中…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+
+  </main>
+
+  <!-- ================= 状态栏 ================= -->
+  <footer id="statusbar" class="statusbar">
+    <span class="st-item">选中：<b id="st-selection">无</b></span>
+    <span class="st-item" id="st-count">0 个元素</span>
+    <span class="st-item" id="st-page">—</span>
+    <span class="st-spacer"></span>
+    <span class="st-item" id="st-cursor">0.0, 0.0 mm</span>
+    <span class="st-item" id="st-zoom">100%</span>
+  </footer>
+</div>
+
+<input type="file" id="import-file" accept=".json,application/json" hidden>
+
+<!-- 第三方库（本地打包，离线可用）：bwip-js 全码制条码 / xlsx 表格解析 / fflate 压缩 -->
+<script src="vendor/bwip.js"></script>
+<script src="vendor/xlsx.js"></script>
+<script src="vendor/fflate.js"></script>
+<script src="vendor/jsbarcode.min.js"></script>
+<script src="vendor/qrcode.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

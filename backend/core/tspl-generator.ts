@@ -12,13 +12,15 @@ export function mmToDots(mm: number, dpi: number): number {
 }
 
 export interface TsplElement {
-  type: 'text' | 'barcode' | 'qrcode' | 'image';
+  type: 'text' | 'barcode' | 'qrcode' | 'image' | 'box' | 'line' | 'ellipse';
   xMm: number; yMm: number;
   rotation?: 0 | 90 | 180 | 270;
   text?: string; fontHeightMm?: number; fontWidthMm?: number; bold?: boolean;
   barcode?: BarcodeSpec;
   qrcode?: QrcodeSpec;
   imageData?: Buffer; imgWmm?: number; imgHmm?: number;
+  wMm?: number; hMm?: number; x2Mm?: number; y2Mm?: number;
+  borderMm?: number; strokeMm?: number;
 }
 
 /** 生成单张标签 TSPL（不含 SIZE/DIRECTION 等页头，由 buildJob 封装） */
@@ -31,27 +33,57 @@ export function generateTspl(els: TsplElement[], dpi: number): string {
 
     switch (e.type) {
       case 'text': {
-        // TEXT x,y,"font",rotation,mx,my,text  (mx,my 为横向/纵向放大倍数)
-        const h = Math.max(1, Math.round((e.fontHeightMm ?? 3) * 8)); // 近似字号
-        L.push(`TEXT ${x},${y},"FONT001",${rot},1,1,"${esc(e.text ?? '')}"`);
+        if (!String(e.text ?? '').trim()) break;
+        // TEXT x,y,"font",rotation,mx,my,text —— FONT001 基准约 12 dots 高（203dpi）
+        const baseDots = 12;
+        const my = Math.max(1, Math.round(mmToDots(e.fontHeightMm ?? 3, dpi) / baseDots));
+        const mx = Math.max(1, Math.round(mmToDots(e.fontWidthMm ?? (e.fontHeightMm ?? 3) * 0.6, dpi) / baseDots));
+        L.push(`TEXT ${x},${y},"FONT001",${rot},${mx},${my},"${esc(e.text ?? '')}"`);
         break;
       }
       case 'barcode': {
         const b = e.barcode!;
         // BARCODE x,y,"code",height,human,rotation,narrow,wide,alignment,content
-        const h = mmToDots(b.heightMm, dpi);
+        const h = Math.max(1, mmToDots(b.heightMm, dpi));
         const narrow = Math.max(1, mmToDots(b.moduleWidthMm, dpi));
-        const wide = Math.round(narrow * b.wideRatio);
+        // 宽窄比缺省 2.5，避免 undefined 相乘产生 NaN
+        const ratio = Number.isFinite(b.wideRatio) ? Number(b.wideRatio) : 2.5;
+        const wide = Math.max(narrow, Math.round(narrow * ratio));
         const human = b.showText ? '1' : '0';
-        L.push(`BARCODE ${x},${y},"${tsplSym(b.sym)}",${h},${human},${rot},${narrow},${wide},"${esc(b.content)}"`);
+        L.push(`BARCODE ${x},${y},"${tsplSym(b.sym)}",${h},${human},${rot},${narrow},${wide},1,"${esc(b.content)}"`);
         break;
       }
       case 'qrcode': {
         const q = e.qrcode!;
-        // QRCODE x,y,ECC,module,rotation,model,mask,content
+        // QRCODE x,y,ECC,cell size,mode,rotation,[model],[mask],content
         const eccMap: Record<string, string> = { L: 'L', M: 'M', Q: 'Q', H: 'H' };
-        const module = Math.max(2, Math.round(mmToDots(q.moduleSizeMm, dpi) / 4));
-        L.push(`QRCODE ${x},${y},${eccMap[q.ecc]},${module},${rot},1,A,"${esc(q.content)}"`);
+        const cell = Math.min(10, Math.max(1, mmToDots(q.moduleSizeMm ?? 0.5, dpi)));
+        L.push(`QRCODE ${x},${y},${eccMap[q.ecc ?? 'M'] ?? 'M'},${cell},A,${rot},"${esc(q.content)}"`);
+        break;
+      }
+      case 'box': {
+        const w = Math.max(1, mmToDots(e.wMm ?? 0, dpi));
+        const h = Math.max(1, mmToDots(e.hMm ?? 0, dpi));
+        const t = Math.max(1, mmToDots(e.borderMm ?? 0.3, dpi));
+        // BOX x_start,y_start,x_end,y_end,thickness
+        L.push(`BOX ${x},${y},${x + w},${y + h},${t}`);
+        break;
+      }
+      case 'ellipse': {
+        const w = Math.max(1, mmToDots(e.wMm ?? 0, dpi));
+        const h = Math.max(1, mmToDots(e.hMm ?? 0, dpi));
+        const t = Math.max(1, mmToDots(e.borderMm ?? 0.3, dpi));
+        L.push(`ELLIPSE ${x},${y},${x + w},${y + h},${t}`);
+        break;
+      }
+      case 'line': {
+        const x2 = mmToDots(e.x2Mm ?? e.xMm, dpi);
+        const y2 = mmToDots(e.y2Mm ?? e.yMm, dpi);
+        const t = Math.max(1, mmToDots(e.strokeMm ?? 0.3, dpi));
+        // BAR x,y,width,height —— 水平线；垂直线用 BOX 退化表示
+        if (Math.abs(y2 - y) <= t) L.push(`BAR ${Math.min(x, x2)},${y},${Math.abs(x2 - x)},${t}`);
+        else if (Math.abs(x2 - x) <= t) L.push(`BAR ${x},${Math.min(y, y2)},${t},${Math.abs(y2 - y)}`);
+        else L.push(`BOX ${Math.min(x, x2)},${Math.min(y, y2)},${Math.max(x, x2)},${Math.max(y, y2)},${t}`);
         break;
       }
       case 'image': {
@@ -85,15 +117,20 @@ export function buildJob(
     generateTspl(els, dpi),
     `PRINT ${page.copies ?? 1},1`,           // 打印份数
   ];
-  return Buffer.from(cmds.join('\r\n') + '\r\n', 'ascii');
+  return Buffer.from(cmds.join('\r\n') + '\r\n', 'utf8');
 }
 
+/** 码制归一化 → TSPL 条码类型（不同类型名大小写不同，需按 TSPL2 手册书写） */
 function tsplSym(sym: string): string {
+  const s = String(sym ?? '').toUpperCase().replace(/^CODE[-_]?/g, '');
   const map: Record<string, string> = {
-    CODE128: '128', CODE39: '39', EAN13: 'EAN13', EAN8: 'EAN8',
-    UPC_A: 'UPCA', ITF14: 'ITF', GS1_128: '128', CODABAR: 'CODABAR', MSI: 'MSI',
+    '128': '128', 'GS1_128': '128', 'GS1-128': '128', 'CODE128': '128',
+    '39': '39', '93': '93', 'EAN13': 'EAN13', 'EAN8': 'EAN8',
+    'UPC': 'UPCA', 'UPCA': 'UPCA', 'UPC_A': 'UPCA', 'UPC_E': 'UPCE', 'UPCE': 'UPCE',
+    'ITF14': 'ITF14', 'ITF': 'ITF', '2OF5': 'ITF', 'INTERLEAVED2OF5': 'ITF',
+    'CODABAR': 'CODABAR', 'MSI': 'MSI', 'MSI10': 'MSI10', 'MSI11': 'MSI11',
   };
-  return map[sym] ?? '128';
+  return map[s] ?? map[String(sym ?? '').toUpperCase()] ?? '128';
 }
 
 function esc(s: string): string { return s.replace(/"/g, '""'); }

@@ -3,9 +3,10 @@
 // =============================================================================
 
 export interface BarcodeSpec {
-  sym: 'CODE128' | 'CODE39' | 'EAN13' | 'EAN8' | 'UPC_A' | 'ITF14' | 'GS1_128' | 'CODABAR' | 'MSI';
+  /** UI 码制：CODE128 / GS1_128 / CODE39 / EAN13 / UPC / ITF14 / MSI / … */
+  sym: string;
   content: string;            // 已解析变量/公式后的最终内容
-  moduleWidthMm: number;      // 窄条宽（mm）
+  moduleWidthMm: number;      // 窄条宽（X-dimension，mm）
   wideRatio: number;          // 宽窄比
   heightMm: number;
   showText: boolean;
@@ -15,7 +16,8 @@ export interface BarcodeSpec {
 }
 
 export interface QrcodeSpec {
-  sym: 'QR' | 'MICRO_QR' | 'DATAMATRIX' | 'PDF417' | 'AZTEC';
+  /** UI 码制：QRCODE / MICROQR / DATAMATRIX / PDF417 / AZTEC / … */
+  sym: string;
   content: string;
   ecc: 'L' | 'M' | 'Q' | 'H';
   moduleSizeMm: number;

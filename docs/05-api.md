@@ -143,3 +143,48 @@ export class TemplateController {
   }
 }
 ```
+
+## 5.12 实现补充（当前代码已落地、设计稿未列出的接口）
+
+| 方法 | 路径 | 入参 | 出参 | 说明 |
+| --- | --- | --- | --- | --- |
+| POST | `/print/preview` | `{templateContent, rows, copies}` | HTML 字符串 | 服务端按 mm/pt 渲染打印 HTML（与前端共用元素语义） |
+| POST | `/print/commands` | `{templateContent, rows, copies, protocol, dpi, widthMm, heightMm, gapMm, offsetXMm, offsetYMm, density, speed, serialMap}` | `{protocol, text, labelCount, bytes, dpi, warnings[]}` | 导出 ZPL / TSPL；`warnings` 提示码制降级与中文字库依赖 |
+| GET | `/print/jobs` | `?status&page&pageSize` | `[rows, total]` | 打印队列分页 |
+| GET | `/print/jobs/logs` | `?jobId&status&pageSize` | `PrintLog[]` | 逐张打印日志（追溯/回读） |
+| GET | `/print/jobs/:id/logs` | `?page&pageSize` | `[rows, total]` | 单任务逐张日志 |
+| POST | `/print/jobs/:id/retry` | `{seqNos?: number[]}` | `{jobId, status, reprintOf}` | 整单补打 / 指定序号补打（复用原流水号） |
+| POST | `/print/jobs/:id/reprint` | 同上 | 同上 | 与 retry 等价（语义化别名） |
+| POST | `/data-sources/rows` | `{name, type: csv/excel/tsv/json, headers, rows, fieldMap, config}` | `{sourceId, rows, columns, headers}` | 前端解析 Excel/CSV/TSV/JSON 后统一入库（源类型存 `config.sourceType`） |
+| GET | `/data-sources` | — | `DataSource[]` | 数据源列表（含字段映射） |
+| GET | `/data-sources/:id/rows` | `?limit&offset` | `DataRow[]` | 读取数据行（批量打印/预览） |
+| DELETE | `/data-sources/:id` | — | `{ok}` | 删除数据源及其数据行 |
+| GET | `/templates/:id/export` | — | `{template, schemaVersion}` | 单模板导出（前端再打包为 `.ziptpl`） |
+| POST | `/printers/:id/test-commands` | `{protocol}` | `{protocol, text, bytes}` | 打印机自检指令（不落纸） |
+
+### ZPL / TSPL 码制覆盖
+
+| 能力 | ZPL | TSPL |
+| --- | --- | --- |
+| 文本（UTF-8） | `^CI28` + `^A0N,h,w` + `^FH` 转义 | `TEXT ... "FONT001"`（中文依赖打印机字库） |
+| 一维码 | Code128 `^BC`、Code39 `^B3`、Code93 `^BA`、EAN13 `^BE`、EAN8 `^B8`、UPC-A `^BU`、UPC-E `^B9`、ITF `^BI`、Codabar `^BK`、MSI `^BM` | `BARCODE ... "128/39/93/EAN13/EAN8/UPCA/UPCE/ITF14/ITF/CODABAR/MSI"` |
+| 二维码 | QR `^BQ`、DataMatrix `^BX`、PDF417 `^B2`、Aztec `^BO` | 仅 `QRCODE`；其它码制降级为 QR 并返回 `warnings` |
+| 图形 | 矩形 `^GB`、椭圆 `^GE`、线（细长矩形） | `BOX` / `ELLIPSE` / `BAR` |
+| 页面 | `^LH` 偏移、`^PQ` 份数、`~SD` 浓度、`^PR` 速度 | `SIZE` / `GAP` / `DIRECTION` / `DENSITY` / `SPEED` / `PRINT` |
+
+## 5.13 命令行工具（`tools/labelctl.mjs`）
+
+```bash
+# 登录（token 缓存在 ~/.labelflow-token.json，过期自动重登）
+node tools/labelctl.mjs login
+
+node tools/labelctl.mjs templates --limit 20
+node tools/labelctl.mjs printers
+node tools/labelctl.mjs print --template 7 --rows data.csv --copies 2
+node tools/labelctl.mjs commands --template 7 --protocol zpl -o label.zpl
+node tools/labelctl.mjs jobs --status success --limit 10
+node tools/labelctl.mjs retry 4 --seq 1,3
+node tools/labelctl.mjs audit --limit 10
+```
+
+环境变量：`LABELFLOW_API`（默认 `http://localhost:3200/api/v1`）、`LABELFLOW_USER` / `LABELFLOW_PASS`、`LABELFLOW_TOKEN`。

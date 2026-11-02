@@ -14,6 +14,7 @@ export class TemplateController {
   @Post(':id/copy') copy(@Param('id') id: number, @Body() b: any) { return this.svc.copy(+id, b?.name); }
   @Post(':id/favorite') favorite(@Param('id') id: number, @Body() b: any) { return this.svc.favorite(+id, b?.value ?? true); }
   @Get(':id/versions') versions(@Param('id') id: number) { return this.svc.versions(+id); }
+  @Get(':id/versions/:v') version(@Param('id') id: number, @Param('v') v: number) { return this.svc.version(+id, +v); }
   @Post(':id/versions/:v/rollback') rollback(@Param('id') id: number, @Param('v') v: number) { return this.svc.rollback(+id, +v); }
   @Post('import') importOne(@Body() b: any) { return this.svc.import(b); }
   @Get(':id/export') exportOne(@Param('id') id: number) { return this.svc.exportOne(+id); }

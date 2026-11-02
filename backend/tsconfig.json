@@ -15,6 +15,6 @@
     "resolveJsonModule": true,
     "sourceMap": true
   },
-  "include": ["src/**/*", "core/**/*", "printer/**/*"],
+  "include": ["src/**/*", "core/**/*", "printer/**/*", "worker.ts"],
   "exclude": ["node_modules", "dist", "**/__tests__/**"]
 }

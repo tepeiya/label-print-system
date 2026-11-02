@@ -24,7 +24,15 @@ export interface PrintJobInput {
     offsetXMm: number;
     offsetYMm: number;
     orientation: 0 | 90 | 180 | 270;
-    connection: { host?: string; port?: number; driverName?: string };
+    /** 打印浓度（ZPL ~SD / TSPL DENSITY） */
+    density?: number;
+    /** 打印速度（ZPL ^PR / TSPL SPEED） */
+    speed?: number;
+    /** 指令协议：zpl（斑马）/ tspl（台半等） */
+    protocol?: 'zpl' | 'tspl' | 'browser';
+    /** 标签间隙 mm（TSPL GAP） */
+    gapMm?: number;
+    connection: { host?: string; port?: number; driverName?: string; protocol?: string; [k: string]: any };
   };
   copies: number;
   // 每张标签的元素（由渲染层产出，已替换占位）
@@ -51,7 +59,7 @@ export interface PrinterProvider {
 // 实现 1：RawTcpProvider —— 直连网络打印机 9100 端口发送 ZPL/TSPL 指令流
 // 适用：斑马/台半等支持 raw socket 的工业打印机；低延迟、无驱动依赖。
 // =============================================================================
-import { generateZpl, buildJob as buildZplJob } from '../core/zpl-generator';
+import { generateZpl, buildJob as buildZplJob, mmToDots } from '../core/zpl-generator';
 import { buildJob as buildTsplJob } from '../core/tspl-generator';
 import { createConnection } from 'net';
 
@@ -68,15 +76,45 @@ export class RawTcpProvider implements PrinterProvider {
     const host = printer.connection.host!;
     const port = printer.connection.port ?? 9100; // 默认 9100
 
-    // 根据打印机类型选择指令集：此处以 ZPL 为例（TSPL 同理，见 buildTsplJob）
-    const frames = labels.map((f) => generateZpl(f.zpl ?? [], printer.dpi));
-    const payload = Buffer.from(buildZplJob(frames, copies), 'ascii');
+    const protocol = (printer.protocol || printer.connection.protocol || 'zpl') as 'zpl' | 'tspl';
+    const offX = mmToDots(printer.offsetXMm ?? 0, printer.dpi);
+    const offY = mmToDots(printer.offsetYMm ?? 0, printer.dpi);
 
+    let text: string;
+    if (protocol === 'tspl') {
+      const parts = labels.map((f) => buildTsplJob(
+        f.tspl ?? [],
+        printer.dpi,
+        {
+          widthMm: printer.widthMm,
+          heightMm: printer.heightMm,
+          gapMm: printer.gapMm ?? 2,
+          copies: Math.max(1, copies),
+        },
+        printer.orientation,
+      ).toString('ascii'));
+      text = parts.join('');
+      if (printer.density !== undefined && printer.density !== null) text = `DENSITY ${printer.density}\r\n` + text;
+      if (printer.speed !== undefined && printer.speed !== null) text = `SPEED ${printer.speed}\r\n` + text;
+      if (offX || offY) text = `OFFSET ${offX},${offY}\r\n` + text;
+    } else {
+      const frames = labels.map((f) => {
+        let zpl = generateZpl(f.zpl ?? [], printer.dpi);
+        const head = `^LH${offX},${offY}`
+          + (printer.density !== undefined && printer.density !== null ? `~SD${printer.density}` : '')
+          + (printer.speed !== undefined && printer.speed !== null ? `^PR${printer.speed}` : '');
+        zpl = zpl.replace('^XA', `^XA${head}`);
+        return zpl;
+      });
+      text = buildZplJob(frames, Math.max(1, copies));
+    }
+
+    const payload = Buffer.from(text, 'ascii');
     return new Promise<PrintResult>((resolve) => {
       const socket = createConnection({ host, port, timeout: 5000 });
       let settled = false;
       const done = (r: PrintResult) => { if (!settled) { settled = true; resolve(r); } };
-      socket.on('connect', () => socket.write(payload, () => { socket.end(); done({ ok: true, jobId: job.jobId }); }));
+      socket.on('connect', () => socket.write(payload, () => { socket.end(); done({ ok: true, jobId: job.jobId, bytes: payload }); }));
       socket.on('timeout', () => { socket.destroy(); done({ ok: false, error: '连接超时' }); });
       socket.on('error', (e) => done({ ok: false, error: e.message }));
     });

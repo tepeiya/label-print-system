@@ -23,4 +23,5 @@ export const api = {
   }).then((r) => r.blob()),
   createPrintJob: (job: any) => req('POST', '/print/jobs', job),
   evalFormula: (expr: string, vars: any) => req('POST', '/formula/eval', { expr, vars }),
+  preview: (body: any) => req('POST', '/print/preview', body),
 };

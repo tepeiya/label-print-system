@@ -10,7 +10,7 @@ export class Template {
   @Column('uuid', { unique: false }) uuid: string;
   @Column({ length: 160 }) name: string;
   @Column({ length: 60, nullable: true }) category: string;
-  @Column('simple-array', { default: '' }) tags: string[];   // GIN 可用 jsonb 替代
+  @Column('text', { array: true, default: '{}' }) tags: string[];   // 对齐 DDL 的 TEXT[] 数组列
   @Column({ length: 500, nullable: true }) description: string;
   @Column({ name: 'schema_version', default: 1 }) schemaVersion: number;
   @Column('jsonb') content: Record<string, any>;            // 设计器完整产物
@@ -56,7 +56,7 @@ export class TemplateShare {
   @Column({ name: 'tenant_id' }) tenantId: number;
   @Column({ name: 'template_id' }) templateId: number;
   @Column({ name: 'shared_with' }) sharedWith: number;
-  @Column('simple-array', { default: 'view' }) perms: string[];
+  @Column('text', { array: true, default: () => "'{view}'" }) perms: string[];
   @Column({ name: 'created_by', nullable: true }) createdBy: number;
   @CreateDateColumn() createdAt: Date;
 }

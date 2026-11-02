@@ -1,14 +1,30 @@
 // 多租户守卫 + 基础仓储（所有查询强制带 tenant_id）
-import { CanActivate, ExecutionContext, ForbiddenException, NotFoundException, Injectable } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { tenantStorage, useTenantId } from './tenant.context';
+import { IS_PUBLIC_KEY } from './public.decorator';
 
-/** JWT 解析后写入上下文（配合 AuthModule 的 JwtAuthGuard 先执行） */
+/** 校验请求已携带租户上下文（由 JwtAuthGuard 注入 req.user），并兜底确保 AsyncLocalStorage 已设置 */
 @Injectable()
 export class TenantGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
   canActivate(ctx: ExecutionContext): boolean {
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      ctx.getHandler(),
+      ctx.getClass(),
+    ]);
+    if (isPublic) return true;
+
     const req = ctx.switchToHttp().getRequest();
     const payload = req.user; // 由 JwtAuthGuard 注入 { sub, tenantId, roles }
     if (!payload?.tenantId) throw new ForbiddenException('缺少租户上下文');
+    // 兜底写入（拦截器也会写入，这里确保守卫之后、handler 之前的边界一致）
     tenantStorage.enterWith({ tenantId: payload.tenantId, userId: payload.sub, roles: payload.roles ?? [] });
     return true;
   }

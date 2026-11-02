@@ -139,8 +139,8 @@ test('TSPL-生成 SIZE/PRINT', () => {
 });
 
 // ----------------------------- 6. 条码出图（真实 PNG） -----------------------------
-test('条码-Code128 输出有效 PNG', () => {
-  const png = renderBarcodeToPng(
+test('条码-Code128 输出有效 PNG', async () => {
+  const png = await renderBarcodeToPng(
     { sym: 'CODE128', content: 'ABC123', moduleWidthMm: 0.3, wideRatio: 2.5, heightMm: 12, showText: false, textPosition: 'bottom' },
     300,
   );
@@ -149,7 +149,7 @@ test('条码-Code128 输出有效 PNG', () => {
   assert.ok(png.length > 100);
 });
 
-test('条码-非法内容被拒', () => {
+test('条码-非法内容被拒', async () => {
   assert.equal(validateBarcode('EAN13', '12A4').ok, false);
-  assert.throws(() => renderBarcodeToPng({ sym: 'EAN13', content: '12A4', moduleWidthMm: 0.3, wideRatio: 2.5, heightMm: 12, showText: false, textPosition: 'bottom' }, 300));
+  await assert.rejects(() => renderBarcodeToPng({ sym: 'EAN13', content: '12A4', moduleWidthMm: 0.3, wideRatio: 2.5, heightMm: 12, showText: false, textPosition: 'bottom' }, 300));
 });

@@ -1,6 +1,7 @@
 import { Module, Injectable, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { AuditLog } from '../entities/print.entity';
 import { TenantGuard } from '../common/tenant.guard';
@@ -18,11 +19,16 @@ export class AuditService {
 @Controller('audit/logs')
 @UseGuards(TenantGuard)
 export class AuditController {
-  constructor(private repo: Repository<AuditLog>) {}
+  constructor(@InjectRepository(AuditLog) private repo: Repository<AuditLog>) {}
   @Get() list(@Query() q: any) {
     return this.repo.find({ where: { tenantId: useTenantId(), action: q.action }, order: { createdAt: 'DESC' }, take: q.pageSize ?? 50 });
   }
 }
 
-@Module({ controllers: [AuditController], providers: [AuditService], exports: [AuditService] })
+@Module({
+  imports: [TypeOrmModule.forFeature([AuditLog])],
+  controllers: [AuditController],
+  providers: [AuditService],
+  exports: [AuditService],
+})
 export class AuditModule {}
