@@ -65,7 +65,7 @@ services:
   redis:    { image: redis:7 }
   api:      { build: ./backend, environment: [DB_URL, REDIS_URL], depends_on: [postgres, redis] }
   worker:   { build: ./backend, command: npm run worker, depends_on: [redis] }
-  web:      { build: ./frontend, ports: ["80:80"] }
+  web:      { image: nginx:alpine, volumes: ["./web:/usr/share/nginx/html:ro"], ports: ["5180:80"] }
 ```
 
 ## 8.4 已实现并验证（截至当前）
@@ -82,4 +82,4 @@ services:
 
 ## 8.5 后端类型检查
 
-`cd backend && npx tsc -p tsconfig.json --noEmit` → **0 错误**（NestJS 应用骨架 + 核心引擎全部通过类型检查）。前端设计器为 Vite+React 骨架，需 `cd frontend && npm i` 后 `npm run build` 验证。
+`cd backend && npx tsc -p tsconfig.json --noEmit` → **0 错误**（NestJS 应用骨架 + 核心引擎全部通过类型检查）。前端为 `web/` 原生 HTML5 无构建，`node web/serve.mjs 5180` 静态服务即可运行。

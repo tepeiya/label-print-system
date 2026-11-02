@@ -55,11 +55,21 @@ label-print-system/
 │       ├── raw-tcp.provider.ts            # 网络打印机 9100 直连
 │       ├── image.provider.ts              # 服务端 PNG/PDF 出图（存档/第三方）
 │       └── tenant.guard.ts                # 多租户行级隔离守卫
-└── frontend/
-    └── designer/
-        ├── types.ts                  # 设计器核心数据结构
-        ├── store.ts                  # Zustand 状态管理（含撤销/重做）
-        └── interactions.ts          # 拖拽/对齐/吸附/键盘等交互
+├── web/                            # 前端（原生 HTML5/CSS/ES Modules，无构建）
+│   ├── index.html                  # 主界面（5 个页签：设计/打印/任务/模板/审计）
+│   ├── serve.mjs                   # 静态服务器（dev 用，5180）
+│   ├── sw.js                       # PWA Service Worker
+│   ├── vendor/                     # 第三方库（bwipjs / XLSX / fflate / JsBarcode / QRCode）
+│   └── js/
+│       ├── app.js / store.js       # 顶层启动 + 状态
+│       ├── render.js               # 画布渲染（DOM + 打印共用）
+│       ├── interactions.js         # Pointer 拖拽/框选/旋转/快捷键
+│       ├── guides.js               # 标尺 / 参考线 / 智能吸附
+│       ├── print.js                # 打印页（数据导入 / 校验 / 预览 / 指令下载）
+│       ├── templates.js            # 模板库（分类/收藏/版本/.ziptpl）
+│       └── inspector.js            # 右侧属性检查器
+└── tools/
+    └── labelctl.mjs                # CLI：login/templates/printers/print/commands/jobs
 ```
 
 > 所有**对外坐标/尺寸以毫米(mm)为单位**，内部渲染按目标 `dpi` 转点阵：`dots = mm * dpi / 25.4`。例：203dpi → 8 dots/mm；300dpi → 11.81 dots/mm；600dpi → 23.62 dots/mm。
