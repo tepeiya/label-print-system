@@ -13,6 +13,7 @@ import { PrinterModule } from './printer/printer.module';
 import { PrintModule } from './print/print.module';
 import { DataSourceModule } from './datasource/datasource.module';
 import { AuditModule } from './audit/audit.module';
+import { UserAdminModule } from './user/user.module';
 import { SnakeNamingStrategy } from './snake-naming.strategy';
 
 const ENTITIES = Object.values(entities).filter((e) => typeof e === 'function');
@@ -56,7 +57,7 @@ function redisConnection() {
     // BullMQ：打印队列 worker 需要根配置才能启动（队列本身在 PrintModule 注册）
     BullModule.forRoot({ connection: redisConnection() }),
     AuthModule, TemplateModule, SerialModule, FormulaModule, BarcodeModule,
-    PrinterModule, PrintModule, DataSourceModule, AuditModule,
+    PrinterModule, PrintModule, DataSourceModule, AuditModule, UserAdminModule,
   ],
 })
 export class AppModule {}

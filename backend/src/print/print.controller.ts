@@ -10,22 +10,29 @@ import { PrintService } from './print.service';
 import { RenderService } from './render.service';
 import { renderPrintHtml, HtmlRenderOutput } from './html-renderer';
 import { TenantGuard } from '../common/tenant.guard';
+import { Roles, RoleName } from '../common/roles.guard';
 import { generateZpl, mmToDots } from '../../core/zpl-generator';
 import { buildJob as buildTsplJob } from '../../core/tspl-generator';
 import { PrintEvents } from './events.event';
 import * as crypto from 'crypto';
 
+const PRINT_ACTION: RoleName[] = ['admin', 'operator'];
+
 @Controller('print/jobs')
 @UseGuards(TenantGuard)
 export class PrintController {
   constructor(private svc: PrintService) {}
+  @Roles(...PRINT_ACTION)
   @Post() create(@Body() b: any) { return this.svc.createJob(b); }
   @Get() list(@Query() q: any) { return this.svc.list(q); }
   @Get('logs') logs(@Query() q: any) { return this.svc.logs(q); }
   @Get(':id') get(@Param('id') id: number) { return this.svc.getJob(+id); }
   @Get(':id/logs') jobLogs(@Param('id') id: number, @Query() q: any) { return this.svc.jobLogs(+id, q); }
+  @Roles(...PRINT_ACTION)
   @Post(':id/cancel') cancel(@Param('id') id: number) { return this.svc.cancel(+id); }
+  @Roles(...PRINT_ACTION)
   @Post(':id/retry') retry(@Param('id') id: number, @Body() b: any) { return this.svc.retry(+id, b?.seqNos); }
+  @Roles(...PRINT_ACTION)
   @Post(':id/reprint') reprint(@Param('id') id: number, @Body() b: any) { return this.svc.retry(+id, b?.seqNos); }
 }
 

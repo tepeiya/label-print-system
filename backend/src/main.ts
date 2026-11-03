@@ -3,12 +3,13 @@ import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import { AppModule } from './app.module';
 import { JwtAuthGuard } from './common/jwt-auth.guard';
+import { RolesGuard } from './common/roles.guard';
 import { JwtService } from '@nestjs/jwt';
 import { ResponseInterceptor } from './common/response.interceptor';
 import { TenantContextInterceptor } from './common/tenant-context.interceptor';
 import { AllExceptionsFilter } from './common/errors.filter';
 import { Reflector } from '@nestjs/core';
-import { Tenant, User } from './entities/tenant.entity';
+import { Tenant, User, UserRole } from './entities/tenant.entity';
 
 async function seedDefaultTenantAndAdmin(dataSource: DataSource) {
   const tenantRepo = dataSource.getRepository(Tenant);
@@ -19,10 +20,10 @@ async function seedDefaultTenantAndAdmin(dataSource: DataSource) {
     );
   }
   const userRepo = dataSource.getRepository(User);
-  const exists = await userRepo.findOne({ where: { username: 'admin', tenantId: tenant.id } });
-  if (!exists) {
+  let admin = await userRepo.findOne({ where: { username: 'admin', tenantId: tenant.id } });
+  if (!admin) {
     const passwordHash = await bcrypt.hash('admin123', 10);
-    await userRepo.save(
+    admin = await userRepo.save(
       userRepo.create({
         tenantId: tenant.id,
         username: 'admin',
@@ -33,18 +34,30 @@ async function seedDefaultTenantAndAdmin(dataSource: DataSource) {
     );
     console.log('已创建默认管理员账号 admin / admin123（租户 default）');
   }
+  // 给 admin 用户种 admin 角色（幂等：已存在则跳过）
+  const roleRepo = dataSource.getRepository(UserRole);
+  const exists = await roleRepo.findOne({
+    where: { tenantId: tenant.id, userId: admin.id, role: 'admin' },
+  });
+  if (!exists) {
+    await roleRepo.save({ tenantId: tenant.id, userId: admin.id, role: 'admin' });
+    console.log('已授予 admin 用户 "admin" 角色');
+  }
 }
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  // 全局 JWT 守卫（先于路由级 TenantGuard 执行，写入 req.user）
-  app.useGlobalGuards(new JwtAuthGuard(new JwtService({ secret: process.env.JWT_SECRET || 'dev-secret' }), new Reflector()));
+  const reflector = new Reflector();
+  const jwtSecret = process.env.JWT_SECRET || 'dev-secret';
+  const jwt = new JwtService({ secret: jwtSecret });
+  // 全局守卫顺序：先 JWT 写 req.user，再 Roles 做权限校验
+  app.useGlobalGuards(new JwtAuthGuard(jwt, reflector), new RolesGuard(reflector));
   app.setGlobalPrefix('api/v1');
   app.useGlobalInterceptors(new TenantContextInterceptor(), new ResponseInterceptor());
   app.useGlobalFilters(new AllExceptionsFilter());
   app.enableCors();
 
-  // 首次启动种入默认租户与管理员（幂等）
+  // 首次启动种入默认租户、管理员与 admin 角色（幂等）
   await seedDefaultTenantAndAdmin(app.get(DataSource));
 
   await app.listen(process.env.PORT || 3000);

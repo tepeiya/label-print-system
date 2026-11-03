@@ -2,12 +2,12 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtModule } from '@nestjs/jwt';
-import { User, RefreshToken, Tenant } from '../entities/tenant.entity';
+import { User, RefreshToken, Tenant, UserRole } from '../entities/tenant.entity';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User, RefreshToken, Tenant]), JwtModule.register({ secret: process.env.JWT_SECRET || 'dev-secret' })],
+  imports: [TypeOrmModule.forFeature([User, RefreshToken, Tenant, UserRole]), JwtModule.register({ secret: process.env.JWT_SECRET || 'dev-secret' })],
   providers: [AuthService],
   controllers: [AuthController],
   exports: [AuthService],

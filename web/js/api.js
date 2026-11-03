@@ -115,6 +115,8 @@ export const api = {
     if (r?.accessToken) setTokens(r.accessToken, r.refreshToken);
     return r;
   },
+  /** 当前登录用户详情（含角色） */
+  me: () => req('GET', '/auth/me'),
 
   // ----------------------------- 模板 -----------------------------
   listTemplates: (q = {}) => req('GET', '/templates?' + new URLSearchParams(q)),
@@ -182,6 +184,17 @@ export const api = {
   },
   previewDataSource: (body) => req('POST', '/data-sources/preview', body),
   deleteDataSource: (id) => req('DELETE', `/data-sources/${id}`),
+
+  // ----------------------------- SQL 数据源 -----------------------------
+  saveSqlDataSource: (body) => req('POST', '/data-sources/save-sql', body),
+  testSqlDataSource: (id) => req('POST', `/data-sources/${id}/sql-test`, {}),
+  previewSqlDataSource: (id, params = [], limit = 200) => req('POST', `/data-sources/${id}/sql-preview`, { params, limit }),
+  execSqlDataSource: (id, params = [], limit = 1000) => req('POST', `/data-sources/${id}/sql-exec`, { params, limit }),
+
+  // ----------------------------- 用户管理（admin） -----------------------------
+  listUsers: () => req('GET', '/users'),
+  grantRole: (id, role) => req('POST', `/users/${id}/roles`, { role }),
+  revokeRole: (id, role) => req('DELETE', `/users/${id}/roles/${role}`),
 
   // ----------------------------- 审计 / 流水号 -----------------------------
   auditLogs: (q = {}) => req('GET', '/audit/logs?' + new URLSearchParams(q)),

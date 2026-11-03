@@ -4,7 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
-import { User, RefreshToken } from '../entities/tenant.entity';
+import { User, RefreshToken, UserRole } from '../entities/tenant.entity';
 
 export interface JwtPayload { sub: number; tenantId: number; roles: string[]; }
 
@@ -18,6 +18,7 @@ export class AuthService {
   constructor(
     @InjectRepository(User) private users: Repository<User>,
     @InjectRepository(RefreshToken) private refresh: Repository<RefreshToken>,
+    @InjectRepository(UserRole) private userRoles: Repository<UserRole>,
     private jwt: JwtService,
   ) {}
 
@@ -26,12 +27,20 @@ export class AuthService {
     const user = await this.users.findOne({ where: { username, tenantId: 1 } }); // 演示：默认租户 1
     if (!user || !(await bcrypt.compare(password, user.passwordHash)))
       throw new UnauthorizedException('用户名或密码错误');
-    return this.issue(user);
+    const roles = await this.loadRoles(user.id, user.tenantId);
+    return this.issue(user, roles);
+  }
+
+  /** 按 userId+tenantId 读取有效角色列表（去重） */
+  async loadRoles(userId: number, tenantId: number): Promise<string[]> {
+    const rows = await this.userRoles.find({ where: { userId, tenantId } });
+    return Array.from(new Set(rows.map((r) => r.role)));
   }
 
   /** 签发 Access + Refresh */
-  private async issue(user: User) {
-    const payload: JwtPayload = { sub: user.id, tenantId: user.tenantId, roles: [] };
+  private async issue(user: User, roles?: string[]) {
+    const finalRoles = roles ?? await this.loadRoles(user.id, user.tenantId);
+    const payload: JwtPayload = { sub: user.id, tenantId: user.tenantId, roles: finalRoles };
     const accessToken = await this.jwt.signAsync(payload, { expiresIn: '15m' });
     const refreshToken = await this.jwt.signAsync({ sub: user.id }, { expiresIn: '7d' });
     await this.refresh.save({ tenantId: user.tenantId, userId: user.id, tokenHash: hashToken(refreshToken), expiresAt: new Date(Date.now() + 7 * 864e5) });
@@ -42,11 +51,29 @@ export class AuthService {
     const rec = await this.refresh.findOne({ where: { tokenHash: hashToken(token), revoked: false } });
     if (!rec) throw new UnauthorizedException('刷新令牌无效');
     const user = await this.users.findOne({ where: { id: rec.userId } });
-    return this.issue(user!);
+    if (!user) throw new UnauthorizedException('用户不存在');
+    const roles = await this.loadRoles(user.id, user.tenantId);
+    return this.issue(user, roles);
   }
 
   async logout(token: string) {
     await this.refresh.update({ tokenHash: hashToken(token) }, { revoked: true });
     return { ok: true };
+  }
+
+  /** 获取当前登录用户详情（含角色，供前端展示） */
+  async me(userId: number) {
+    const user = await this.users.findOne({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException('用户不存在');
+    const roles = await this.loadRoles(user.id, user.tenantId);
+    return {
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName,
+      tenantId: user.tenantId,
+      email: user.email,
+      status: user.status,
+      roles,
+    };
   }
 }

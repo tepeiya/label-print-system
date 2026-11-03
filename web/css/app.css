@@ -201,6 +201,18 @@ input, select, textarea { font-family: inherit; }
   border-color: rgba(148, 163, 184, 0.35);
 }
 
+.user-badge {
+  flex: 0 0 auto;
+  margin-left: 10px;
+  font-size: 11px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.15);
+  color: #93c5fd;
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  white-space: nowrap;
+}
+
 /* =============================== 按钮 =============================== */
 .btn {
   display: inline-flex;

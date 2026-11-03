@@ -72,16 +72,27 @@ async function boot() {
   switchTab('design');
 
   // 后台登录（失败不影响本地设计与打印预览）
-  ensureLogin().then((ok) => {
+  ensureLogin().then(async (ok) => {
     const badge = $('auth-badge');
     if (badge) {
       badge.textContent = ok ? '● 已连接服务器' : '○ 离线模式';
       badge.classList.toggle('offline', !ok);
     }
     if (ok) {
+      try {
+        const me = await api.me();
+        window.LABEFLOW_CURRENT_USER = me;
+        applyRoleConstraints(me);
+        renderUserBadge(me);
+      } catch (e) {
+        console.warn('[auth] 拉取用户信息失败：', e);
+        window.LABEFLOW_CURRENT_USER = null;
+      }
       loadList();
       subscribePrintEvents();
       bindAuditExport();
+    } else {
+      applyRoleConstraints(null);
     }
   });
 
@@ -482,6 +493,74 @@ function bindAuditExport() {
   };
   document.getElementById('btn-audit-export-csv')?.addEventListener('click', mk('csv'));
   document.getElementById('btn-audit-export-json')?.addEventListener('click', mk('json'));
+}
+
+// ---------------------------------------------------------------------------
+// RBAC：按角色约束按钮可用性
+// ---------------------------------------------------------------------------
+
+/** 判断当前用户是否命中任一角色（admin 视为万能） */
+function hasAnyRole(user, ...roles) {
+  if (!user || !Array.isArray(user.roles)) return false;
+  if (user.roles.includes('admin')) return true;
+  return roles.some((r) => user.roles.includes(r));
+}
+
+const WRITE_ROLES = ['admin', 'operator'];
+const ADMIN_ONLY = ['admin'];
+
+/** 一次性 UI 约束：隐藏/禁用危险按钮 */
+function applyRoleConstraints(user) {
+  // 模板写操作：保存/新建/导出/导入
+  const canTplWrite = hasAnyRole(user, ...WRITE_ROLES);
+  disableById('btn-save', !canTplWrite);
+  disableById('btn-new', !canTplWrite);
+  // 导入导出：viewer 也能导出自己看，不让保存/新建足够
+  // 数据源写操作
+  const canDsWrite = hasAnyRole(user, ...WRITE_ROLES);
+  disableById('btn-save-source', !canDsWrite);
+  // 打印机写操作
+  const canPrinterWrite = hasAnyRole(user, ...WRITE_ROLES);
+  disableById('btn-printer-add', !canPrinterWrite);
+  // 打印提交
+  const canPrint = hasAnyRole(user, ...WRITE_ROLES);
+  disableById('btn-queue-print', !canPrint);
+  // admin 专属
+  const isAdmin = hasAnyRole(user, ...ADMIN_ONLY);
+  const hideIf = (id, v) => { const el = document.getElementById(id); if (el) el.hidden = v; };
+  hideIf('btn-audit-export-csv', !isAdmin);
+  hideIf('btn-audit-export-json', !isAdmin);
+
+  // 打印机详情卡片的危险按钮（JS 动态渲染）：post-process 委托
+  document.body.dataset.roles = (user?.roles ?? []).join(',');
+}
+
+function disableById(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.disabled = !!v;
+}
+
+/** 在顶栏 auth-badge 右侧渲染当前用户信息 */
+function renderUserBadge(user) {
+  const host = document.getElementById('auth-badge');
+  if (!host) return;
+  let badge = document.getElementById('user-badge');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.id = 'user-badge';
+    badge.className = 'user-badge';
+    host.parentElement?.insertBefore(badge, host.nextSibling);
+  }
+  if (!user) { badge.textContent = ''; badge.hidden = true; return; }
+  const label = user.displayName || user.username || '';
+  const roles = (user.roles || []).map(roleLabel).join('·');
+  badge.hidden = false;
+  badge.textContent = `${label} · ${roles}`;
+}
+
+/** 小工具：把 r 映射成中文角色名，命中不到则原样返回 */
+function roleLabel(r) {
+  return { admin: '管理员', operator: '操作员', sql: 'SQL', viewer: '只读' }[r] || r;
 }
 
 // ---------------------------------------------------------------------------

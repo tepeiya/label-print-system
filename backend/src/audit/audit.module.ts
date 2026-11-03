@@ -5,6 +5,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Response } from 'express';
 import { AuditLog } from '../entities/print.entity';
 import { TenantGuard } from '../common/tenant.guard';
+import { Roles } from '../common/roles.guard';
 import { useTenantId } from '../common/tenant.context';
 
 /** 审计写入（操作/打印日志统一入口） */
@@ -59,7 +60,8 @@ export class AuditController {
     return this.svc.find(q);
   }
 
-  /** 导出 CSV / JSON */
+  /** 导出 CSV / JSON（仅 admin） */
+  @Roles('admin')
   @Get('export')
   async export(@Query() q: any, @Res() res: Response) {
     const rows = await this.svc.exportRows(q);
