@@ -4,9 +4,10 @@ import { BullModule } from '@nestjs/bullmq';
 import { PrintJob, PrintLog, Printer } from '../entities/print.entity';
 import { Template } from '../entities/template.entity';
 import { PrintService } from './print.service';
-import { PrintController, PrintPreviewController, PrintCommandsController } from './print.controller';
+import { PrintController, PrintPreviewController, PrintCommandsController, PrintEventsController } from './print.controller';
 import { PrintProcessor } from './print.processor';
 import { RenderService } from './render.service';
+import { PrintEvents } from './events.event';
 import { SerialModule } from '../serial/serial.module';
 import { AuditModule } from '../audit/audit.module';
 
@@ -17,8 +18,8 @@ import { AuditModule } from '../audit/audit.module';
     SerialModule,
     AuditModule,
   ],
-  providers: [PrintService, PrintProcessor, RenderService],
-  controllers: [PrintController, PrintPreviewController, PrintCommandsController],
-  exports: [PrintService, RenderService],
+  providers: [PrintService, PrintProcessor, RenderService, PrintEvents],
+  controllers: [PrintController, PrintPreviewController, PrintCommandsController, PrintEventsController],
+  exports: [PrintService, RenderService, PrintEvents],
 })
 export class PrintModule {}

@@ -164,11 +164,30 @@ export const api = {
   dataSourceRows: (id, q = {}) => req('GET', `/data-sources/${id}/rows?` + new URLSearchParams(q)),
   saveDataSourceRows: (body) => req('POST', '/data-sources/rows', body),
   uploadDataSource: (body) => req('POST', '/data-sources/upload', body),
+  /** 后端 Excel 上传（multipart/form-data） */
+  uploadExcelDataSource: async (file, opts = {}) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (opts.name) fd.append('name', opts.name);
+    if (opts.fieldMap) fd.append('fieldMap', JSON.stringify(opts.fieldMap));
+    const res = await fetch(BASE + '/data-sources/upload-excel', {
+      method: 'POST',
+      headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
+      body: fd,
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.status === 401) { await doLogin(); return api.uploadExcelDataSource(file, opts); }
+    if (json?.code !== 0) throw new Error(json.message || `HTTP ${res.status}`);
+    return json.data;
+  },
   previewDataSource: (body) => req('POST', '/data-sources/preview', body),
   deleteDataSource: (id) => req('DELETE', `/data-sources/${id}`),
 
   // ----------------------------- 审计 / 流水号 -----------------------------
   auditLogs: (q = {}) => req('GET', '/audit/logs?' + new URLSearchParams(q)),
+  /** 审计导出：返回 URL 浏览器直接打开下载 */
+  auditExportUrl: (format = 'csv', q = {}) =>
+    `${BASE}/audit/logs/export?format=${format}&${new URLSearchParams(q).toString()}&token=${getToken()}`,
   serialPreview: (id, n = 50) => req('GET', `/serial-sequences/${id}/segment-preview?n=${n}`),
 };
 

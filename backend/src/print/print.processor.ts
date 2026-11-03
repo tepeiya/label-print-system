@@ -8,6 +8,7 @@ import { PrintJob, PrintLog, Printer } from '../entities/print.entity';
 import { Template } from '../entities/template.entity';
 import { RenderService } from './render.service';
 import { PrinterProviderRegistry } from '../../printer/printer-provider.interface';
+import { PrintEvents } from './events.event';
 import * as crypto from 'crypto';
 
 @Processor('print')
@@ -17,6 +18,7 @@ export class PrintProcessor extends WorkerHost {
     @InjectRepository(PrintLog) private logs: Repository<PrintLog>,
     @InjectRepository(Template) private tpls: Repository<Template>,
     private render: RenderService,
+    private events: PrintEvents,
   ) { super(); }
 
   async process(job: Job) {
@@ -140,6 +142,7 @@ export class PrintProcessor extends WorkerHost {
         });
       }
       await this.jobs.update(jobId, { done, failed, total: processed });
+      this.events.publish(tenantId, { type: 'progress', jobId, seqNo, done, failed, total: processed, status: done + failed === wanted?.length ? 'running' : 'running' });
     }
 
     await this.jobs.update(jobId, {
@@ -147,6 +150,7 @@ export class PrintProcessor extends WorkerHost {
       status: failed === 0 ? 'success' : done === 0 ? 'failed' : 'partial',
       finishedAt: new Date(),
     });
+    this.events.publish(tenantId, { type: 'completed', jobId, done, failed, total: processed, status: failed === 0 ? 'success' : done === 0 ? 'failed' : 'partial' });
     return { done, failed, processed };
   }
 

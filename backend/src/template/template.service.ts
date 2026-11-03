@@ -1,10 +1,11 @@
-// 模板服务：CRUD / 版本快照 / 复制 / 收藏 / 导入导出
+// 模板服务：CRUD / 版本快照 / 复制 / 收藏 / 导入导出 / 缩略图
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Template, TemplateVersion } from '../entities/template.entity';
 import { useTenantId } from '../common/tenant.context';
 import { AuditService } from '../audit/audit.module';
+import { encodeGrayPng } from '../../core/png';
 
 const CURRENT_SCHEMA = 1;
 // 导入兼容迁移（按 schemaVersion 路由）
@@ -41,10 +42,10 @@ export class TemplateService {
   }
 
   async create(dto: { name: string; category?: string; tags?: string[]; content: any; createdBy?: number }) {
-    // 保存即生成版本 1
     const t = await this.tpl.save({ ...dto, tenantId: this.tid(), schemaVersion: CURRENT_SCHEMA, currentVersion: 1, tags: dto.tags ?? [] });
     await this.ver.save({ tenantId: this.tid(), templateId: t.id, version: 1, content: dto.content, createdBy: dto.createdBy });
     await this.audit.write(this.tid(), 'template.create', { id: t.id, name: t.name, category: t.category }, dto.createdBy, 'template', t.id);
+    this.genThumbnail(t.id, dto.content).catch(() => { /* 缩略图生成失败不阻断主链路 */ });
     return t;
   }
 
@@ -55,6 +56,7 @@ export class TemplateService {
     if (dto.content) await this.ver.save({ tenantId: this.tid(), templateId: id, version: next, content: dto.content, createdBy: dto.updatedBy });
     const saved = await this.tpl.save({ ...t, ...dto, currentVersion: next });
     await this.audit.write(this.tid(), 'template.update', { id, version: next, name: dto.name }, dto.updatedBy, 'template', id);
+    if (dto.content) this.genThumbnail(id, dto.content).catch(() => {});
     return saved;
   }
 
@@ -103,5 +105,19 @@ export class TemplateService {
   async exportOne(id: number) {
     const t = await this.get(id);
     return { template: t, schemaVersion: CURRENT_SCHEMA };
+  }
+
+  /** 异步生成模板缩略图：按模板内容的宽高比缩放，小尺寸灰度 PNG（约 120px） */
+  private async genThumbnail(templateId: number, content: any) {
+    const page = content?.page;
+    if (!page?.widthMm || !page?.heightMm) return;
+    const MAX_W = 160;
+    const ratio = Math.min(MAX_W / page.widthMm, 160 / page.heightMm);
+    const w = Math.max(1, Math.round(page.widthMm * ratio));
+    const h = Math.max(1, Math.round(page.heightMm * ratio));
+    // 全白底 PNG（纯占位；真实场景接入 bwip-js 或 node-canvas 绘出真实元素缩略）
+    const px = new Uint8Array(w * h).fill(255);
+    const buf = encodeGrayPng(w, h, px);
+    await this.tpl.update({ id: templateId, tenantId: this.tid() }, { thumbnail: buf });
   }
 }

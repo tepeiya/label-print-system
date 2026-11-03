@@ -1,8 +1,9 @@
-import { Module, Injectable, NotFoundException } from '@nestjs/common';
+import { Module, Injectable, NotFoundException, Controller, Get, Post, Delete, Body, Param, Query, UseGuards, UseInterceptors, UploadedFile } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import * as XLSX from 'xlsx';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { DataSource as DS, DataRow } from '../entities/print.entity';
 import { TenantGuard } from '../common/tenant.guard';
 import { useTenantId } from '../common/tenant.context';
@@ -139,6 +140,30 @@ export class DataSourceController {
   @Get() list() { return this.svc.list(); }
   @Post('upload') upload(@Body() b: { name: string; csvText: string; fieldMap: Record<string, string> }) {
     return this.svc.uploadCsv(b.name, b.csvText, b.fieldMap ?? {});
+  }
+
+  /** 服务端 Excel 上传：multer 接 file → xlsx 解析 → 自动生成字段映射 → saveRows */
+  @Post('upload-excel')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  async uploadExcel(@UploadedFile() file: Express.Multer.File, @Body() body: { name?: string; fieldMap?: string } = {} as any) {
+    if (!file) throw new Error('缺少 file');
+    if (!/\.xlsx?$/i.test(file.originalname || '')) throw new Error('仅支持 .xlsx / .xls');
+    const wb = XLSX.read(file.buffer, { type: 'buffer', cellDates: false });
+    const sheetName = wb.SheetNames[0];
+    if (!sheetName) throw new Error('Excel 中没有工作表');
+    const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: '', raw: false });
+    if (!rows.length) throw new Error('Excel 没有数据行');
+    const headers = Object.keys(rows[0]);
+    let fieldMap: Record<string, string> = {};
+    if (body.fieldMap) {
+      try { fieldMap = typeof body.fieldMap === 'string' ? JSON.parse(body.fieldMap) : body.fieldMap; } catch { fieldMap = {}; }
+    }
+    return this.svc.saveRows({
+      name: body.name || `Excel ${file.originalname}`,
+      type: 'excel',
+      headers, rows, fieldMap,
+      config: { sourceType: 'excel', originalName: file.originalname, sheet: sheetName, sizeBytes: file.size },
+    });
   }
   @Post('rows') saveRows(@Body() b: any) { return this.svc.saveRows(b); }
   @Get(':id/rows') rowsOf(@Param('id') id: number, @Query() q: any) {

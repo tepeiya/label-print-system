@@ -2,13 +2,17 @@
 // print.controller.ts —— 打印队列 / 指令导出 / 实时预览
 // =============================================================================
 
-import { Controller, Post, Get, Param, Body, Query, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Param, Body, Query, UseGuards, Res, UnauthorizedException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { Public } from '../common/public.decorator';
+import { Response } from 'express';
 import { PrintService } from './print.service';
 import { RenderService } from './render.service';
 import { renderPrintHtml, HtmlRenderOutput } from './html-renderer';
 import { TenantGuard } from '../common/tenant.guard';
 import { generateZpl, mmToDots } from '../../core/zpl-generator';
 import { buildJob as buildTsplJob } from '../../core/tspl-generator';
+import { PrintEvents } from './events.event';
 import * as crypto from 'crypto';
 
 @Controller('print/jobs')
@@ -125,4 +129,58 @@ function buildWarnings(protocol: 'zpl' | 'tspl', tpl: any): string[] {
     warnings.push('TSPL 文本使用 FONT001，中文需打印机内置中文字库；无字库时请改用 ZPL(^CI28) 或图像通道');
   }
   return warnings;
+}
+
+/** SSE：打印任务实时事件流。@Public() 跳过全局守卫，handler 内手动解 query.token。
+ * 用独立前缀 print-stream 避免和 PrintController(/print/jobs) 冲突 */
+@Controller('print-stream')
+@Public()
+export class PrintEventsController {
+  constructor(private bus: PrintEvents, private jwt: JwtService) {}
+
+  @Get('events')
+  stream(@Query('token') token: string, @Res() res: Response) {
+    try {
+      let tenantId: number;
+      try {
+        const payload: any = this.jwt.verify(String(token || ''), { secret: process.env.JWT_SECRET || 'dev-secret' });
+        tenantId = +payload.tenantId;
+        if (!tenantId) throw new Error('缺少 tenantId');
+      } catch (e) {
+        res.status(401).json({ code: 401, message: '无效 token', data: null });
+        return;
+      }
+
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders?.();
+
+      res.write(`retry: 15000\n\n`);
+      res.write(`event: hello\ndata: ${JSON.stringify({ ok: true, tenantId })}\n\n`);
+
+      const send = (name: string, data: any) => {
+        if (res.writableEnded) return false;
+        res.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
+        return true;
+      };
+
+      const unsubscribe = this.bus.subscribe(tenantId, (ev) => {
+        if (!send('event', ev)) return false;
+      }, 5 * 60_000);
+
+      const ping = setInterval(() => {
+        if (res.writableEnded) { clearInterval(ping); return; }
+        res.write(`: ping ${Date.now()}\n\n`);
+      }, 20_000);
+
+      res.on('close', () => { clearInterval(ping); unsubscribe(); });
+    } catch (e: any) {
+      console.error('[SSE INNER ERROR]', e?.stack || e);
+      if (!res.headersSent) {
+        res.status(500).json({ code: 500, message: e?.message || '内部错误', data: null });
+      }
+    }
+  }
 }

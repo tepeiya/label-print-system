@@ -13,7 +13,6 @@ import { IS_PUBLIC_KEY } from './public.decorator';
 export class JwtAuthGuard implements CanActivate {
   constructor(private jwt: JwtService, private reflector: Reflector) {}
   canActivate(ctx: ExecutionContext): boolean {
-    // 标记为 @Public() 的路由直接放行
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       ctx.getHandler(),
       ctx.getClass(),
@@ -21,10 +20,14 @@ export class JwtAuthGuard implements CanActivate {
     if (isPublic) return true;
 
     const req = ctx.switchToHttp().getRequest();
+    // 优先 Bearer header；缺省时回退到 query.token（供浏览器 EventSource / Webhook 使用）
+    let raw: string | undefined;
     const h = req.headers.authorization;
-    if (!h?.startsWith('Bearer ')) throw new UnauthorizedException('未认证');
+    if (h?.startsWith('Bearer ')) raw = h.slice(7);
+    if (!raw && req.query?.token) raw = String(req.query.token);
+    if (!raw) throw new UnauthorizedException('未认证');
     try {
-      const payload = this.jwt.verify(h.slice(7)); // 验签
+      const payload: any = this.jwt.verify(raw);
       req.user = { sub: payload.sub, tenantId: payload.tenantId, roles: payload.roles ?? [] };
       return true;
     } catch {

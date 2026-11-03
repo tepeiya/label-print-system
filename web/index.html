@@ -26,6 +26,7 @@
       <button type="button" class="tab active" data-tab="design">✎ 标签设计</button>
       <button type="button" class="tab" data-tab="print">🖨 打印输出</button>
       <button type="button" class="tab" data-tab="jobs">🧾 打印任务</button>
+      <button type="button" class="tab" data-tab="printers">🖲 打印机</button>
       <button type="button" class="tab" data-tab="templates">🗂 模板库</button>
       <button type="button" class="tab" data-tab="audit">📜 审计日志</button>
     </nav>
@@ -253,6 +254,105 @@
       </div>
     </section>
 
+    <!-- ---------- 打印机 ---------- -->
+    <section id="view-printers" class="view">
+      <div class="tpl-layout">
+        <div class="tpl-head">
+          <span class="page-title">🖲 打印机</span>
+          <button type="button" class="btn btn-primary" id="btn-printer-add">＋ 新增打印机</button>
+          <button type="button" class="btn" id="btn-printer-refresh-list">刷新</button>
+          <span class="st-spacer"></span>
+          <span id="printers-stat" class="form-hint">—</span>
+        </div>
+        <div class="printer-layout">
+          <div class="tpl-table-wrap">
+            <table class="tpl-table printer-table">
+              <thead>
+                <tr>
+                  <th style="width:28%">名称</th>
+                  <th style="width:12%">通道</th>
+                  <th style="width:14%">连接</th>
+                  <th style="width:8%">DPI</th>
+                  <th style="width:12%">标签 (W×H)</th>
+                  <th style="width:8%">默认</th>
+                  <th style="width:18%">操作</th>
+                </tr>
+              </thead>
+              <tbody id="printers-list-body">
+                <tr><td colspan="7" class="tpl-empty">加载中…</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <aside id="printer-detail" class="printer-detail">
+            <div class="printer-detail-empty">选择左侧打印机查看详情 / 连接测试 / 校准</div>
+          </aside>
+        </div>
+      </div>
+
+      <!-- 新增/编辑对话框 -->
+      <div class="modal-mask" id="printer-modal-mask" hidden>
+        <div id="printer-modal" class="modal printer-dialog">
+          <div class="modal-head">
+            <span id="printer-modal-title">新增打印机</span>
+            <button type="button" class="btn ghost" id="printer-modal-close" title="关闭">×</button>
+          </div>
+          <div class="modal-body">
+            <label class="form-row"><span class="form-label">名称</span><input type="text" id="printer-f-name" class="form-input" placeholder="如 斑马打印机1号"></label>
+            <label class="form-row"><span class="form-label">通道</span>
+              <select id="printer-f-channel" class="form-input">
+                <option value="raw_tcp">TCP/IP 网络</option>
+                <option value="browser">浏览器打印</option>
+                <option value="image">图像输出（测试用）</option>
+                <option value="windows_spooler">Windows 本地（需代理）</option>
+              </select>
+            </label>
+            <div id="printer-f-tcp-block">
+              <div class="form-row2">
+                <label class="form-row"><span class="form-label">主机</span><input type="text" id="printer-f-host" class="form-input" placeholder="192.168.1.100"></label>
+                <label class="form-row"><span class="form-label">端口</span><input type="number" id="printer-f-port" class="form-input num" value="9100"></label>
+              </div>
+            </div>
+            <label class="form-row2">
+              <span class="form-label">指令协议</span>
+              <select id="printer-f-protocol" class="form-input">
+                <option value="zpl">ZPL（斑马/TSC/博思得等）</option>
+                <option value="tspl">TSPL（台半 TSC）</option>
+              </select>
+              <label class="form-check"><input type="checkbox" id="printer-f-default"> 设为默认</label>
+            </label>
+            <div class="form-row2">
+              <label class="form-row"><span class="form-label">DPI</span><input type="number" id="printer-f-dpi" class="form-input num" value="300" min="72"></label>
+              <label class="form-row"><span class="form-label">浓度</span><input type="number" id="printer-f-density" class="form-input num" placeholder="0~30"></label>
+            </div>
+            <div class="form-row2">
+              <label class="form-row"><span class="form-label">速度 (in/s)</span><input type="number" id="printer-f-speed" class="form-input num" placeholder="1~10"></label>
+              <label class="form-row"><span class="form-label">偏移 X (mm)</span><input type="number" id="printer-f-offsetx" class="form-input num" value="0" step="0.1"></label>
+            </div>
+            <div class="form-row2">
+              <label class="form-row"><span class="form-label">宽度 (mm)</span><input type="number" id="printer-f-width" class="form-input num" value="80" step="0.1"></label>
+              <label class="form-row"><span class="form-label">高度 (mm)</span><input type="number" id="printer-f-height" class="form-input num" value="50" step="0.1"></label>
+            </div>
+            <div class="form-row2">
+              <label class="form-row"><span class="form-label">间隙 (mm)</span><input type="number" id="printer-f-gap" class="form-input num" value="2" step="0.1"></label>
+              <label class="form-row"><span class="form-label">模式</span>
+                <select id="printer-f-media" class="form-input">
+                  <option value="gap">间隙</option>
+                  <option value="blackmark">黑标</option>
+                  <option value="continuous">连续纸</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn" id="printer-modal-test">🔌 测试连通</button>
+            <span class="st-spacer"></span>
+            <button type="button" class="btn" id="printer-modal-cancel">取消</button>
+            <button type="button" class="btn btn-primary" id="printer-modal-save">💾 保存</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- ---------- 模板库 ---------- -->
     <section id="view-templates" class="view">
       <div class="tpl-layout">
@@ -302,6 +402,8 @@
           <input type="search" id="audit-action" class="form-input tpl-search" placeholder="按动作筛选，如 print.job">
           <button type="button" class="btn" id="btn-audit-refresh">刷新</button>
           <span class="st-spacer"></span>
+          <button type="button" class="btn" id="btn-audit-export-csv">⬇ 导出 CSV</button>
+          <button type="button" class="btn" id="btn-audit-export-json">⬇ 导出 JSON</button>
           <span id="audit-stat" class="form-hint">—</span>
         </div>
         <div class="tpl-table-wrap">

@@ -10,8 +10,9 @@ import { renderInspector, setInspectorTab, getInspectorTab } from './inspector.j
 import { initPrint, generate } from './print.js';
 import { initTemplates, loadList, resetCurrentTemplateId } from './templates.js';
 import { initJobs, refreshJobs, loadAudit } from './jobs.js';
+import { initPrinters, subscribePrintEvents } from './printers.js';
 import { initGuides, refreshRulers } from './guides.js';
-import { ensureLogin } from './api.js';
+import { ensureLogin, api } from './api.js';
 import { MM2PX, deepClone, uid, r2, toast, downloadFile, clamp } from './util.js';
 
 const PXMM = MM2PX;
@@ -41,6 +42,7 @@ async function boot() {
   initPrint();
   initTemplates();
   initJobs();
+  initPrinters();
 
   restoreAutosave();
 
@@ -76,7 +78,11 @@ async function boot() {
       badge.textContent = ok ? '● 已连接服务器' : '○ 离线模式';
       badge.classList.toggle('offline', !ok);
     }
-    if (ok) loadList();
+    if (ok) {
+      loadList();
+      subscribePrintEvents();
+      bindAuditExport();
+    }
   });
 
   registerServiceWorker();
@@ -260,6 +266,7 @@ export function switchTab(name) {
   if (name === 'templates') loadList($('tpl-search')?.value || '');
   if (name === 'jobs') refreshJobs();
   if (name === 'audit') loadAudit();
+  if (name === 'printers') window.dispatchEvent(new CustomEvent('printers-refresh'));
 }
 
 // ---------------------------------------------------------------------------
@@ -457,6 +464,24 @@ function restoreAutosave() {
   } catch (e) {
     store.loadTemplate(defaultTemplate());
   }
+}
+
+// ---------------------------------------------------------------------------
+// 审计导出
+// ---------------------------------------------------------------------------
+function bindAuditExport() {
+  const action = document.getElementById('audit-action');
+  const mk = (format) => () => {
+    const url = api.auditExportUrl(format, {
+      action: action?.value?.trim() || '',
+      limit: 20000,
+    });
+    const a = document.createElement('a');
+    a.href = url; a.download = `audit-${format}-${Date.now()}.${format}`;
+    a.click();
+  };
+  document.getElementById('btn-audit-export-csv')?.addEventListener('click', mk('csv'));
+  document.getElementById('btn-audit-export-json')?.addEventListener('click', mk('json'));
 }
 
 // ---------------------------------------------------------------------------
