@@ -2,6 +2,10 @@
 
 > 目标：从零实现一套可商用专业标签软件的 ~80% 核心能力。支持拖拽式可视化设计器、变量/公式/流水号/条码二维码、多打印机通道、多租户隔离、批量打印与任务队列、导入导出与版本管理。
 
+> **接手开发请先读 [`docs/10-dev-handover.md`](docs/10-dev-handover.md)** ——
+> 面向 AI / 开发者的一页式交接文档：运行环境与端口、模块地图、核心 schema 约定、
+> 已完成清单、已知技术债、路线图、踩坑记录、自测清单。
+
 ---
 
 ## 0. 技术栈选型与取舍
@@ -42,7 +46,8 @@ label-print-system/
 │   ├── 04-template-schema.md       # 模板 JSON Schema + 示例
 │   ├── 05-api.md                   # 后端 API 清单
 │   ├── 08-plan.md                  # 开发计划 + 测试要点
-│   └── 09-ai-template-generation.md # AI 标签图片 → 模板自动生成（OCR/条码/分类/LLM）
+│   ├── 09-ai-template-generation.md # AI 标签图片 → 模板自动生成（OCR/条码/分类/LLM）
+│   └── 10-dev-handover.md          # 开发交接文档（面向接手的 AI / 开发者）
 ├── backend/
 │   ├── core/
 │   │   ├── serial-number.service.ts   # 流水号并发安全（行锁 + 号段预分配）
