@@ -19,6 +19,7 @@
 │  ├─ BarcodeModule（checksum + 服务端出图 @bwip-js）               │
 │  ├─ PrintModule（任务编排 + Provider 路由）                       │
 │  ├─ DataSourceModule（CSV/Excel/SQL）                             │
+│  ├─ AiTemplateModule（图片→模板：ZXing+OCR+几何+Vision LLM）      │
 │  └─ AuditModule（操作/打印日志）                                  │
 └───────┬───────────────────────┬───────────────────┬───────────────┘
         │                        │                   │

@@ -29,6 +29,7 @@
       <button type="button" class="tab" data-tab="printers">🖲 打印机</button>
       <button type="button" class="tab" data-tab="templates">🗂 模板库</button>
       <button type="button" class="tab" data-tab="audit">📜 审计日志</button>
+      <button type="button" class="tab" data-tab="ai">🎨 AI 生成</button>
     </nav>
 
     <input id="tpl-name" class="tpl-name" value="未命名标签" title="模板名称" spellcheck="false">
@@ -422,6 +423,121 @@
             </tbody>
           </table>
         </div>
+      </div>
+    </section>
+
+    <!-- ---------- AI 生成 ---------- -->
+    <section id="view-ai" class="view">
+      <div class="ai-layout">
+        <!-- 左：输入 -->
+        <aside class="ai-side">
+          <div class="panel-block">
+            <div class="panel-title">
+              1. 上传标签图片
+              <span class="hint">jpg / png / webp，≤10MB</span>
+            </div>
+            <label id="ai-dropzone" class="ai-dropzone">
+              <input type="file" id="ai-file" accept="image/jpeg,image/png,image/webp,image/tiff" hidden>
+              <span id="ai-dropzone-hint">点击或拖拽图片到这里</span>
+              <img id="ai-preview" class="ai-preview" alt="预览" hidden>
+            </label>
+          </div>
+
+          <div class="panel-block">
+            <div class="panel-title">2. 标签尺寸</div>
+            <div class="form-row2">
+              <label class="form-row">
+                <span class="form-label">宽 (mm)</span>
+                <input type="number" id="ai-width" class="form-input num" value="100" min="5" max="1000" step="0.1">
+              </label>
+              <label class="form-row">
+                <span class="form-label">高 (mm)</span>
+                <input type="number" id="ai-height" class="form-input num" value="60" min="5" max="1000" step="0.1">
+              </label>
+            </div>
+            <div class="form-row2">
+              <label class="form-row">
+                <span class="form-label">DPI</span>
+                <select id="ai-dpi" class="form-input">
+                  <option value="203">203</option>
+                  <option value="300" selected>300</option>
+                  <option value="600">600</option>
+                </select>
+              </label>
+              <label class="form-row">
+                <span class="form-label">OCR 语言</span>
+                <select id="ai-lang" class="form-input">
+                  <option value="eng+chi_sim" selected>中英混合</option>
+                  <option value="chi_sim">仅中文</option>
+                  <option value="eng">仅英文</option>
+                </select>
+              </label>
+            </div>
+            <label class="form-row">
+              <span class="form-label">变量关键词</span>
+              <input type="text" id="ai-keywords" class="form-input" placeholder="可选，如：批号,序列号,日期">
+            </label>
+            <label class="form-check">
+              <input type="checkbox" id="ai-use-llm" checked>
+              使用 AI 视觉模型精修（需在下方配置模型）
+            </label>
+            <div class="print-side-actions">
+              <button type="button" class="btn btn-primary" id="btn-ai-generate" disabled>🚀 识别并生成模板</button>
+              <button type="button" class="btn" id="btn-ai-reset">重置</button>
+            </div>
+            <div id="ai-status" class="print-stat">等待上传图片</div>
+          </div>
+
+          <div class="panel-block">
+            <div class="panel-title">
+              AI 视觉模型
+              <span class="hint">OpenAI 兼容接口</span>
+            </div>
+            <div id="ai-model-list" class="ai-model-list">未配置（将使用本地规则引擎）</div>
+            <div class="ai-model-form">
+              <input type="text" id="ai-model-endpoint" class="form-input" placeholder="https://api.openai.com/v1">
+              <input type="text" id="ai-model-id" class="form-input" placeholder="模型名，如 gpt-4o">
+              <input type="password" id="ai-model-key" class="form-input" placeholder="API Key（sk-...）">
+              <div class="print-side-actions">
+                <button type="button" class="btn" id="btn-ai-model-save">保存为默认模型</button>
+                <button type="button" class="btn" id="btn-ai-model-refresh">刷新</button>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <!-- 右：结果 -->
+        <section class="ai-main">
+          <div class="ai-head">
+            <span class="page-title">识别结果</span>
+            <span id="ai-summary" class="form-hint">尚未生成</span>
+            <span class="st-spacer"></span>
+            <button type="button" class="btn" id="btn-ai-load" disabled>✎ 载入画布</button>
+            <button type="button" class="btn btn-primary" id="btn-ai-save-tpl" disabled>💾 保存到模板库</button>
+          </div>
+          <div id="ai-warnings" class="ai-warnings" hidden></div>
+          <div class="tpl-table-wrap ai-table-wrap">
+            <table class="tpl-table">
+              <thead>
+                <tr>
+                  <th style="width:10%">类型</th>
+                  <th style="width:30%">内容</th>
+                  <th style="width:22%">位置 / 尺寸 (mm)</th>
+                  <th style="width:18%">AI 判断</th>
+                  <th style="width:10%">置信度</th>
+                  <th style="width:10%">级</th>
+                </tr>
+              </thead>
+              <tbody id="ai-elements-body">
+                <tr><td colspan="6" class="tpl-empty">上传图片并生成后在此查看</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="panel-block ai-vars-block">
+            <div class="panel-title">识别到的变量</div>
+            <div id="ai-variables" class="ai-vars">—</div>
+          </div>
+        </section>
       </div>
     </section>
 

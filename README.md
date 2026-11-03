@@ -41,7 +41,8 @@ label-print-system/
 │   ├── 03-database.sql             # 完整 DDL（含索引/租户隔离/流水号表）
 │   ├── 04-template-schema.md       # 模板 JSON Schema + 示例
 │   ├── 05-api.md                   # 后端 API 清单
-│   └── 08-plan.md                  # 开发计划 + 测试要点
+│   ├── 08-plan.md                  # 开发计划 + 测试要点
+│   └── 09-ai-template-generation.md # AI 标签图片 → 模板自动生成（OCR/条码/分类/LLM）
 ├── backend/
 │   ├── core/
 │   │   ├── serial-number.service.ts   # 流水号并发安全（行锁 + 号段预分配）

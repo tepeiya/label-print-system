@@ -27,3 +27,8 @@ pnpm-debug.log*
 
 # 测试/覆盖率产物（保留源码，忽略生成物）
 coverage/
+
+# OCR 语言包（约 30MB，按 docs/09-ai-template-generation.md §9.13.4 下载到本地）
+backend/assets/tessdata/*.traineddata
+backend/assets/tessdata/*.traineddata.gz
+backend/*.traineddata

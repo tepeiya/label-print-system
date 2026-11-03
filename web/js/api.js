@@ -196,6 +196,14 @@ export const api = {
   grantRole: (id, role) => req('POST', `/users/${id}/roles`, { role }),
   revokeRole: (id, role) => req('DELETE', `/users/${id}/roles/${role}`),
 
+  // ----------------------------- AI 模板生成 -----------------------------
+  saveAiTemplate: (body) => req('POST', '/ai-template/save', body),
+  aiTemplateJobs: (limit = 20) => req('GET', `/ai-template/jobs?limit=${limit}`),
+  listAiModels: () => req('GET', '/ai-template/models'),
+  createAiModel: (body) => req('POST', '/ai-template/models', body),
+  testAiModel: (id) => req('POST', `/ai-template/models/${id}/test`, {}),
+  deleteAiModel: (id) => req('DELETE', `/ai-template/models/${id}`),
+
   // ----------------------------- 审计 / 流水号 -----------------------------
   auditLogs: (q = {}) => req('GET', '/audit/logs?' + new URLSearchParams(q)),
   /** 审计导出：返回 URL 浏览器直接打开下载 */

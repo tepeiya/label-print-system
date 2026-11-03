@@ -11,6 +11,7 @@ import { initPrint, generate } from './print.js';
 import { initTemplates, loadList, resetCurrentTemplateId } from './templates.js';
 import { initJobs, refreshJobs, loadAudit } from './jobs.js';
 import { initPrinters, subscribePrintEvents } from './printers.js';
+import { initAiTemplate } from './ai-template.js';
 import { initGuides, refreshRulers } from './guides.js';
 import { ensureLogin, api } from './api.js';
 import { MM2PX, deepClone, uid, r2, toast, downloadFile, clamp } from './util.js';
@@ -43,6 +44,7 @@ async function boot() {
   initTemplates();
   initJobs();
   initPrinters();
+  initAiTemplate();
 
   restoreAutosave();
 
@@ -278,6 +280,7 @@ export function switchTab(name) {
   if (name === 'jobs') refreshJobs();
   if (name === 'audit') loadAudit();
   if (name === 'printers') window.dispatchEvent(new CustomEvent('printers-refresh'));
+  if (name === 'ai') window.dispatchEvent(new CustomEvent('ai-refresh'));
 }
 
 // ---------------------------------------------------------------------------
@@ -525,6 +528,11 @@ function applyRoleConstraints(user) {
   // 打印提交
   const canPrint = hasAnyRole(user, ...WRITE_ROLES);
   disableById('btn-queue-print', !canPrint);
+  // AI 生成（无权限时单向锁定，避免覆盖「未选图片」的初始禁用态）
+  if (!canPrint) {
+    disableById('btn-ai-generate', true);
+    disableById('btn-ai-save-tpl', true);
+  }
   // admin 专属
   const isAdmin = hasAnyRole(user, ...ADMIN_ONLY);
   const hideIf = (id, v) => { const el = document.getElementById(id); if (el) el.hidden = v; };

@@ -49,7 +49,7 @@ CREATE TABLE user_roles (
     tenant_id  BIGINT NOT NULL,                     -- 冗余租户便于隔离查询
     user_id    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role       VARCHAR(30) NOT NULL
-               CHECK (role IN ('super_admin','template_designer','print_operator','readonly_guest')),
+               CHECK (role IN ('admin','operator','sql','viewer')),   -- 与 backend/src/common/roles.guard.ts 保持一致
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT uq_user_roles UNIQUE (tenant_id, user_id, role)
 );
@@ -317,6 +317,49 @@ CREATE TABLE tenant_backups (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX ix_backups_tenant ON tenant_backups (tenant_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- 8.5 AI 模板生成（详见 docs/09-ai-template-generation.md）
+-- ---------------------------------------------------------------------------
+
+-- 生成任务：大图 / 异步场景落库，前端轮询 /ai-template/status/:jobId
+CREATE TABLE ai_template_jobs (
+    id            BIGSERIAL PRIMARY KEY,
+    tenant_id     BIGINT NOT NULL,                  -- 租户隔离字段
+    status        VARCHAR(20) NOT NULL DEFAULT 'queued'
+                  CHECK (status IN ('queued','running','done','failed')),
+    image_path    TEXT,                              -- 临时存储路径（24h 定时清理）
+    image_bytes   BIGINT,
+    params        JSONB NOT NULL DEFAULT '{}',       -- 用户输入：targetWidthMm/HeightMm/dpi/tagMode/...
+    result        JSONB,                             -- AiTemplateGenerateResponse（template + meta）
+    error_msg     TEXT,
+    elapsed_ms    INTEGER,
+    model         VARCHAR(120),                      -- 实际使用的模型标识
+    created_by    BIGINT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at   TIMESTAMPTZ
+);
+CREATE INDEX ix_aitpljobs_tenant_created ON ai_template_jobs (tenant_id, created_at DESC);
+CREATE INDEX ix_aitpljobs_tenant_status  ON ai_template_jobs (tenant_id, status);
+
+-- Vision LLM 配置：支持多模型切换（qwen-vl / gpt-4o / ollama-llava / custom）
+-- api_key 使用 AES-256-GCM 加密存储（复用 backend/src/datasource/sql-crypto.ts）
+CREATE TABLE ai_model_configs (
+    id            BIGSERIAL PRIMARY KEY,
+    tenant_id     BIGINT NOT NULL,                  -- 租户隔离字段
+    name          VARCHAR(60) NOT NULL,             -- 展示名，如 "qwen-vl-max"
+    provider      VARCHAR(40) NOT NULL
+                  CHECK (provider IN ('qwen','openai','zhipu','ollama','custom')),
+    api_endpoint  TEXT,
+    api_key_enc   TEXT,                             -- 加密后的 API Key
+    model_id      VARCHAR(120) NOT NULL,            -- 厂商模型 id
+    is_default    BOOLEAN NOT NULL DEFAULT false,
+    settings      JSONB NOT NULL DEFAULT '{}',      -- temperature / max_tokens / prompt_override
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_aimodel_tenant_name UNIQUE (tenant_id, name)
+);
+CREATE INDEX ix_aimodels_tenant ON ai_model_configs (tenant_id);
 
 -- =============================================================================
 -- 9. 行级隔离说明（代码侧配合 TenantGuard）

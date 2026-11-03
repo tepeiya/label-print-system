@@ -106,6 +106,33 @@
 | GET | `/audit/logs` | 分页/action 筛选 | `Page<AuditLog>` | super_admin |
 | GET | `/audit/print-logs` | 分页 | `Page<PrintLog>`（导出） | super_admin |
 
+## 5.9b AI 模板生成
+
+> 完整设计（算法/提示词/成本/局限性）见 `09-ai-template-generation.md`。
+
+| 方法 | 路径 | 入参 | 出参 | 权限 |
+| --- | --- | --- | --- | --- |
+| POST | `/ai-template/generate` | `multipart`：`image`（≤10MB，jpg/png/webp）+ `targetWidthMm` + `targetHeightMm` + `dpi` + 可选 `tagMode` / `variableHintKeywords` / `serialHint` | `200` → `AiTemplateGenerateResponse`（template + meta）；`202` → `{jobId, status, estimatedMs}` | admin / operator |
+| GET | `/ai-template/status/:jobId` | — | `{jobId, status, result?, errorMsg?}` | admin / operator |
+| POST | `/ai-template/save` | `{template, meta?}`（用户校验后提交） | `Template` | admin / operator |
+| POST | `/ai-template/regenerate-element` | `{jobId, elementId, correction?}` | `{element, confidence}` | admin / operator |
+| GET | `/ai-template/models` | — | `AiModelConfig[]`（API Key 脱敏） | admin |
+| POST | `/ai-template/models` | `{name, provider, apiEndpoint, apiKey, modelId, isDefault}` | `AiModelConfig` | admin |
+| DELETE | `/ai-template/models/:id` | — | `{ok}` | admin |
+
+**AI 生成错误码（追加）**
+
+| code | 含义 |
+| --- | --- |
+| 4001 | 图片格式不支持（仅 jpg/png/webp/tiff） |
+| 4002 | 缺少 `targetWidthMm` / `targetHeightMm` / `dpi` |
+| 4003 | 图片超过 10MB |
+| 4004 | 图片解码失败（文件损坏或非图片） |
+| 5021 | Vision LLM 服务不可用 / 超时 |
+| 5022 | OCR 服务不可用 |
+| 5023 | LLM 返回结构不符合 LabelTemplate 契约（自动降级为启发式结果） |
+| 4291 | 超出每日 AI 生成配额（默认 50 次/租户） |
+
 ## 5.10 错误码（节选）
 
 | code | 含义 |
