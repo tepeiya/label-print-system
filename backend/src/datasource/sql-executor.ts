@@ -32,8 +32,37 @@ const FORBIDDEN_PREFIX = [
 /** 允许的首字符关键字（SELECT / WITH / VALUES / SHOW / EXPLAIN） */
 const ALLOWED_PREFIX = ['select', 'with', 'values', 'show', 'explain'];
 
-/** 只读强制：抛异常则阻止执行 */
-function assertReadOnly(sql: string, skip = false): void {
+/**
+ * 按分号切分语句，忽略字符串字面量（'...' / "..."，含 '' 转义）里的分号。
+ * 必须在去注释之后调用：旧实现按分号「计数」判断多语句，`SELECT 1; DROP TABLE users`
+ * 只有 1 个分号，会被放过并只校验第一条的前缀。
+ * 注：execute() 走带 values 的 extended 协议，PG 本身也会拒收多语句（42601），
+ * 但只读白名单是独立防线，不能依赖调用方恰好用了哪种协议。
+ */
+function splitStatements(cleaned: string): string[] {
+  const out: string[] = [];
+  let buf = '';
+  let quote: string | null = null;
+  for (let i = 0; i < cleaned.length; i++) {
+    const ch = cleaned[i];
+    if (quote) {
+      buf += ch;
+      if (ch === quote) {
+        if (cleaned[i + 1] === quote) { buf += cleaned[++i]; continue; } // '' / "" 转义
+        quote = null;
+      }
+      continue;
+    }
+    if (ch === "'" || ch === '"') { quote = ch; buf += ch; continue; }
+    if (ch === ';') { out.push(buf); buf = ''; continue; }
+    buf += ch;
+  }
+  out.push(buf);
+  return out.map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
+/** 只读强制：抛异常则阻止执行（导出供单元测试覆盖 INSERT / 多语句 / SELECT 三类用例） */
+export function assertReadOnly(sql: string, skip = false): void {
   if (skip) return;
   // 去注释、去空白
   const cleaned = sql
@@ -42,12 +71,12 @@ function assertReadOnly(sql: string, skip = false): void {
     .replace(/\s+/g, ' ')
     .trim();
 
-  // 多语句禁止：pg 用分号分隔，这里简单判断末尾/中间的 ;
-  const semiCount = (cleaned.match(/;/g) || []).length;
-  if (semiCount > 1) {
+  // 多语句禁止：逐条校验，任何一条非空语句都要过只读白名单
+  const stmts = splitStatements(cleaned);
+  if (stmts.length > 1) {
     throw new Error('禁止多语句（仅允许单条 SELECT / WITH 查询）');
   }
-  const stmt = semiCount === 1 ? cleaned.slice(0, cleaned.lastIndexOf(';')).trim() : cleaned;
+  const stmt = stmts[0] ?? '';
   if (!stmt) throw new Error('SQL 为空');
 
   const prefix = stmt.split(/\s+/)[0].toLowerCase();
