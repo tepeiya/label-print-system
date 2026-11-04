@@ -1,8 +1,8 @@
 # 10. 开发交接文档（面向接手的 AI / 开发者）
 
 > 本文档目标：**任何 AI 或开发者读完本文即可无缝接手继续开发**，不需要再翻历史对话。
-> 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.8 已知问题 → §10.9 路线图。
-> 最后更新：2026-11-03（对应 commit `c822386`）
+> 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）**。
+> 最后更新：2026-11-04（SaaS **P0 权限与订阅底座**已落地，见 §10.15；上一版对应 commit `c822386`）
 
 ---
 
@@ -64,7 +64,9 @@ TOKEN=$(curl -s -X POST http://localhost:3200/api/v1/auth/login \
   -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin123"}' \
   | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['accessToken'])")
 curl -s http://localhost:3200/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
-# 期望：{"code":0,...,"data":{"username":"admin",...,"roles":["admin"]}}
+# P0 后期望：{"code":0,...,"data":{"username":"admin","roles":["admin","tenant_admin"],
+#            "modules":[...],"permissions":[37 条],"menus":[...],"features":{...},"dataScopes":[...]}}
+# 更完整的登录要带租户码：-d '{"username":"admin","password":"admin123","tenantCode":"default"}'
 ```
 
 ---
@@ -86,7 +88,7 @@ curl -s http://localhost:3200/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 label-print-system/
 ├── backend/
 │   ├── core/                     # 纯函数引擎（ZPL/TSPL/公式/校验位/PNG 编码）
-│   │   └── __tests__/            # 16 个单测（唯一有测试的地方）
+│   │   └── __tests__/            # 16 个单测（引擎层；P0 后 src 下另有 99 个，见 §10.15.6）
 │   ├── printer/                  # PrinterProvider 抽象与实现
 │   ├── assets/tessdata/          # OCR 语言包（.gitignore，需下载）
 │   └── src/
@@ -229,13 +231,17 @@ POST /print/jobs
 - ZPL / TSPL 生成器在 `backend/core/`，**必须按码制输出原生指令**，不得统一降级为 Code128/QR。
 - `POST /print/commands` 返回 `warnings`（不支持的码制、TSPL 中文字库依赖），不得静默降级。
 
-### 10.5.4 RBAC
+### 10.5.4 RBAC（P0 后已升级为四层模型，详见 §10.15）
 
-- 角色：`admin` / `operator` / `sql` / `viewer`，定义在 `common/roles.guard.ts`。
-- 用法：`@Roles('admin', 'operator')` 贴 handler 或 controller。
-- `admin` 对任何 `@Roles` 声明**无条件放行**（便于运维）。
+- 旧四档角色：`admin` / `operator` / `sql` / `viewer`，定义在 `common/roles.guard.ts`。
+  **D11 起 `sql` 并入 `manager`**，但兼容期两个码同时回显（`["sql","manager"]`），`@Roles('sql')` 仍然可用。
+- D11 内置角色（`roles` 表）：`tenant_admin` / `manager` / `operator` / `warehouse_keeper` / `purchaser` / `viewer`。
+- 用法：`@Roles('admin', 'operator')` 贴 handler 或 controller；命中其一即可，`admin`/`tenant_admin` 对任何声明**无条件放行**（便于运维）。
+- 新增两层拦截（`main.ts:75` 全局守卫链）：
+  `@RequireModule('print')` = 订阅层（未订阅 → 403/4031），`@RequirePermission('template:write')` = 权限点层（不足 → 403/4032）。
+  口诀：**模块是门，权限是钥匙**。
 - 前端 `app.js` 的 `applyRoleConstraints()` 会按角色禁用/隐藏危险按钮——
-  这只是 UX，**真正的权限必须在后端**。
+  这只是 UX，**真正的权限必须在后端**；动态菜单数据源是 `/auth/me.menus`（前端尚未接入，属 P1）。
 
 ### 10.5.5 统一响应与错误
 
@@ -374,13 +380,16 @@ apps/console/src/
 | AI 图片生成模板（条码/OCR/几何/启发式/LLM/校验） | ✅ | 页签 `ai` |
 | PWA（manifest + SW） | ✅ | 网络优先缓存 `labelflow-v3` |
 
-### 10.8.1 唯一有自动化测试的部分
+### 10.8.1 自动化测试（P0 后已不再是「只有 16 条」）
 
 ```bash
-cd backend && npm test     # core/__tests__：16 个用例（公式/校验位/流水号并发/DPI/ZPL/TSPL/渲染）
+cd backend && npm test     # 115 条全通过（core/__tests__ 16 + src/**/__tests__ 99，见 §10.15.6 分布）
 ```
 
-后端 API 层、Service 层、RBAC、AI 模块**均无单测**。
+覆盖已补到：守卫链（Module/Permission/Roles）、`/auth/me` 菜单裁剪、模块依赖闭包、数据范围、
+业务异常码 4031/4032、`sql-executor.assertReadOnly`（含引号内分号、注释走私、真实 PG 集成）、
+`validate-ai-template` 脏输入。RBAC、AI 校验、SQL 只读这三块正是 §10.9 #5 点名的缺口，现已闭合。
+仍**无测试**的是：需要起 Nest 容器的端到端测试、前端、打印队列 worker。
 
 ---
 
@@ -418,10 +427,17 @@ cd backend && npm test     # core/__tests__：16 个用例（公式/校验位/�
    + `backend/src/main.ts` 顶部 `import 'dotenv/config'`。
    运行：`pm2 start ecosystem.config.cjs` → `pm2 save && pm2 startup`。
 
-5. **仍待补** 后端零单测
-   建议至少补：`RolesGuard` 4 条规则、`sql-executor.assertReadOnly`（INSERT/多语句/SELECT）、
-   `validate-ai-template`（脏输入）、`datasource.service.testSql`（真实 PG）。
-   现有单测集中在 `core/__tests__/*.test.ts`（公式引擎 / 流水号 / DPI / ZPL / TSPL / 条码渲染 / 渲染层），16 条全通过。
+5. **✅ 已完成** 后端零单测
+   原建议四项：`RolesGuard`、`assertReadOnly`、`validate-ai-template` 按位落地，
+   `datasource.service.testSql` 改为在 executor 层覆盖（原因见下）。新增：
+   `roles.guard` 7 条 + `saas-guards` 10 条（4031/4032/放行/OR 语义/通配）、
+   `sql-executor` 14 条（含引号内分号、注释走私、真实 PG 集成，PG 不可达自动 skip）、
+   `validate-ai-template` 23 条（脏输入）、`menu.catalog` 10 条、`module-deps` 6 条、
+   `data-scope` 7 条、`permission-match` 8 条、`errors.filter` 4 条。
+   `cd backend && npm test` → **115 条全通过**（原 `core/__tests__` 16 条 + `html-renderer` 10 条仍在）。
+   ⚠️ 唯一没按原建议做的是 `datasource.service.testSql` 的 service 级测试：`npx tsx` 不产装饰器元数据，
+   import 实体就 `ColumnTypeUndefinedError`，因此覆盖下沉到 executor 层，原因写在
+   `src/datasource/__tests__/sql-executor.test.ts` 头注释。
 
 6. **✅ 已完成** 后端 `/users` 无前端页签
    落地：新 tab `👥 用户管理`（index.html）+ `web/js/users.js`（搜索 / 状态筛选 / 新增模态框 / 编辑模态框 / 重置密码模态框 / 行内角色 checkbox / 删除确认 / 自我保护）
@@ -508,6 +524,13 @@ cd backend && npm test     # core/__tests__：16 个用例（公式/校验位/�
 | **Vite 代理 `/api` 502**（2026-11-04 e2e） | ① `target: 'localhost:3000'`（端口错，后端跑 3200）② `localhost` 在 Vite 里解析成 IPv6 `::1` | 改 `target: 'http://127.0.0.1:3200'` 强制 IPv4 + 正确端口（[vite.config.ts#L16](file:///workspace/apps/console/vite.config.ts#L16)） |
 | **Dashboard 0 数据显示 NaN% / NaNs**（2026-11-04 e2e） | `successRate * 100` 没防御，`avgDurationMs / 1000` 没防御；还错误引用了不存在的 `byStatus.success`（后端已改 `counts.success`） | 加 `|| 0` 链 + 用 `counts.success`（[Dashboard.vue#L8-L22](file:///workspace/apps/console/src/views/Dashboard.vue#L8-L22)） |
 | **Playwright / Puppeteer 自动测试 Vue 3 组件 v-model 值不生效** | 浏览器自动化工具无法完全模拟 Vue 受控组件的事件链 | 临时绕过：`page.evaluate('...')` 直接 set DOM + 手动触发 input 事件；或直接调 `/api/v1/auth/login` 拿 JWT 手动 set localStorage，再刷新 |
+| **后端起不来：`DataTypeNotSupportedError: Data type "Object" in "Tenant.planId"`**（2026-11-04 P0） | TS 联合类型（`number \| null`、字面量联合）反射出来是 `Object`，TypeORM 猜不到列类型 | 所有联合类型 `@Column` 必须显式写 `type`（bigint / varchar）；已修 `tenant.entity.ts` + `saas.entity.ts` 共 8 处 |
+| **`POST /platform/tenants` 500：duplicate key `tenants_pkey` Key (id)=(1)**（2026-11-04 P0） | `seed.sql` 用显式 id 插入数据，序列还停在 1，新租户拿到同一个 id | `saas_p0_roles.sql` §11 按 `pg_depend` 把 P0 相关表序列统一 `setval(max(id)+1)`，幂等 |
+| **`GET /backups` 500：column TenantBackup.data does not exist**（2026-11-04 P0 复现） | 同上面那条，但这次是**读**路径也炸；`03-database.sql` 一直缺列 | `saas_p0_roles.sql` §13 `ADD COLUMN IF NOT EXISTS data BYTEA` + `docs/03-database.sql` 建表语句补列（两边已同步，别再只改一处） |
+| **同一用户同秒二次登录 500：duplicate `refresh_tokens_token_hash`**（2026-11-04 P0） | refresh token payload 只有 `{sub}`，同一秒内 `iat` 相同 → 签出完全相同的 JWT | 签发时加 `jti: crypto.randomUUID()`（`auth.service.ts#issue`） |
+| **viewer 写模板返回 403/403 而不是 4032**（2026-11-04 P0） | 当时只有 audit / datasource / backup 挂了 `@RequireModule`/`@RequirePermission`，模板等核心路由仍只靠 `@Roles` | 把装饰器铺到 templates / print / printers / users / ai-template / serial（§10.15.3 表），并跑验收脚本 H 段确认旧角色没被削弱 |
+| **`SELECT 1; DROP TABLE users` 通过只读校验**（2026-11-04 P0） | 旧 `assertReadOnly` 只在**分号数 > 1** 时报错；单分号时它只把最后一个分号前的内容拿去查前缀，后面的语句直接不校验（实际执行的是原始 SQL）。附带问题：字符串里含 2 个以上分号的合法 SELECT 会被误拒 | 改成按引号状态扫描的 `splitStatements()`，切出 >1 条即拒；合法语句里的引号分号不误伤。pg 扩展协议本身也会以 42601 拒多语句，所以这是**应用层独立防线**而非唯一防线（`sql-executor.ts` 头注释已写明） |
+| **单测里 import 实体就报 `ColumnTypeUndefinedError`**（2026-11-04） | `npm test` 走 `node --import tsx`，esbuild 不生成装饰器元数据 | 单测只测纯函数 / 类边界；需要真实实体的行为下沉到 executor 层测（见 `sql-executor.test.ts` 头注释），跑 Nest 容器要等接进 `tsc` 编译后再测 |
 
 ### 端到端实测验证证据（2026-11-04）
 
@@ -540,17 +563,23 @@ SELECT actor_id, action, target_type FROM audit_logs;
 # ===== PostgreSQL + Redis（Ubuntu/Debian）=====
 sudo apt-get install -y postgresql redis-server
 sudo pg_ctlcluster 16 main start               # 或 systemctl start postgresql
-redis-server --daemonize yes                  # 或 systemctl start redis-server
+redis-server --port 6380 --daemonize yes       # 本机约定 6380（默认 6379 属其他项目）
 
-# ===== 建库 + 种子 =====
+# ===== 建库 =====
 sudo -u postgres psql -c "CREATE USER labelflow WITH PASSWORD 'labelflow';"
 sudo -u postgres psql -c "CREATE DATABASE labelflow OWNER labelflow;"
-PGPASSWORD=labelflow psql -h localhost -U labelflow -d labelflow \
-  -f backend/scripts/seed.sql
+
+# ===== DDL + 种子 + SaaS P0（顺序不能换，见 §10.15.2）=====
+PGPASSWORD=labelflow psql -h localhost -p 5433 -U labelflow -d labelflow -f docs/03-database.sql
+PGPASSWORD=labelflow psql -h localhost -p 5433 -U labelflow -d labelflow -f backend/scripts/seed.sql
+PGPASSWORD=labelflow psql -h localhost -p 5433 -U labelflow -d labelflow -f backend/scripts/saas_p0.sql
+PGPASSWORD=labelflow psql -h localhost -p 5433 -U labelflow -d labelflow -f backend/scripts/saas_p0_roles.sql
+# 校验（期望 >0，否则说明第 1 步顺序错了）：
+#   SELECT count(*) FROM subscriptions; SELECT count(*) FROM tenant_modules; SELECT count(*) FROM permissions;  -- 37
 
 # ===== 后端 .env（参考 backend/.env.example）=====
-# DB_HOST / DB_PORT / DB_USER / DB_PASS / DB_NAME
-# REDIS_URL / JWT_SECRET / SQL_SECRET_KEY
+# DB_HOST / DB_PORT=5433 / DB_USER / DB_PASS / DB_NAME
+# REDIS_URL=redis://localhost:6380 / JWT_SECRET / SQL_SECRET_KEY
 # PORT=3200（与 apps/console/vite.config.ts proxy target 对齐）
 
 # ===== 起服务 =====
@@ -592,10 +621,13 @@ curl -s -X POST http://localhost:3200/api/v1/ai-template/generate -H "$H" \
 curl -N "http://localhost:3200/api/v1/print-stream/events?token=$TOKEN"
 
 # 8. 单元测试
-cd backend && npm test     # 期望 16/16
+cd backend && npm test     # 期望 115/115
+
+# 9. SaaS P0 验收（§11.11.1 六条 + 旧角色回归，需要后端 + PG + Redis 都在跑）
+cd backend && T_CODE=p0a1 T2_CODE=p0a2 bash scripts/p0-acceptance.sh   # 期望「通过 62 / 失败 0」
 ```
 
-RBAC 回归（用 operator 登录 `operator/op123`）：
+RBAC 回归（用 operator 登录 `operator/op123`，`tenantCode` 传 `default`）：
 `/audit/logs/export` → 403、`/users` → 403、`POST /print/jobs` → 201、`/data-sources/:id/sql-exec` → 403。
 
 ---
@@ -608,7 +640,8 @@ RBAC 回归（用 operator 登录 `operator/op123`）：
 | --- | --- |
 | 改元素/渲染 | `web/js/model.js`（schema 唯一来源）→ `web/js/render.js` → `docs/04-template-schema.md` |
 | 改打印/指令 | `backend/core/zpl-generator.ts` `tspl-generator.ts` → `print.processor.ts` |
-| 改权限 | `common/roles.guard.ts` → 各 controller 的 `@Roles` → `app.js#applyRoleConstraints` |
+| 改权限 | `common/roles.guard.ts` → `common/module.guard.ts` `permission.guard.ts` → 各 controller 的 `@Roles`/`@RequireModule`/`@RequirePermission` → `docs/10` §10.15.3 |
+| 改订阅/套餐/菜单 | `docs/11` §11.15.1（硬性约束）→ `src/saas/` → `backend/scripts/saas_p0*.sql` → 跑 `scripts/p0-acceptance.sh` |
 | 改 AI | `docs/09-ai-template-generation.md` → `ai-template/heuristics.ts`（分类规则集中在这里） |
 | 改数据库 | `docs/03-database.sql` + `src/entities/*.ts`（两边必须同步） |
 | 改前端页签 | `index.html` 的 `#main-tabs` + `#view-<name>` → `app.js#switchTab` → 新 `js/<name>.js` |
@@ -657,6 +690,19 @@ RBAC 回归（用 operator 登录 `operator/op123`）：
   backend/src/ai-template/heuristics.ts  分类规则（改 AI 效果先看这里）
   web/js/interactions.js                 画布交互（Pointer 事件 + 包围盒）
 
+SaaS P0 底座（2026-11-04 新增，详见 §10.15）：
+  backend/src/saas/                      平台运营 / 开通 / 订阅 / 模块依赖 / 菜单目录 / 租户配置
+  backend/src/saas/provision.service.ts  一步开通（单事务，改这里 = 改验收 A 段）
+  backend/src/saas/module-deps.ts        依赖闭包纯函数（加购与开通共用，先跑测试再改）
+  backend/src/saas/menu.catalog.ts       动态菜单目录（前端 P1 的数据源）
+  backend/src/common/module.guard.ts     4031 模块未订阅
+  backend/src/common/permission.guard.ts 4032 权限不足
+  backend/src/common/roles.guard.ts      D11 兼容期新旧双码（RoleAlias / effectiveRoles）
+  backend/src/common/tenant-data-source.manager.ts D2 连接路由钩子 + app.tenant_id
+  backend/scripts/saas_p0.sql            P0 基础 DDL + 模块/套餐/权限字典种子
+  backend/scripts/saas_p0_roles.sql      P0 生命周期 + roles 两步迁移 + 序列复位（13 节，幂等）
+  backend/scripts/p0-acceptance.sh       §11.11.1 可重跑验收脚本
+
 文档入口：
   docs/01-requirements.md   功能矩阵与优先级
   docs/03-database.sql      完整 DDL
@@ -667,3 +713,127 @@ RBAC 回归（用 operator 登录 `operator/op123`）：
   docs/10-dev-handover.md   本文档
   docs/11-saas-and-agent-architecture.md  SaaS 化（订阅/权限分级）+ MCP 智能体接入（设计稿）
 ```
+
+---
+
+## 10.15 SaaS P0 权限与订阅底座（2026-11-04 落地）
+
+> 设计依据：`docs/11` §11.4（四层权限）、§11.11.1（P0 验收标准）、§11.15.1（D1–D12 硬性约束）。
+> 本节只记「实际落成了什么 / 与文档的偏差 / 怎么复现验收」，不复述设计稿。
+> **状态：P0 六条验收全绿**（`backend/scripts/p0-acceptance.sh` → 通过 62 / 失败 0）。
+
+### 10.15.1 代码地图
+
+| 位置 | 作用 |
+| --- | --- |
+| `backend/src/saas/saas.module.ts` | P0 底座总装（providers + exports），`app.module.ts` 引入 |
+| `backend/src/saas/provision.service.ts` | `POST /platform/tenants` 一步开通（D4/§11.15.1 第 3 条，单事务） |
+| `backend/src/saas/modules.service.ts` | 租户生效模块（60s 缓存）、加购/停用、`source='addon'` |
+| `backend/src/saas/permissions.service.ts` | 角色 → 权限点展开（含通配符） |
+| `backend/src/saas/tenant-config.service.ts` | `feature_flags`、`data_scopes`、租户 plan/seat 摘要 |
+| `backend/src/saas/subscription.service.ts` | 升降级 / 续订 / 退订（写 `canceled_at`，D12） |
+| `backend/src/saas/module-deps.ts` | 纯函数：模块依赖闭包展开 + 停用依赖校验 + 套餐配置自检 |
+| `backend/src/saas/menu.catalog.ts` | 动态菜单目录（§11.4.6），纯函数 `buildMenus(modules, permissions)` |
+| `backend/src/saas/platform.controller.ts` | `/platform/*` 运营接口（本版仅 `@Roles('admin')`，平台独立账号体系是 P2） |
+| `backend/src/saas/subscription.controller.ts` | 租户侧只读：`GET /subscription`、`GET /subscription/usage` |
+| `backend/src/common/business.errors.ts` | `4031 模块未订阅` / `4032 权限不足` 异常（带 action 提示） |
+| `backend/src/common/module.guard.ts` | `@RequireModule(...)`（L2 门） |
+| `backend/src/common/permission.guard.ts` | `@RequirePermission(...)`（L1 钥匙） |
+| `backend/src/common/permission-match.ts` | 通配符匹配（`print:*`、`*`） |
+| `backend/src/common/data-scope.ts` | L3 数据范围解析（all / dept / warehouse / self 并集） |
+| `backend/src/common/tenant-data-source.manager.ts` | D2 连接路由钩子 + `applyTenantScope()`（`set_config('app.tenant_id', …, true)`） |
+| `backend/src/common/tenant-context.interceptor.ts` | 往 ALS 补 `plan / features / dataScopes / dataSourceKey` |
+| `backend/src/entities/saas.entity.ts` | modules/plans/plan_modules/subscriptions/tenant_modules/permissions |
+| `backend/src/entities/tenant.entity.ts` | tenants 扩展列 + roles / role_permissions / user_roles.role_id / feature_flags / data_scopes / tenant_domains / external_mcp_servers |
+| `backend/scripts/saas_p0.sql` | P0 基础 DDL + 模块/套餐/权限字典/4 旧角色权限展开种子 |
+| `backend/scripts/saas_p0_roles.sql` | 生命周期列 + roles 两步迁移 + data_scopes + feature_flags + 序列复位（共 13 节） |
+| `backend/scripts/p0-acceptance.sh` | §11.11.1 可重跑验收脚本（62 条断言） |
+
+### 10.15.2 DDL 执行顺序（错了不报错，静默得到空订阅）
+
+```
+docs/03-database.sql → backend/scripts/seed.sql → backend/scripts/saas_p0.sql → backend/scripts/saas_p0_roles.sql
+```
+
+三条实测踩过的坑：
+
+1. `saas_p0.sql` 里「默认订阅 + `tenant_modules` 展开」依赖 `tenants.code='default'` 已存在，而 default 租户是 `seed.sql` 建的。顺序颠倒不会报错，只会得到 `subscriptions=0 / tenant_modules=0`，然后所有接口 4031。
+2. `docs/03-database.sql` 没有 `IF NOT EXISTS`，同一库重跑会报 48 个 `relation already exists`；要重建必须先 `DROP SCHEMA public CASCADE; CREATE SCHEMA public;`（owner 给 `labelflow`）。
+3. `seed.sql` 用了显式 `id`（tenants id=1…），序列停在 1 → `POST /platform/tenants` 直接撞 `tenants_pkey`（`duplicate key … Key (id)=(1) already exists`）。`saas_p0_roles.sql` §11 把 P0 相关表（tenants/users/user_roles/roles/subscriptions/tenant_modules/plans/data_scopes）的序列统一推到 `max(id)+1`，幂等。
+
+`saas_p0_roles.sql` 全文幂等（`IF NOT EXISTS` / `ON CONFLICT` / `WHERE NOT EXISTS`），PG14 实测连跑 3 遍 0 error、行数零漂移，可以当「补丁式迁移」反复执行；新加的列一律放这个脚本，不要再改 `03-database.sql` 之外的历史脚本。
+
+### 10.15.3 守卫链（`backend/src/main.ts:75`）
+
+执行顺序 = 注册顺序：`JwtAuthGuard → ModuleGuard(4031) → PermissionGuard(4032) → RolesGuard(403)`
+
+| 守卫 | 声明方式 | 判定逻辑 | 未通过 |
+| --- | --- | --- | --- |
+| `ModuleGuard` | `@RequireModule('print')` | 租户生效模块（active/trial 且未过期，**不关心 source**，D1）命中任一 | `403 {code:4031, message:'模块未订阅: xxx'}` + `action: 'upgrade'` |
+| `PermissionGuard` | `@RequirePermission('template:write')` | 用户角色 → `role_permissions` 展开（支持 `print:*` / `*`），**多参数是 OR** | `403 {code:4032}` + `action: 'contact_admin'` |
+| `RolesGuard` | `@Roles('admin','operator')` | 旧码/新码双向别名（§10.15.4） | `403 {code:403}` |
+
+两个必须知道的实现约束（新加守卫/中间件时最容易踩）：
+
+- **守卫跑在拦截器之前**：`TenantContextInterceptor` 还没往 `AsyncLocalStorage` 里写 `modules/permissions`，所以 `ModuleGuard` / `PermissionGuard` **自己查库**（各自带缓存）。在守卫里调 `useTenant()` 一定拿到空值。
+- **不写装饰器 = 放行**，所以对未改造的路由零侵入；`PermissionGuard` 对 `admin` / `tenant_admin` 无条件放行（`SUPER_ROLES`）。
+
+已挂装饰器的控制器（模块是门，权限是钥匙）：
+
+| 控制器 | L2 门 | L1 钥匙 |
+| --- | --- | --- |
+| `template/template.controller.ts` | `templates` | `template:read` / `template:write` / `template:favorite` |
+| `print/print.controller.ts` | `print` | `print:job:read` / `print:job:write`,`print:job:submit`（OR）/ `print:job:cancel`,`print:job:write`（OR）/ `print:stats:read` |
+| `printer/printer.module.ts` | `print` | **只上门不上钥匙**：加 `print:printer:manage` 会削弱旧 operator（旧行为能管打印机），故兼容期不挂 |
+| `user/user.module.ts` | `users` | `sys:user:read` / `sys:user:manage` |
+| `ai-template/ai-template.controller.ts` | `ai` | `ai:generate` / `ai:regenerate` / `ai:text-to-template` / `ai:rectify` / `ai:models:manage` / `template:write`（保存到模板库）；`/ai-template/jobs` 不挂钥匙 |
+| `serial/serial.controller.ts` | `serial` | 未挂（沿用旧 `@Roles`） |
+| `datasource/datasource.module.ts` | `datasource` | `datasource:read` / `datasource:write` |
+| `backup/backup.controller.ts` | `backup` | `backup:read` / `backup:write` / `backup:restore` / `backup:download` |
+| `audit/audit.module.ts` | `audit` | `audit:read` / `audit:export` |
+
+### 10.15.4 D11 角色现状（兼容期双码）
+
+| 旧码（`user_roles.role`） | 新码（`roles.code`） | 关系 |
+| --- | --- | --- |
+| `admin` | `tenant_admin` | 别名互认，双写双回显 |
+| `operator` | `operator` | 同名 |
+| `sql` | `manager` | **D11 废弃 sql**，登录后回显 `["sql","manager"]` |
+| `viewer` | `viewer` | 同名 |
+| — | `warehouse_keeper` / `purchaser` | 新增业务角色，旧 JWT 里不存在 |
+
+- `user_roles` **双写**：`role`（字符串，DDL CHECK 目前仍只认 4 个旧码）+ `role_id`（指向 `roles.id`）。`saas_p0_roles.sql` §5 已把存量行回填 `role_id`（校验：`SELECT COUNT(*) FROM user_roles WHERE role_id IS NULL` 期望 0）。
+- 内置模板角色 6 个（`tenant_id IS NULL`）：tenant_admin / manager / operator / warehouse_keeper / purchaser / viewer；开通新租户时在事务内复制一份（§11.12.2 第 2 步），后续可自定义。
+- 权限字典 **37** 条（`saas_p0.sql` 24 + `saas_p0_roles.sql` §3 13），`tenant_admin` = 全量 37，`viewer` 除 `template:favorite` 外全是 `*:read`。
+- ⚠️ §11.15.1 第 5 条要求 `RoleName` 里「禁止再出现 `sql`」，本版按 §11.12.3 兼容期**故意保留** `LegacyRoleName`（`roles.guard.ts`），否则现网 4 个账号会全挂。下个大版本删 `RoleAlias` + `LegacyRoleName` 才算收口。
+
+### 10.15.5 与 docs/11 的有意偏差（接手前必读，别再照着设计稿改代码）
+
+| # | 偏差 | 原因 / 影响 |
+| --- | --- | --- |
+| 1 | **套餐模块集合 ≠ §11.16**：实际 BASIC = `print,templates,ai,serial,users`；PRO = BASIC + `datasource,backup,audit,agent`；ENTERPRISE 目前与 PRO 同集合 | `saas_p0.sql` 是按「现有 8 个功能模块」种的历史基线，P0 的硬目标是**现有租户零回归**（default 在 BASIC，若按 §11.16 重排会当场失去 templates/ai/users 权限）。要落 §11.16 的商业口径必须产品重新确认，且改 seed 前先想清对现网 default 的影响 |
+| 2 | `inventory/masterdata/bom/alert` 不进任何套餐，只能加购 | 符合 D1（`tenant_modules.source='addon'`），验收 F 段覆盖依赖闭包补齐（订 bom → 自动开 inventory + masterdata，`source='addon'`） |
+| 3 | `tenants.status` 仍是 `SMALLINT`（1/0），未改成 §11.5.2 的 VARCHAR 枚举 | 推翻它要动 `auth.service` 的 `status !== 1` 判定，属无收益的破坏性改动。订阅生命周期由 `subscriptions.status` 表达，硬删时间由 `tenants.canceled_at` 表达（D12 已满足） |
+| 4 | `role_permissions` 主键仍是 `role` 字符串，只额外加可空 `role_id` | §11.12.3 兼容期，切换在 §11.12.2 第 4 步之后做 |
+| 5 | `seat_limit` 来自 `POST /platform/tenants` 入参（`dto.seats ?? 5`），`plans` 表没有 `seat_limit`/额度列 | §11.3.5 限额模型整体属于 P3；验收 E.7 只是证明字段能贯通到 `/auth/me` |
+| 6 | `feature_flags` 没有 key 白名单，`PUT /platform/tenants/:id/flags` 可写任意 key | P0 只要求 `agent.print.submit` 默认 false（D7，验收 E.4 通过）。白名单 + 灰度 rollout 等 P2 运营后台 |
+| 7 | `viewer` 持有 `template:favorite`（非 read 动作） | 与 §11.11.1「viewer 只有 `*:read`」有出入，是 saas_p0.sql 原始种子；验收 D.2 做了显式豁免注释，改它属于产品决策 |
+| 8 | `TenantDataSourceManager` 目前只在 `provision.service` 事务里用到（`get()` + `applyTenantScope()`） | §11.15.1 第 1 条要求所有取连接都走它。P0 先把入口和钩子建好，**普通查询链路仍直接 `@InjectRepository`**，P6 接独立库/RLS 时统一替换（工作量集中在 Repository 注入点） |
+
+### 10.15.6 测试与验收覆盖
+
+```bash
+cd backend && npm test                       # 115 条（原 26 → 新增 89）
+T_CODE=p0a1 T2_CODE=p0a2 bash backend/scripts/p0-acceptance.sh   # 62 项断言，期望「通过 62 / 失败 0」
+```
+
+- 单测分布（本轮新增）：`validate-ai-template` 23、`sql-executor` 14（含真实 PG 集成，PG 不可达自动 skip）、`saas-guards` 10、`menu.catalog` 10、`data-scope` 7、`roles.guard` 7、`module-deps` 6、`permission-match` 8、`errors.filter` 4。
+- 验收脚本覆盖：A 单事务开通（subscriptions=1、tenant_modules ≥ 套餐、6 角色复制、`user_roles` 双写、trial 状态、flag 默认值）→ B 4031（BASIC 拒 / 同接口 PRO 200）→ C 4032（viewer 建备份）→ D tenant_admin=37 / viewer 只读 → E `/auth/me` 五件套（modules/permissions/menus/features/dataScopes + plan/seatLimit）→ F 加购与依赖闭包 → G 开关与退订（`canceled_at` + 90 天硬删时间 + 幂等）→ H 旧 4 角色回归（登录、双码回显、读模板、读任务、operator 可写、viewer 被拒）。
+- ⚠️ **`npx tsx` 跑测试时不生成装饰器元数据**：任何 import TypeORM 实体或 Nest module 的测试文件都会 `ColumnTypeUndefinedError`。因此 `datasource.service.testSql` 的覆盖下沉到 `sql-executor` 层（见 `src/datasource/__tests__/sql-executor.test.ts` 头注释）。被测代码要走纯函数/服务类边界，别在单测里拉起 `DataSource`。
+- 脚本会真实建 2 个租户 + 1 次加购 + 1 次退订，数据留在库里（可重跑，用新的 `T_CODE`/`T2_CODE`）。
+
+### 10.15.7 P0 明确没做（别当成已完成）
+
+- RLS（P6）、独立库租户（D2 → P6）、`platform_users` 独立 JWT scope（P2）、计费/额度/账单（P3）、Agent/MCP（P4/P5）、白标域名校验（D6 → P6）。
+- 前端 `apps/console` **仍是硬编码菜单 + 静态路由**，还没消费 `/auth/me.menus`（P1 的活；后端数据已就绪，含未订阅模块的可见性裁剪）。
+- 未订阅模块的「购买引导页」、`GET /subscription` 页面（P1）。

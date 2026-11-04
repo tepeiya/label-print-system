@@ -314,7 +314,8 @@ CREATE TABLE tenant_backups (
     size_bytes    BIGINT,
     kind          VARCHAR(20) NOT NULL DEFAULT 'manual' CHECK (kind IN ('manual','scheduled')),
     created_by    BIGINT,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    data          BYTEA                                     -- gzip(JSON) 备份正文；最小实现存库，未来可换对象存储（老库补列见 backend/scripts/saas_p0_roles.sql §13）
 );
 CREATE INDEX ix_backups_tenant ON tenant_backups (tenant_id, created_at DESC);
 

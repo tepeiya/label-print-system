@@ -825,7 +825,7 @@ Agent 调用 print.submit_job
 
 | 阶段 | 内容 | 交付物 | 估算 |
 | --- | --- | --- | --- |
-| **P0 权限与订阅底座** | 平台/租户/模块/套餐/订阅表；`permissions` 字典；`role_permissions`；`user_roles.role_id` 迁移（含 `sql → manager`）；`ModuleGuard` + `PermissionGuard`；`TenantCtx.dataSourceKey`；连接池 `SET app.tenant_id`；`feature_flags` 表；`tenants.canceled_at`；`/auth/me` 扩展 | 后端可校验模块与权限点；现有 4 角色平滑映射 | 4–5 天 |
+| **P0 权限与订阅底座** ✅ 已完成（2026-11-04） | 平台/租户/模块/套餐/订阅表；`permissions` 字典；`role_permissions`；`user_roles.role_id` 迁移（含 `sql → manager`）；`ModuleGuard` + `PermissionGuard`；`TenantCtx.dataSourceKey`；连接池 `SET app.tenant_id`；`feature_flags` 表；`tenants.canceled_at`；`/auth/me` 扩展 | 后端可校验模块与权限点；现有 4 角色平滑映射 | 4–5 天 |
 | **P1 前端动态化** | 动态菜单/路由/按钮权限；模块未订阅页；订阅信息页（只读） | 前端不再硬编码菜单 | 3–4 天 |
 | **P2 平台运营后台** | 租户开通/停用/加购；套餐配置；用量看板；到期提醒任务 | 可人工售卖与开通 | 1.5–2 周 |
 | **P3 计费闭环** | 用量采集 + 配额 + 账单 + 支付（先手动登记）+ 发票 | 可出账、可对账 | 2–3 周 |
@@ -838,12 +838,18 @@ Agent 调用 print.submit_job
 
 ### 11.11.1 验收标准（P0）
 
-- [ ] 创建租户时自动写入 `subscriptions` + `tenant_modules`（按套餐展开）
-- [ ] 未订阅模块的接口返回 `403 { code: 4031, message: '模块未订阅' }`
-- [ ] 无权限点的接口返回 `403 { code: 4032, message: '权限不足' }`
-- [ ] `tenant_admin` 可访问全部模块；`viewer` 只有 `*:read`
-- [ ] `/auth/me` 返回 modules / permissions / menus，前端菜单据此渲染
-- [ ] 现有 `admin/operator/sql/viewer` 映射后行为不变（回归测试 16 项 + 手工 8 项）
+> ✅ **2026-11-04 全部通过**，可重跑验证：`cd backend && T_CODE=p0a1 T2_CODE=p0a2 bash scripts/p0-acceptance.sh`
+> （62 项断言 = 下面 6 条 + 旧 4 角色回归）。实现落点与偏差记录见 `docs/10-dev-handover.md` §10.15。
+
+- [x] 创建租户时自动写入 `subscriptions` + `tenant_modules`（按套餐展开）
+- [x] 未订阅模块的接口返回 `403 { code: 4031, message: '模块未订阅' }`
+- [x] 无权限点的接口返回 `403 { code: 4032, message: '权限不足' }`
+- [x] `tenant_admin` 可访问全部模块；`viewer` 只有 `*:read`
+      （偏差：`viewer` 另有 `template:favorite`，沿用 P0 初始种子，见 docs/10 §10.15.5 第 7 条）
+- [x] `/auth/me` 返回 modules / permissions / menus，前端菜单据此渲染
+      （后端已就绪并带裁剪逻辑；**前端仍硬编码菜单**，属 P1）
+- [x] 现有 `admin/operator/sql/viewer` 映射后行为不变（回归测试 16 项 + 手工 8 项）
+      （实测：单测 115 条 + 验收脚本 H 段 18 项；`sql` 登录后双码回显 `["sql","manager"]`）
 
 ### 11.11.2 验收标准（P4）
 
@@ -978,6 +984,11 @@ SELECT COUNT(*) FROM user_roles WHERE role_id IS NULL;  -- 期望 0
 | 日期 | 变更 | 原因 |
 | --- | --- | --- |
 | 2026-11-04 | D1–D12 全部按推荐值锁定 | 产品负责人确认 |
+| 2026-11-04 | **P0 落地并通过 §11.11.1 验收**（`backend/scripts/p0-acceptance.sh` 62 项断言；细节见 docs/10 §10.15） | 按 §11.11 排期执行 |
+| 2026-11-04 | §11.15.1 第 5 条「`RoleName` 禁止再出现 `sql`」**延后一个版本执行**：兼容期保留 `LegacyRoleName` + `RoleAlias` 双向别名 | 现网只有 `admin/operator/sql/viewer` 四个账号，直接删会让 `@Roles('sql')` 路由当场 403。D11 结论不变，只是收口时间挪到 §11.12.3 兼容期结束 |
+| 2026-11-04 | §11.5.2 的 `tenants.status VARCHAR` 未采用，保持 `SMALLINT(1/0)`；`role_permissions` 主键仍是 `role` 字符串 + 可空 `role_id` | 前者要推翻 `auth.service` 的 `status !== 1` 判定且无收益（生命周期已由 `subscriptions.status` + `canceled_at` 表达，D12 满足）；后者属 §11.12.2 第 4 步之后的切换 |
+| 2026-11-04 | §11.16 的套餐模块集合**暂不套用**：BASIC 仍含 `templates/ai/serial/users`，`inventory/masterdata/bom/alert` 不进套餐（只走 D1 加购） | P0 的硬约束是「现有租户零回归」，default 租户在 BASIC；按 §11.16 重排会让它当场失去模板/AI/用户管理权限。价格口径需产品重新确认后再改 seed |
+| 2026-11-04 | §11.15.1 第 1 条「所有取连接必须经 `TenantDataSourceManager.get(ctx)`」**部分落地**：P0 只在 `provision.service` 事务内使用（含 `applyTenantScope`），普通查询链路仍直接 `@InjectRepository` | 钩子、类型、`dataSourceKey` 已就位；全量替换集中在 P6 接独立库/RLS 时做，避免 P0 铺开无收益的改动面 |
 
 ---
 
