@@ -32,3 +32,4 @@ coverage/
 backend/assets/tessdata/*.traineddata
 backend/assets/tessdata/*.traineddata.gz
 backend/*.traineddata
+dump.rdb
