@@ -74,7 +74,42 @@ export function renderPrintHtml(input: HtmlRenderInput): HtmlRenderOutput {
     labels.push(renderedToLabel(rendered, mmToPx));
   }
 
-  const html = assembleDocument({ wPx, hPx, wMm, hMm, dpi, labels });
+  // --- 多联拼版：与前端 buildPrintHtml 保持一致 ---
+  const cols = Math.max(1, Math.round((page as any).columns ?? 1));
+  const rowsN = Math.max(1, Math.round((page as any).rows ?? 1));
+  const gapXMm = Math.max(0, (page as any).gapXMm ?? 2);
+  const gapYMm = Math.max(0, (page as any).gapYMm ?? 2);
+  const marginMm = Math.max(0, (page as any).marginMm ?? 0);
+  const sheetWMm = cols > 1 ? marginMm * 2 + wMm * cols + gapXMm * (cols - 1) : wMm;
+  const sheetHMm = rowsN > 1 ? marginMm * 2 + hMm * rowsN + gapYMm * (rowsN - 1) : hMm;
+  const sheetWPx = +(sheetWMm * mmToPx).toFixed(2);
+  const sheetHPx = +(sheetHMm * mmToPx).toFixed(2);
+  const gapXPx = +(gapXMm * mmToPx).toFixed(2);
+  const gapYPx = +(gapYMm * mmToPx).toFixed(2);
+  const marginPx = +(marginMm * mmToPx).toFixed(2);
+
+  let htmlBody: string;
+  let imposeCss: string;
+  if (cols > 1 || rowsN > 1) {
+    const perSheet = cols * rowsN;
+    const sheets: string[] = [];
+    for (let i = 0; i < labels.length; i += perSheet) {
+      const cells = labels.slice(i, i + perSheet).join('');
+      sheets.push(`<div class="sheet">${cells}</div>`);
+    }
+    htmlBody = sheets.join('');
+    imposeCss = `
+      .sheet { display: grid; grid-template-columns: repeat(${cols}, ${wPx}px); grid-auto-rows: ${hPx}px;
+        gap: ${gapYPx}px ${gapXPx}px; padding: ${marginPx}px; page-break-after: always; break-after: page; background: #fff; }
+      .sheet:last-child { page-break-after: auto; break-after: auto; }
+      .sheet .lbl { page-break-after: auto; break-after: auto; }
+    `;
+  } else {
+    htmlBody = labels.join('');
+    imposeCss = '';
+  }
+
+  const html = assembleDocument({ wPx, hPx, wMm, hMm, dpi, labels: htmlBody, imposeCss, sheetWMm, sheetHMm });
   return { html, mmToPx, widthMm: wMm, heightMm: hMm, dpi, labelCount: totalLabels };
 }
 
@@ -227,11 +262,17 @@ function renderElement(e: any, mmToPx: number): string {
 }
 
 // -----------------------------------------------------------------------------
-function assembleDocument({ wPx, hPx, wMm, hMm, dpi, labels }: {
-  wPx: number; hPx: number; wMm: number; hMm: number; dpi: number; labels: string[];
+function assembleDocument(opts: {
+  wPx: number; hPx: number; wMm: number; hMm: number; dpi: number;
+  labels: string[] | string; imposeCss?: string; sheetWMm?: number; sheetHMm?: number;
 }): string {
+  const { wPx, hPx, wMm, hMm, dpi } = opts;
+  const labels = Array.isArray(opts.labels) ? opts.labels.join('') : opts.labels;
+  const sheetWMm = opts.sheetWMm ?? wMm;
+  const sheetHMm = opts.sheetHMm ?? hMm;
+  const imposeCss = opts.imposeCss ?? '';
   const pageCSS = `
-    @page { size: ${wMm}mm ${hMm}mm; margin: 0; }
+    @page { size: ${sheetWMm}mm ${sheetHMm}mm; margin: 0; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { background: #fff; }
     body {
@@ -248,12 +289,14 @@ function assembleDocument({ wPx, hPx, wMm, hMm, dpi, labels }: {
     }
     body.print-ready .lbl { display: block; }
     body:not(.print-ready) .lbl { display: none; }
+    ${imposeCss}
     @media screen {
       body { padding: 20px; background: #ddd; }
       body:not(.print-ready) .lbl { display: block; box-shadow: 0 0 0 1px #999; margin: 8px auto; }
+      .sheet { margin: 8px auto; box-shadow: 0 0 0 1px #999; }
     }
   `;
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>LabelFlow Print Preview · ${wMm}×${hMm}mm · ${dpi}dpi</title><style>${pageCSS}</style></head>
-<body class="print-ready">${labels.join('')}</body></html>`;
+<body class="print-ready">${labels}</body></html>`;
 }

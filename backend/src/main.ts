@@ -1,3 +1,6 @@
+// 优先加载 .env（生产用 pm2/systemd 的 env 文件也兼容）
+import 'dotenv/config';
+
 import { NestFactory } from '@nestjs/core';
 import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcryptjs';

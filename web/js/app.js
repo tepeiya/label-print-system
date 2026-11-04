@@ -12,6 +12,7 @@ import { initTemplates, loadList, resetCurrentTemplateId } from './templates.js'
 import { initJobs, refreshJobs, loadAudit } from './jobs.js';
 import { initPrinters, subscribePrintEvents } from './printers.js';
 import { initAiTemplate } from './ai-template.js';
+import { initUsers, refreshUsers } from './users.js';
 import { initGuides, refreshRulers } from './guides.js';
 import { ensureLogin, api } from './api.js';
 import { MM2PX, deepClone, uid, r2, toast, downloadFile, clamp } from './util.js';
@@ -45,6 +46,7 @@ async function boot() {
   initJobs();
   initPrinters();
   initAiTemplate();
+  initUsers();
 
   restoreAutosave();
 
@@ -281,6 +283,7 @@ export function switchTab(name) {
   if (name === 'audit') loadAudit();
   if (name === 'printers') window.dispatchEvent(new CustomEvent('printers-refresh'));
   if (name === 'ai') window.dispatchEvent(new CustomEvent('ai-refresh'));
+  if (name === 'users') refreshUsers();
 }
 
 // ---------------------------------------------------------------------------
@@ -538,6 +541,8 @@ function applyRoleConstraints(user) {
   const hideIf = (id, v) => { const el = document.getElementById(id); if (el) el.hidden = v; };
   hideIf('btn-audit-export-csv', !isAdmin);
   hideIf('btn-audit-export-json', !isAdmin);
+  // 用户管理整个 tab 对非 admin 隐藏
+  document.querySelector('#main-tabs .tab[data-tab="users"]')?.setAttribute('hidden', String(!isAdmin));
 
   // 打印机详情卡片的危险按钮（JS 动态渲染）：post-process 委托
   document.body.dataset.roles = (user?.roles ?? []).join(',');

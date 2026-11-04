@@ -5,7 +5,7 @@ import { Repository } from 'typeorm';
 import { Template, TemplateVersion } from '../entities/template.entity';
 import { useTenantId } from '../common/tenant.context';
 import { AuditService } from '../audit/audit.module';
-import { encodeGrayPng } from '../../core/png';
+import { renderThumbnail } from '../print/thumbnail-renderer';
 
 const CURRENT_SCHEMA = 1;
 // 导入兼容迁移（按 schemaVersion 路由）
@@ -107,17 +107,14 @@ export class TemplateService {
     return { template: t, schemaVersion: CURRENT_SCHEMA };
   }
 
-  /** 异步生成模板缩略图：按模板内容的宽高比缩放，小尺寸灰度 PNG（约 120px） */
+  /** 异步生成模板缩略图：用 sharp + SVG 真实渲染元素（图形/条码可见，文本简化） */
   private async genThumbnail(templateId: number, content: any) {
-    const page = content?.page;
-    if (!page?.widthMm || !page?.heightMm) return;
-    const MAX_W = 160;
-    const ratio = Math.min(MAX_W / page.widthMm, 160 / page.heightMm);
-    const w = Math.max(1, Math.round(page.widthMm * ratio));
-    const h = Math.max(1, Math.round(page.heightMm * ratio));
-    // 全白底 PNG（纯占位；真实场景接入 bwip-js 或 node-canvas 绘出真实元素缩略）
-    const px = new Uint8Array(w * h).fill(255);
-    const buf = encodeGrayPng(w, h, px);
-    await this.tpl.update({ id: templateId, tenantId: this.tid() }, { thumbnail: buf });
+    try {
+      const buf = await renderThumbnail(content);
+      await this.tpl.update({ id: templateId, tenantId: this.tid() }, { thumbnail: buf });
+    } catch (err) {
+      // 缩略图生成失败不阻断主链路
+      console.warn('[template] 缩略图生成失败（已跳过）：', err instanceof Error ? err.message : err);
+    }
   }
 }

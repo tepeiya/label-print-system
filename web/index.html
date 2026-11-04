@@ -29,6 +29,7 @@
       <button type="button" class="tab" data-tab="printers">🖲 打印机</button>
       <button type="button" class="tab" data-tab="templates">🗂 模板库</button>
       <button type="button" class="tab" data-tab="audit">📜 审计日志</button>
+      <button type="button" class="tab" data-tab="users">👥 用户管理</button>
       <button type="button" class="tab" data-tab="ai">🎨 AI 生成</button>
     </nav>
 
@@ -423,6 +424,49 @@
             </tbody>
           </table>
         </div>
+      </div>
+    </section>
+
+    <!-- ---------- 用户管理 ---------- -->
+    <section id="view-users" class="view">
+      <div class="tpl-layout">
+        <div class="tpl-head">
+          <span class="page-title">👥 用户管理</span>
+          <button type="button" class="btn" id="btn-users-refresh">刷新</button>
+          <span class="st-spacer"></span>
+          <span id="users-stat" class="form-hint">—</span>
+        </div>
+        <div class="tpl-table-wrap">
+          <table class="tpl-table">
+            <thead>
+              <tr>
+                <th style="width:6%">ID</th>
+                <th style="width:14%">用户名</th>
+                <th style="width:14%">显示名</th>
+                <th style="width:18%">邮箱</th>
+                <th style="width:8%">状态</th>
+                <th style="width:18%">角色</th>
+                <th style="width:22%">注册时间</th>
+              </tr>
+            </thead>
+            <tbody id="users-list-body">
+              <tr><td colspan="7" class="tpl-empty">加载中…</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 角色编辑行（模板） -->
+        <template id="users-row-template">
+          <tr data-user-id>
+            <td class="u-id"></td>
+            <td class="u-username"></td>
+            <td class="u-display"></td>
+            <td class="u-email"></td>
+            <td class="u-status"></td>
+            <td class="u-roles"></td>
+            <td class="u-created"></td>
+          </tr>
+        </template>
       </div>
     </section>
 
