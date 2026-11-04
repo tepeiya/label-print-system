@@ -4,8 +4,9 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  浏览器（React + Konva 设计器 / 打印预览）                         │
-│  - 拖拽式设计器、公式预览、条码实时渲染、@page 浏览器打印           │
+│  浏览器（Vue 3 + DOM 设计器 / Element Plus 后台）                   │
+│  - 原生 DOM 拖拽设计器、公式预览、条码实时渲染、@page 浏览器打印     │
+│  - Vue 3 + Element Plus + Pinia 后台：用户管理 / 打印仪表盘 / SaaS   │
 └───────────────┬───────────────────────────────┬─────────────────┘
                 │  HTTPS (REST + JWT)            │  WebSocket（可选：打印进度）
                 ▼                                ▼
@@ -52,7 +53,7 @@
 
 ```mermaid
 flowchart TB
-  User([用户/操作员]) -->|HTTPS+JWT| Web[React 设计器/预览]
+  User([用户/操作员]) -->|HTTPS+JWT| Web[Vue 3 设计器/后台]
   Web -->|REST| API[NestJS API]
   API --> PG[(PostgreSQL 16\ntenant_id 行隔离\nJSONB 模板)]
   API --> R[(Redis\n号段/队列/缓存)]

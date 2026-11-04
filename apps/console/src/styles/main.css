@@ -1,0 +1,49 @@
+/* 全局样式 */
+html, body, #app { height: 100%; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background: #f5f7fa;
+}
+
+/* 登录页 */
+.login-wrap {
+  height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #1a73e8 0%, #4285f4 100%);
+}
+.login-card {
+  width: 380px; padding: 36px 32px;
+  background: #fff; border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.16);
+}
+.login-card h1 { text-align: center; margin: 0 0 8px; font-size: 22px; color: #1a73e8; }
+.login-card .subtitle { text-align: center; color: #888; margin-bottom: 24px; font-size: 13px; }
+
+/* 主布局 */
+.layout { height: 100vh; display: flex; flex-direction: column; }
+.layout-header {
+  height: 56px; background: #fff; border-bottom: 1px solid #e4e7ed;
+  display: flex; align-items: center; padding: 0 20px;
+}
+.layout-header .logo { font-size: 18px; font-weight: 600; color: #1a73e8; margin-right: 32px; }
+.layout-header .right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+.layout-body { flex: 1; display: flex; overflow: hidden; }
+.layout-sidebar {
+  width: 220px; background: #001529; overflow-y: auto;
+}
+.layout-content { flex: 1; overflow-y: auto; padding: 20px; }
+
+/* iframe 设计器占位 */
+.designer-iframe {
+  width: 100%; height: calc(100vh - 130px); border: none;
+  background: #fff; border-radius: 4px;
+}
+
+/* 通用 */
+.page-header { display: flex; align-items: center; margin-bottom: 16px; }
+.page-header h2 { margin: 0; flex: 1; font-size: 18px; }
+.card { background: #fff; border-radius: 4px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+.stat-card { padding: 16px; background: #fff; border-radius: 4px; }
+.stat-card .label { color: #888; font-size: 13px; }
+.stat-card .value { font-size: 24px; font-weight: 600; color: #303133; margin-top: 4px; }

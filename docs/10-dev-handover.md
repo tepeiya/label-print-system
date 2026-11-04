@@ -66,7 +66,8 @@ curl -s http://localhost:3200/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 
 | 层 | 选型 | 说明 |
 | --- | --- | --- |
-| 前端 | 原生 HTML5 + CSS + ES Modules | **无构建步骤**、不依赖 React/Konva（旧实现已删除） |
+| 前端（后台） | Vue 3 + TS + Vite + Element Plus + Pinia | `apps/console/`；pnpm build 出包后托管到 NestJS 静态目录；设计器用 iframe 嵌入旧版 |
+| 前端（设计器） | 原生 HTML5 + CSS + ES Modules | `web/` 目录；DOM 拖拽（非 Canvas/Konva），后续逐步 Vue 化 |
 | 后端 | NestJS 10 + TypeScript（commonjs） | 单进程；队列 Worker 在同一进程内 |
 | ORM | TypeORM 0.3 + SnakeNamingStrategy | `synchronize: false`，DDL 走 `docs/03-database.sql` |
 | DB / 队列 | PostgreSQL 16 / Redis 7 + BullMQ | |
