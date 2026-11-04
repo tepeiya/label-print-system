@@ -50,7 +50,9 @@ export class AuthService {
     const finalRoles = roles ?? await this.loadRoles(user.id, user.tenantId);
     const payload: JwtPayload = { sub: user.id, tenantId: user.tenantId, roles: finalRoles };
     const accessToken = await this.jwt.signAsync(payload, { expiresIn: '15m' });
-    const refreshToken = await this.jwt.signAsync({ sub: user.id }, { expiresIn: '7d' });
+    // jti 必须有：同一用户同一秒内重复登录时 {sub} + iat 完全相同 → JWT 相同 →
+    // refresh_tokens.token_hash 唯一索引冲突（实测 500）。加随机 jti 让每次签发都唯一。
+    const refreshToken = await this.jwt.signAsync({ sub: user.id, jti: crypto.randomUUID() }, { expiresIn: '7d' });
     await this.refresh.save({ tenantId: user.tenantId, userId: user.id, tokenHash: hashToken(refreshToken), expiresAt: new Date(Date.now() + 7 * 864e5) });
     return { accessToken, refreshToken, expiresIn: 900 };
   }
