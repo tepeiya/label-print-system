@@ -111,4 +111,6 @@ export class TenantBackup {
   @Column({ default: 'manual' }) kind: string;
   @Column({ name: 'created_by', nullable: true }) createdBy: number;
   @CreateDateColumn() createdAt: Date;
+  /** 实际备份数据（gzip(JSON)），最小实现直接存 DB；未来可迁移到对象存储 */
+  @Column({ type: 'bytea', nullable: true }) data: Buffer;
 }

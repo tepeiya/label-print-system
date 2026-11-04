@@ -16,6 +16,20 @@ const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/tiff'];
 export class AiTemplateController {
   constructor(private svc: AiTemplateService) {}
 
+  /** 纯文本描述生成模板：用户用中文描述标签 → LLM 直接输出模板 JSON（不需要图片） */
+  @Roles('admin', 'operator')
+  @Post('text-to-template')
+  textToTemplate(@Body() body: { description: string; widthMm?: number; heightMm?: number }) {
+    if (!body.description || typeof body.description !== 'string') {
+      throw new BadRequestException('description 不能为空');
+    }
+    return this.svc.textToTemplate({
+      description: body.description,
+      widthMm: body.widthMm ? Number(body.widthMm) : undefined,
+      heightMm: body.heightMm ? Number(body.heightMm) : undefined,
+    });
+  }
+
   /** 主入口：上传图片 + 尺寸 → 生成模板 */
   @Roles('admin', 'operator')
   @Post('generate')
@@ -41,6 +55,55 @@ export class AiTemplateController {
         ? String(body.variableHintKeywords).split(',').map((s) => s.trim()).filter(Boolean)
         : undefined,
     });
+  }
+
+  /** 多联大图批量生成：上传一张包含 rows×cols 个相同标签的大图 → 切格 → 每格跑一次 generate */
+  @Roles('admin', 'operator')
+  @Post('batch-generate')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 20 * 1024 * 1024 } }))
+  async batchGenerate(@UploadedFile() file: Express.Multer.File, @Body() body: any) {
+    if (!file) throw new BadRequestException('缺少图片文件（字段名 file）');
+    if (!ALLOWED_MIME.includes(file.mimetype)) {
+      throw new BadRequestException('仅支持 jpg / png / webp / tiff 图片');
+    }
+    const rows = Math.max(1, Math.min(10, Number(body.rows ?? 1)));
+    const cols = Math.max(1, Math.min(10, Number(body.cols ?? 1)));
+    if (rows * cols > 25) throw new BadRequestException('一次最多生成 25 个标签');
+
+    const widthMm = Number(body.widthMm);
+    const heightMm = Number(body.heightMm);
+    const dpi = Number(body.dpi ?? 300);
+    const gapMm = Number(body.gapMm ?? 0);
+
+    // 动态 import（避免 controller 启动就 sharp load）
+    const { tileCrop } = await import('./tile-crop');
+    const tiles = await tileCrop(file.buffer, {
+      rows, cols, gapMm, dpi,
+      tileWidthMm: widthMm || undefined,
+      tileHeightMm: heightMm || undefined,
+    });
+
+    const results = [];
+    for (const tile of tiles) {
+      try {
+        const result = await this.svc.generate(tile.buf, {
+          widthMm: widthMm || 60,
+          heightMm: heightMm || 40,
+          dpi,
+          lang: body.lang || undefined,
+          useLlm: body.useLlm === 'false' ? false : body.useLlm === 'true' ? true : undefined,
+          variableHintKeywords: body.variableHintKeywords
+            ? String(body.variableHintKeywords).split(',').map((s) => s.trim()).filter(Boolean)
+            : undefined,
+        });
+        results.push({ row: tile.row, col: tile.col, ...result, _ok: true });
+      } catch (e: any) {
+        results.push({ row: tile.row, col: tile.col, _ok: false, error: e?.message ?? String(e) });
+      }
+    }
+
+    const ok = results.filter((r: any) => r._ok).length;
+    return { total: results.length, ok, failed: results.length - ok, results };
   }
 
   /** 单元素重算：前端发现某个元素识别不准时，只重算这一个省 token */

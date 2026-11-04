@@ -13,10 +13,11 @@ import { recognize, disposeOcr } from './ocr-adapter';
 import { detectColorRegions, detectLines } from './geometry';
 import { buildTemplateFromPriors, AiWarning } from './heuristics';
 import { createMapper } from './coords-transform';
-import { buildSystemPrompt, buildUserPrompt, buildSingleElementSystemPrompt, buildSingleElementUserPrompt, buildCornerDetectSystemPrompt, buildCornerDetectUserPrompt } from './prompt';
+import { buildSystemPrompt, buildUserPrompt, buildSingleElementSystemPrompt, buildSingleElementUserPrompt, buildCornerDetectSystemPrompt, buildCornerDetectUserPrompt, buildTextToTemplateSystemPrompt, buildTextToTemplateUserPrompt } from './prompt';
 import { callVision, configFromEnv, extractJson, prepareImageForLlm, VisionConfig } from './vision-llm';
 import { validateAiTemplate } from './validate-ai-template';
 import { cornersToBbox, extractBbox, normalizeCorners } from './vision-rectify';
+import { AiQuotaService } from './ai-quota.service';
 
 export interface GenerateParams {
   widthMm: number;
@@ -41,6 +42,7 @@ export class AiTemplateService implements OnModuleDestroy {
     @InjectRepository(AiModelConfig) private models: Repository<AiModelConfig>,
     @InjectRepository(Template) private tpl: Repository<Template>,
     private audit: AuditService,
+    private quota: AiQuotaService,
   ) {}
 
   async onModuleDestroy() {
@@ -181,6 +183,8 @@ export class AiTemplateService implements OnModuleDestroy {
           },
         };
 
+        // 配额检查（Vision 调用属于最贵的 kind）
+        await this.quota.checkAndConsume(ctx.tenantId, 'vision');
         const res = await callVision(
           visionCfg,
           imageDataUrl,
@@ -324,6 +328,7 @@ export class AiTemplateService implements OnModuleDestroy {
     let model = visionCfg.model;
 
     try {
+      await this.quota.checkAndConsume(ctx.tenantId, 'vision');
       const imageDataUrl = await prepareImageForLlm(buf);
       const res = await callVision(
         visionCfg,
@@ -421,6 +426,7 @@ export class AiTemplateService implements OnModuleDestroy {
         throw new BadRequestException('未配置 AI 视觉模型，无法自动检测四边。请手动传入 corners（前端 canvas 点选 4 点）');
       }
       try {
+        await this.quota.checkAndConsume(ctx.tenantId, 'vision');
         const imageDataUrl = await prepareImageForLlm(buf);
         const res = await callVision(
           visionCfg,
@@ -452,7 +458,7 @@ export class AiTemplateService implements OnModuleDestroy {
     }, ctx.userId);
 
     return {
-      cropped,                         // 裁剪后的 PNG buffer
+      cropped,
       bbox,
       originalSize: { w: imgW, h: imgH },
       cornersPx: corners,
@@ -461,6 +467,52 @@ export class AiTemplateService implements OnModuleDestroy {
       llmError,
       elapsedMs,
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // 纯文本描述生成模板（text-only，不需要图片）
+  // ---------------------------------------------------------------------------
+
+  async textToTemplate(params: { description: string; widthMm?: number; heightMm?: number }) {
+    const ctx = useTenant();
+    const t0 = Date.now();
+    if (!params.description?.trim()) {
+      throw new BadRequestException('description 不能为空');
+    }
+
+    // 配额检查（vision kind 算 text generation 的同类）
+    await this.quota.checkAndConsume(ctx.tenantId, 'vision');
+
+    const visionCfg = await this.resolveVisionConfig(ctx.tenantId).catch(() => null);
+    if (!visionCfg) {
+      throw new BadRequestException('未配置 AI 视觉模型');
+    }
+
+    const sizeHint = params.widthMm && params.heightMm
+      ? { widthMm: params.widthMm, heightMm: params.heightMm }
+      : undefined;
+
+    const res = await callVision(
+      visionCfg,
+      null,   // ← text-only，不传图片
+      buildTextToTemplateSystemPrompt(),
+      buildTextToTemplateUserPrompt(params.description, sizeHint),
+      60000,
+    );
+
+    const parsed = extractJson(res.raw);
+    if (!parsed || !Array.isArray(parsed.elements) || !parsed.page) {
+      throw new BadRequestException(`LLM 输出不是合法模板 JSON：${res.raw.slice(0, 300)}`);
+    }
+    const widthMm = params.widthMm ?? parsed.page?.widthMm ?? 60;
+    const heightMm = params.heightMm ?? parsed.page?.heightMm ?? 40;
+    const validated = validateAiTemplate(parsed, { widthMm, heightMm, dpi: parsed.page?.dpi ?? 300 });
+
+    await this.audit.write(ctx.tenantId, 'ai_template.text_to_template', {
+      elementCount: validated.template.elements.length, elapsedMs: Date.now() - t0,
+    }, ctx.userId);
+
+    return { template: validated.template, warnings: validated.warnings, elapsedMs: Date.now() - t0, model: visionCfg.model };
   }
 
   /** 用启发式 bbox 与 LLM 元素做 IoU 匹配，继承置信度 */

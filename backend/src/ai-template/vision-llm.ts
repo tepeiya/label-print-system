@@ -54,7 +54,7 @@ export async function prepareImageForLlm(buf: Buffer): Promise<string> {
  */
 export async function callVision(
   cfg: VisionConfig,
-  imageDataUrl: string,
+  imageDataUrl: string | null | undefined,
   systemPrompt: string,
   userText: string,
   timeoutMs = 90000,
@@ -63,19 +63,17 @@ export async function callVision(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const userContent: any[] = [{ type: 'text', text: userText }];
+    if (imageDataUrl) {
+      userContent.push({ type: 'image_url', image_url: { url: imageDataUrl, detail: 'high' } });
+    }
     const body: any = {
       model: cfg.model,
       temperature: cfg.temperature ?? 0,
       max_tokens: cfg.maxTokens ?? 4000,
       messages: [
         { role: 'system', content: systemPrompt },
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: userText },
-            { type: 'image_url', image_url: { url: imageDataUrl, detail: 'high' } },
-          ],
-        },
+        { role: 'user', content: userContent },
       ],
       ...(cfg.extra ?? {}),
     };

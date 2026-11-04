@@ -15,6 +15,7 @@ import { DataSourceModule } from './datasource/datasource.module';
 import { AuditModule } from './audit/audit.module';
 import { UserAdminModule } from './user/user.module';
 import { AiTemplateModule } from './ai-template/ai-template.module';
+import { BackupModule } from './backup/backup.module';
 import { SnakeNamingStrategy } from './snake-naming.strategy';
 import { JWT_SECRET } from './common/config';
 
@@ -59,7 +60,7 @@ function redisConnection() {
     // BullMQ：打印队列 worker 需要根配置才能启动（队列本身在 PrintModule 注册）
     BullModule.forRoot({ connection: redisConnection() }),
     AuthModule, TemplateModule, SerialModule, FormulaModule, BarcodeModule,
-    PrinterModule, PrintModule, DataSourceModule, AuditModule, UserAdminModule, AiTemplateModule,
+    PrinterModule, PrintModule, DataSourceModule, AuditModule, UserAdminModule, AiTemplateModule, BackupModule,
   ],
 })
 export class AppModule {}

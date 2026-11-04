@@ -194,3 +194,38 @@ export function buildCornerDetectSystemPrompt(): string {
 export function buildCornerDetectUserPrompt(): string {
   return `请找出这张图片里标签矩形区域的 4 个角点坐标（px）。`;
 }
+
+// -----------------------------------------------------------------------------
+// 纯文本描述生成模板：用户用中文描述 → LLM 直接输出模板 JSON（不需要图片）
+// -----------------------------------------------------------------------------
+
+export function buildTextToTemplateSystemPrompt(): string {
+  return `你是专业的标签设计工程师。用户用自然语言描述一个标签的样子，请你直接输出一份完整的模板 JSON。
+
+【输出格式（只输出 JSON）】
+{
+  "page": { "widthMm": 60, "heightMm": 40, "dpi": 300 },
+  "elements": [
+    { "id": "e1", "type": "rect", "x": 1, "y": 1, "w": 58, "h": 38, "fill": "#fff", "stroke": { "width": 0.2, "color": "#333" } },
+    { "id": "e2", "type": "text", "x": 2, "y": 2, "w": 30, "h": 6, "text": "产品名 {{productName}}", "font": { "size": 10, "family": "Arial", "color": "#000" } },
+    { "id": "e3", "type": "barcode", "x": 2, "y": 25, "w": 30, "h": 12, "symbology": "CODE128", "value": "{{serialNo}}", "showText": true, "fontSize": 6 },
+    { "id": "e4", "type": "qr", "x": 40, "y": 20, "w": 18, "h": 18, "value": "{{qrData}}", "version": "auto", "level": "M" },
+    { "id": "e5", "type": "line", "x1": 2, "y1": 10, "x2": 58, "y2": 10, "stroke": { "width": 0.3, "color": "#999" } }
+  ]
+}
+
+【规则】
+- elements 里必须包含一个外框 rect（位置接近 page 边缘，略小一点，作为标签背景）
+- 文字元素用 {{变量名}} 占位，变量名从用户描述里提取（如产品名、SKU、批号、日期、数量、单价等）
+- 条码默认 CODE128，QR 默认 version=auto level=M
+- 尺寸要合理：text 高度 = 字体 mm；barcode/QR 不要超出标签范围
+- 元素摆放要整齐：顶部标题、中间信息、底部条码/二维码
+- 不要输出解释，不要 markdown，只输出 JSON`;
+}
+
+export function buildTextToTemplateUserPrompt(description: string, sizeHint?: { widthMm?: number; heightMm?: number }): string {
+  const sizeLine = sizeHint?.widthMm && sizeHint?.heightMm
+    ? `\n标签尺寸：宽 ${sizeHint.widthMm}mm × 高 ${sizeHint.heightMm}mm`
+    : `\n标签尺寸：请按常见标签比例自行确定（60×40mm / 40×30mm / 70×50mm 等）`;
+  return `以下是我要的标签设计：\n"""${description}"""${sizeLine}`;
+}

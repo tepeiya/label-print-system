@@ -440,16 +440,16 @@ cd backend && npm test     # core/__tests__：16 个用例（公式/校验位/�
 | AI：表格结构识别（合并单元格） | 扁平 cells 扩展 mergedCells [{row,col,rowSpan,colSpan}] | ✅ prompt 契约 + validate 校验 + html-renderer 渲染三处联动 | `prompt.ts` · `validate-ai-template.ts` · `html-renderer.ts#table` |
 | AI：单元素重算接口 | 省 token 的增量修正 | ✅ 只 Vision 单元素 prompt，LLM 失败优雅降级 | `POST /ai-template/regenerate-element` |
 
-### P2（可选）
+### P2（可选）✅ 全部完成
 
-| 项 | 说明 |
-| --- | --- |
-| 多联标签大图自动切分 | 一次上传多张 |
-| 纯文本描述生成模板 | 「50×30mm 食品标签，含产品名/批号 QR/EAN13」 |
-| RBAC 资源级 ACL | `templates.acl` 字段已预留 |
-| 整租户备份/恢复 | `tenant_backups` 表已建，接口未实现 |
-| AI 每日调用配额 | 防成本失控 |
-| PaddleOCR 一键部署脚本 | 文档已给契约 |
+| 项 | 说明 | 落点 |
+| --- | --- | --- |
+| 多联标签大图自动切分 | sharp tile-crop 按 rows/cols/gap 切格 → 每格跑 generate | `POST /ai-template/batch-generate` · `tile-crop.ts` |
+| 纯文本描述生成模板 | Vision LLM text-only（image_url=null）直接输出模板 JSON | `POST /ai-template/text-to-template` · `prompt.ts#buildTextToTemplatePrompt` |
+| RBAC 资源级 ACL | `templates.acl` (jsonb: {public, users, roles, writeUsers, writeRoles}) → list 过滤 + get 读检查 + update/remove 写检查 | `backend/src/common/acl-check.ts` · `template.service.ts` |
+| 整租户备份/恢复 | dump 全租户 15 张表 → gzip(JSON) → bytea 存 `tenant_backups.data`；restore 事务 upsert | `BackupService` · `GET/POST/DELETE /backups`（admin 专属）|
+| AI 每日调用配额 | `ai_quotas` 表（tenant_id + date + kind 唯一）→ Vision 调用前原子 FOR UPDATE 扣减 | `AiQuotaService` · 三处 `callVision` 拦截 |
+| PaddleOCR 一键部署脚本 | `bash scripts/setup-paddleocr.sh`（Docker Compose + 交互式 / 全自动） | `backend/scripts/setup-paddleocr.sh` |
 
 ---
 
