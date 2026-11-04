@@ -35,6 +35,11 @@ export const MENU_CATALOG: MenuNode[] = [
       { key: 'datasource', name: '数据源管理', icon: 'Coin', path: '/datasource', module: 'datasource', permission: 'datasource:read' },
     ],
   },
+  // AI 工作台：BASIC 也含 ai 模块（历史种子，见 docs/10 §10.15.5 第 1 条），入口权限点用 ai:generate
+  { key: 'ai', name: 'AI 生成模板', icon: 'MagicStick', path: '/ai', module: 'ai', permission: 'ai:generate' },
+  // 注：serial 模块已订阅且后端有 @RequireModule('serial')，但 serial-sequences 只有
+  // segment-preview 一个接口（CRUD 未实现），没有可落地的列表页 → P1 先不进菜单，
+  // 等 P2 补 CRUD 时再加 /serial 条目，避免前端出现点了 404 的入口。
   {
     key: 'system',
     name: '系统管理',

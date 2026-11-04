@@ -27,6 +27,18 @@ test('模块订阅 + 权限点都齐时，返回完整菜单', () => {
   assert.deepEqual(childKeys(tree, 'system'), ['users', 'audit', 'backups']);
 });
 
+test('AI 入口：订阅 ai 且有 ai:generate 才出现；只有模块没有权限点也不给入口', () => {
+  const both = buildMenus(['ai'], ['ai:generate']);
+  assert.ok(keys(both).includes('ai'));
+  assert.equal(childKeys(both, 'ai').length, 0, 'AI 是叶子节点，不该带 children');
+
+  const moduleOnly = buildMenus(['ai'], ['template:read']);
+  assert.ok(!keys(moduleOnly).includes('ai'));
+
+  const permOnly = buildMenus(['print'], ['ai:generate']);
+  assert.ok(!keys(permOnly).includes('ai'), '未订阅 ai 模块时，有权限点也不该出现入口');
+});
+
 test('只订阅 print + print:job:read 时，设计器和模板库不可见，数据源/系统管理整组消失', () => {
   const tree = buildMenus(['print'], ['print:job:read']);
   assert.deepEqual(keys(tree), ['print', 'subscription']);
@@ -72,4 +84,38 @@ test('裁剪不修改目录常量（前端可安全复用 MENU_CATALOG）', () =
 test('入参为 null/undefined 时不抛异常，只返回订阅页', () => {
   const tree = buildMenus(undefined as any, null as any);
   assert.deepEqual(keys(tree), ['subscription']);
+});
+
+// -----------------------------------------------------------------------------
+// 菜单目录 ↔ 前端路由一致性（P1 加的反向断言）
+// 菜单是后端下发的，路由组件是前端静态声明的，两边靠 path 对齐。
+// 只加目录不加路由 → 用户点了入口进 404/通配重定向；这类错误单测能提前抓到。
+// -----------------------------------------------------------------------------
+test('MENU_CATALOG 的每个叶子 path 都能在 console 路由表里找到', (t) => {
+  const fs = require('fs');
+  const path = require('path');
+  const file = path.resolve(__dirname, '../../../../apps/console/src/router/index.ts');
+  if (!fs.existsSync(file)) {
+    // 单独跑后端包（或没有前端源码的环境）时跳过，不能因此让 CI 变红
+    t.skip(`${file} 不存在，跳过前后端路由一致性检查`);
+    return;
+  }
+  const src = fs.readFileSync(file, 'utf8');
+
+  const leaves: string[] = [];
+  const walk = (nodes: any[]) => {
+    for (const n of nodes) {
+      if (n.path) leaves.push(n.path);
+      if (n.children?.length) walk(n.children);
+    }
+  };
+  walk(MENU_CATALOG);
+
+  assert.ok(leaves.length >= 8, `目录里应有至少 8 个带 path 的节点，实际 ${leaves.length}`);
+  for (const p of leaves) {
+    const seg = p.replace(/^\//, '');
+    // 路由表里子路由写成 { path: 'users', ... }（无前导斜杠）
+    const hit = new RegExp(`path:\\s*['\"]${seg}['\"]`).test(src);
+    assert.ok(hit, `菜单 path ${p} 在 apps/console/src/router/index.ts 里没有对应路由`);
+  }
 });
