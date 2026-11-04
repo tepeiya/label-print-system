@@ -25,7 +25,10 @@ export class TenantGuard implements CanActivate {
     const payload = req.user; // 由 JwtAuthGuard 注入 { sub, tenantId, roles }
     if (!payload?.tenantId) throw new ForbiddenException('缺少租户上下文');
     // 兜底写入（拦截器也会写入，这里确保守卫之后、handler 之前的边界一致）
-    tenantStorage.enterWith({ tenantId: payload.tenantId, userId: payload.sub, roles: payload.roles ?? [] });
+    tenantStorage.enterWith({
+      tenantId: payload.tenantId, userId: payload.sub, roles: payload.roles ?? [],
+      modules: [], permissions: [],   // 兜底空数组（拦截器会在之后填充）
+    });
     return true;
   }
 }

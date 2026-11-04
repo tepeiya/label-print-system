@@ -4,3 +4,4 @@ export * from './template.entity';
 export * from './serial.entity';
 export * from './print.entity';
 export * from './ai-template.entity';
+export * from './saas.entity';

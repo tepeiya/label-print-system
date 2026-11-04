@@ -5,6 +5,8 @@ import { Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { User, RefreshToken, UserRole, Tenant } from '../entities/tenant.entity';
+import { ModulesService } from '../saas/modules.service';
+import { PermissionsService } from '../saas/permissions.service';
 
 export interface JwtPayload { sub: number; tenantId: number; roles: string[]; }
 
@@ -21,6 +23,8 @@ export class AuthService {
     @InjectRepository(UserRole) private userRoles: Repository<UserRole>,
     @InjectRepository(Tenant) private tenants: Repository<Tenant>,
     private jwt: JwtService,
+    private modulesSvc: ModulesService,
+    private permsSvc: PermissionsService,
   ) {}
 
   /** 登录：按 tenantCode 查租户 → 租户内用户名+密码校验（密码 bcrypt 加盐哈希） */
@@ -65,11 +69,22 @@ export class AuthService {
     return { ok: true };
   }
 
-  /** 获取当前登录用户详情（含角色，供前端展示） */
+  /**
+   * 获取当前登录用户详情 —— SaaS P0 扩展：
+   * 除基本字段 + roles 外，附加 modules（租户开通模块）+ permissions（角色权限展开）
+   * 供前端渲染菜单、按钮、hasPermission() 使用。
+   */
   async me(userId: number) {
     const user = await this.users.findOne({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('用户不存在');
     const roles = await this.loadRoles(user.id, user.tenantId);
+
+    // SaaS P0 附加：租户模块 + 角色权限
+    const [modules, permissions] = await Promise.all([
+      this.modulesSvc.listTenantActive(user.tenantId).catch(() => []),
+      this.permsSvc.listByRoles(roles).catch(() => []),
+    ]);
+
     return {
       id: user.id,
       username: user.username,
@@ -78,6 +93,8 @@ export class AuthService {
       email: user.email,
       status: user.status,
       roles,
+      modules,       // SaaS P0
+      permissions,    // SaaS P0
     };
   }
 }

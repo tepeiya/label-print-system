@@ -7,9 +7,13 @@ import * as bcrypt from 'bcryptjs';
 import { AppModule } from './app.module';
 import { JwtAuthGuard } from './common/jwt-auth.guard';
 import { RolesGuard } from './common/roles.guard';
+import { ModuleGuard } from './common/module.guard';
+import { PermissionGuard } from './common/permission.guard';
 import { JwtService } from '@nestjs/jwt';
 import { ResponseInterceptor } from './common/response.interceptor';
 import { TenantContextInterceptor } from './common/tenant-context.interceptor';
+import { ModulesService } from './saas/modules.service';
+import { PermissionsService } from './saas/permissions.service';
 import { AllExceptionsFilter } from './common/errors.filter';
 import { Reflector } from '@nestjs/core';
 import { Tenant, User, UserRole } from './entities/tenant.entity';
@@ -51,12 +55,22 @@ async function seedDefaultTenantAndAdmin(dataSource: DataSource) {
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  const reflector = new Reflector();
-  const jwt = new JwtService({ secret: JWT_SECRET });
-  // 全局守卫顺序：先 JWT 写 req.user，再 Roles 做权限校验
-  app.useGlobalGuards(new JwtAuthGuard(jwt, reflector), new RolesGuard(reflector));
+  const reflector = app.get(Reflector);
+  const jwt = app.get(JwtService);
+
+  // 全局守卫顺序：JWT(注入 req.user) → ModuleGuard(订阅检查) → PermissionGuard(权限检查) → RolesGuard(角色回退)
+  // ModuleGuard/PermissionGuard 不需要依赖注入（只读 Reflector + AsyncLocalStorage），直接 new
+  app.useGlobalGuards(
+    new JwtAuthGuard(jwt, reflector),
+    new ModuleGuard(reflector),
+    new PermissionGuard(reflector),
+    new RolesGuard(reflector),
+  );
+
   app.setGlobalPrefix('api/v1');
-  app.useGlobalInterceptors(new TenantContextInterceptor(), new ResponseInterceptor());
+  const modulesSvc = app.get(ModulesService);
+  const permsSvc = app.get(PermissionsService);
+  app.useGlobalInterceptors(new TenantContextInterceptor(modulesSvc, permsSvc), new ResponseInterceptor());
   app.useGlobalFilters(new AllExceptionsFilter());
   app.enableCors();
 
