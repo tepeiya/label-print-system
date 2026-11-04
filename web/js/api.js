@@ -205,6 +205,29 @@ export const api = {
   aiTemplateJobs: (limit = 20) => req('GET', `/ai-template/jobs?limit=${limit}`),
   listAiModels: () => req('GET', '/ai-template/models'),
   createAiModel: (body) => req('POST', '/ai-template/models', body),
+
+  /** 单元素重算（FormData，需要上传原图 + elementId + currentElement + 尺寸） */
+  regenerateAiElement: async (file, opts) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('elementId', opts.elementId);
+    fd.append('currentElement', JSON.stringify(opts.currentElement));
+    fd.append('widthMm', String(opts.widthMm));
+    fd.append('heightMm', String(opts.heightMm));
+    fd.append('dpi', String(opts.dpi ?? 300));
+    if (opts.lang) fd.append('lang', opts.lang);
+    if (opts.variableHintKeywords) fd.append('variableHintKeywords', String(opts.variableHintKeywords));
+    if (opts.useLlm !== undefined) fd.append('useLlm', opts.useLlm ? 'true' : 'false');
+    const res = await fetch(BASE + '/ai-template/regenerate-element', {
+      method: 'POST',
+      headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
+      body: fd,
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.status === 401) { await doLogin(); return api.regenerateAiElement(file, opts); }
+    if (!res.ok || json.code !== 0) throw new Error(json.message || `HTTP ${res.status}`);
+    return json.data;
+  },
   testAiModel: (id) => req('POST', `/ai-template/models/${id}/test`, {}),
   deleteAiModel: (id) => req('DELETE', `/ai-template/models/${id}`),
 

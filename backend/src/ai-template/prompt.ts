@@ -86,3 +86,78 @@ ${JSON.stringify(priors.heuristic, null, 0)}
 
 请输出最终的模板 JSON。`;
 }
+
+// -----------------------------------------------------------------------------
+// 单元素重算：约束 Vision LLM 只输出一个修正元素（省 token）
+// -----------------------------------------------------------------------------
+
+export function buildSingleElementSystemPrompt(): string {
+  return `你是专业的标签模板结构化工程师。用户已通过启发式算法识别出一张标签图上的大部分元素，
+但某个特定元素识别可能不准，需要你**只修正这一个元素**的内容/类型/坐标/属性。
+
+【必须严格遵守的输出结构——只输出一个元素，不要输出完整模板】
+{
+  "element": {
+    "id": "<用户指定的 elementId>",
+    "type": "text|barcode|qrcode|serial|datetime|line|rect|ellipse|table|image",
+    "x": <mm>, "y": <mm>, "w": <mm>, "h": <mm>,
+    "rotation": 0, "zIndex": 0, "locked": false, "visible": true, "opacity": 1,
+    ...其他专属字段（参考主生成提示词）
+  },
+  "confidence": <0.0 ~ 1.0 的置信度，0 表示你完全不确定>
+}
+
+【硬性要求】
+- 只输出 JSON，不要 markdown，不要解释
+- 必须保留原 elementId（前端要做原地替换）
+- 所有坐标是 mm，且落在 0 ~ page.widthMm / page.heightMm 内
+- 不要臆造图中不存在的内容；如果图里没有对应元素了，返回 confidence: 0
+- 分类规则、命名规则、各元素专属字段与主生成提示词完全一致（参考本文件开头的 buildSystemPrompt）
+
+【工作流】
+1. 看图定位用户指定 bbox 区域
+2. 结合 OCR/条码/几何检测结果判断该元素的真实类型和内容
+3. 修正坐标 / 类型 / 文本 / 条码码制等属性
+4. 只输出这一个元素的完整结构，不要输出其他元素、page、variables`;
+}
+
+export interface SingleElementPriorPayload {
+  elementId: string;
+  currentElement: any;
+  ocrLines: any[];
+  barcodes: any[];
+  lines: any[];
+  regions: any[];
+  variableHints?: any[];
+}
+
+export function buildSingleElementUserPrompt(
+  imagePx: { w: number; h: number },
+  target: { widthMm: number; heightMm: number; dpi: number },
+  priors: SingleElementPriorPayload,
+): string {
+  return `【标签尺寸】宽 ${target.widthMm} mm × 高 ${target.heightMm} mm，DPI ${target.dpi}
+【图片像素】${imagePx.w} × ${imagePx.h} px
+【像素→mm 换算】x: ${(target.widthMm / imagePx.w).toFixed(6)} mm/px，y: ${(target.heightMm / imagePx.h).toFixed(6)} mm/px
+
+【需要修正的元素 ID】${priors.elementId}
+
+【启发式识别出的当前元素（可能不准，图中实际为准）】
+${JSON.stringify(priors.currentElement, null, 2)}
+
+【OCR 行级结果（可能包含该元素的文本）】
+${JSON.stringify(priors.ocrLines, null, 0)}
+
+【条码/二维码解码（如果该元素是码制）】
+${JSON.stringify(priors.barcodes, null, 0)}
+
+【几何检测：直线】
+${JSON.stringify(priors.lines, null, 0)}
+
+【几何检测：彩色区域】
+${JSON.stringify(priors.regions, null, 0)}
+
+${priors.variableHints?.length ? `【变量命名先验】\n${JSON.stringify(priors.variableHints, null, 0)}` : ''}
+
+请仅输出修正后的 **单个元素** JSON（含 confidence 字段）。`;
+}

@@ -127,7 +127,7 @@
 | POST | `/ai-template/generate` | `multipart`：`image`（≤10MB，jpg/png/webp）+ `targetWidthMm` + `targetHeightMm` + `dpi` + 可选 `tagMode` / `variableHintKeywords` / `serialHint` | `200` → `AiTemplateGenerateResponse`（template + meta）；`202` → `{jobId, status, estimatedMs}` | admin / operator |
 | GET | `/ai-template/status/:jobId` | — | `{jobId, status, result?, errorMsg?}` | admin / operator |
 | POST | `/ai-template/save` | `{template, meta?}`（用户校验后提交） | `Template` | admin / operator |
-| POST | `/ai-template/regenerate-element` | `{jobId, elementId, correction?}` | `{element, confidence}` | admin / operator |
+| POST | `/ai-template/regenerate-element` | **multipart/form-data**：`file`（原图）+ `elementId`（string）+ `currentElement`（JSON 字符串）+ `widthMm` / `heightMm` / `dpi` + 可选 `lang` / `variableHintKeywords` / `useLlm` | `{element, confidence, warnings[], model, llmUsed, llmError?, elapsedMs}` | admin / operator |
 | GET | `/ai-template/models` | — | `AiModelConfig[]`（API Key 脱敏） | admin |
 | POST | `/ai-template/models` | `{name, provider, apiEndpoint, apiKey, modelId, isDefault}` | `AiModelConfig` | admin |
 | DELETE | `/ai-template/models/:id` | — | `{ok}` | admin |

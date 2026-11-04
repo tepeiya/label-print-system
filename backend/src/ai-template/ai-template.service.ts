@@ -13,7 +13,7 @@ import { recognize, disposeOcr } from './ocr-adapter';
 import { detectColorRegions, detectLines } from './geometry';
 import { buildTemplateFromPriors, AiWarning } from './heuristics';
 import { createMapper } from './coords-transform';
-import { buildSystemPrompt, buildUserPrompt } from './prompt';
+import { buildSystemPrompt, buildUserPrompt, buildSingleElementSystemPrompt, buildSingleElementUserPrompt } from './prompt';
 import { callVision, configFromEnv, extractJson, prepareImageForLlm, VisionConfig } from './vision-llm';
 import { validateAiTemplate } from './validate-ai-template';
 
@@ -24,6 +24,11 @@ export interface GenerateParams {
   lang?: string;
   useLlm?: boolean;
   variableHintKeywords?: string[];
+}
+
+export interface RegenerateElementParams extends GenerateParams {
+  elementId: string;
+  currentElement: any;
 }
 
 @Injectable()
@@ -258,6 +263,135 @@ export class AiTemplateService implements OnModuleDestroy {
     }, ctx.userId, 'ai_template', undefined);
 
     return result;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 单元素重算（省 token 的增量接口）
+  // ---------------------------------------------------------------------------
+
+  /** 只修正指定的一个元素——复用 OCR/条码/几何检测 + 单元素 Vision LLM */
+  async regenerateElement(buf: Buffer, params: RegenerateElementParams) {
+    const ctx = useTenant();
+    const t0 = Date.now();
+    const { widthMm, heightMm, dpi, elementId, currentElement } = params;
+    if (!elementId || typeof elementId !== 'string') {
+      throw new BadRequestException('缺少 elementId');
+    }
+    if (!currentElement || typeof currentElement !== 'object') {
+      throw new BadRequestException('缺少 currentElement（前端传来的待修正元素）');
+    }
+    if (!(widthMm > 0) || !(heightMm > 0) || !(dpi > 0)) {
+      throw new BadRequestException('缺少有效的 widthMm / heightMm / dpi');
+    }
+
+    // 0. 基础校验
+    let meta: Metadata;
+    try {
+      meta = await sharp(buf).metadata();
+    } catch {
+      throw new BadRequestException('图片解码失败（文件损坏或不是图片）');
+    }
+    const imagePx = { w: meta.width ?? 0, h: meta.height ?? 0 };
+    if (!imagePx.w || !imagePx.h) throw new BadRequestException('无法读取图片尺寸');
+
+    // 1. 条码/二维码
+    const barcodes = await detectBarcodes(buf).catch((e) => {
+      this.logger.warn(`[regen-element] 条码识别失败: ${e?.message}`);
+      return [];
+    });
+
+    // 2. OCR
+    const ocr = await recognize(buf, { lang: params.lang }).catch((e) => {
+      this.logger.warn(`[regen-element] OCR 失败: ${e?.message}`);
+      return { lines: [], engine: 'tesseract' as const, warnings: [] as string[], durationMs: 0 };
+    });
+
+    // 3. 几何
+    const gray = await toGray(buf);
+    const lines = detectLines(gray.data, gray.width, gray.height);
+    const regions = await detectColorRegions(buf).catch(() => []);
+
+    // 4. Vision LLM 单元素修正
+    const visionCfg = params.useLlm === false ? null : await this.resolveVisionConfig(ctx.tenantId);
+    if (!visionCfg) {
+      throw new BadRequestException('未配置 AI 视觉模型（需要先在「AI 模型」里设置默认模型）');
+    }
+
+    let fixedElement: any = null;
+    let confidence = 0.5;
+    let llmError: string | null = null;
+    let model = visionCfg.model;
+
+    try {
+      const imageDataUrl = await prepareImageForLlm(buf);
+      const res = await callVision(
+        visionCfg,
+        imageDataUrl,
+        buildSingleElementSystemPrompt(),
+        buildSingleElementUserPrompt(
+          imagePx,
+          { widthMm, heightMm, dpi },
+          {
+            elementId,
+            currentElement,
+            ocrLines: ocr.lines.map((l) => ({
+              text: l.text,
+              bboxPx: [l.bboxPx.x0, l.bboxPx.y0, l.bboxPx.x1, l.bboxPx.y1],
+              confidence: l.confidence,
+            })),
+            barcodes: barcodes.map((b) => ({
+              format: b.format, text: b.text,
+              bboxPx: [b.bboxPx.x0, b.bboxPx.y0, b.bboxPx.x1, b.bboxPx.y1],
+            })),
+            lines: lines.map((l) => ({ orientation: l.orientation, x0: l.x0, y0: l.y0, x1: l.x1, y1: l.y1 })),
+            regions: regions.map((r) => ({
+              bboxPx: [r.bboxPx.x0, r.bboxPx.y0, r.bboxPx.x1, r.bboxPx.y1],
+              saturation: Math.round(r.saturation * 100) / 100,
+            })),
+            variableHints: params.variableHintKeywords,
+          },
+        ),
+      );
+
+      const parsed = extractJson(res.raw);
+      if (parsed?.element && typeof parsed.element === 'object') {
+        const el = parsed.element;
+        // 强制保留 elementId——前端要原地替换
+        el.id = elementId;
+        fixedElement = el;
+        confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.7;
+        model = res.model;
+      } else {
+        llmError = '模型输出缺少 element 字段';
+      }
+    } catch (e: any) {
+      llmError = e?.message ?? String(e);
+      this.logger.warn(`[regen-element] Vision LLM 失败: ${llmError}`);
+      // LLM 失败回退：返回启发式 currentElement 本身，confidence 给 0.3
+      fixedElement = { ...currentElement, id: elementId };
+      confidence = 0.3;
+    }
+
+    const warnings: AiWarning[] = [];
+    if (confidence < 0.5) {
+      warnings.push({ level: 'medium', message: `元素 ${elementId} 重算置信度较低（${Math.round(confidence * 100)}%），建议人工确认`, elementId });
+    }
+
+    const elapsedMs = Date.now() - t0;
+    await this.audit.write(ctx.tenantId, 'ai_template.regenerate_element', {
+      elementId, originalType: currentElement?.type,
+      fixedType: fixedElement?.type, llmError, elapsedMs,
+    }, ctx.userId, 'ai_template_element');
+
+    return {
+      element: fixedElement,
+      confidence,
+      warnings,
+      model,
+      llmUsed: true,
+      llmError,
+      elapsedMs,
+    };
   }
 
   /** 用启发式 bbox 与 LLM 元素做 IoU 匹配，继承置信度 */
