@@ -193,6 +193,10 @@ export const api = {
 
   // ----------------------------- 用户管理（admin） -----------------------------
   listUsers: () => req('GET', '/users'),
+  createUser: (body) => req('POST', '/users', body),
+  updateUser: (id, body) => req('PATCH', `/users/${id}`, body),
+  deleteUser: (id) => req('DELETE', `/users/${id}`),
+  resetUserPassword: (id, newPassword) => req('POST', `/users/${id}/reset-password`, { newPassword }),
   grantRole: (id, role) => req('POST', `/users/${id}/roles`, { role }),
   revokeRole: (id, role) => req('DELETE', `/users/${id}/roles/${role}`),
 

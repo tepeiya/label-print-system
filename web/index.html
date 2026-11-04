@@ -432,7 +432,14 @@
       <div class="tpl-layout">
         <div class="tpl-head">
           <span class="page-title">👥 用户管理</span>
+          <input type="search" id="users-search" class="form-input tpl-search" placeholder="搜索用户名 / 显示名 / 邮箱…" style="width:240px">
+          <select id="users-status-filter" class="form-input jobs-status" style="width:120px">
+            <option value="">全部状态</option>
+            <option value="active">正常</option>
+            <option value="inactive">停用</option>
+          </select>
           <button type="button" class="btn" id="btn-users-refresh">刷新</button>
+          <button type="button" class="btn btn-primary" id="btn-users-add">＋ 新增用户</button>
           <span class="st-spacer"></span>
           <span id="users-stat" class="form-hint">—</span>
         </div>
@@ -440,33 +447,69 @@
           <table class="tpl-table">
             <thead>
               <tr>
-                <th style="width:6%">ID</th>
+                <th style="width:5%">ID</th>
                 <th style="width:14%">用户名</th>
-                <th style="width:14%">显示名</th>
-                <th style="width:18%">邮箱</th>
-                <th style="width:8%">状态</th>
-                <th style="width:18%">角色</th>
-                <th style="width:22%">注册时间</th>
+                <th style="width:12%">显示名</th>
+                <th style="width:14%">邮箱</th>
+                <th style="width:10%">最后登录</th>
+                <th style="width:6%">状态</th>
+                <th style="width:22%">角色</th>
+                <th style="width:17%">操作</th>
               </tr>
             </thead>
             <tbody id="users-list-body">
-              <tr><td colspan="7" class="tpl-empty">加载中…</td></tr>
+              <tr><td colspan="8" class="tpl-empty">加载中…</td></tr>
             </tbody>
           </table>
         </div>
+      </div>
 
-        <!-- 角色编辑行（模板） -->
-        <template id="users-row-template">
-          <tr data-user-id>
-            <td class="u-id"></td>
-            <td class="u-username"></td>
-            <td class="u-display"></td>
-            <td class="u-email"></td>
-            <td class="u-status"></td>
-            <td class="u-roles"></td>
-            <td class="u-created"></td>
-          </tr>
-        </template>
+      <!-- 新增 / 编辑 用户 模态框 -->
+      <div class="modal-mask" id="user-modal-mask" hidden>
+        <div id="user-modal" class="modal printer-dialog" style="min-width:420px">
+          <div class="modal-head">
+            <span id="user-modal-title">新增用户</span>
+            <button type="button" class="btn ghost" id="user-modal-close" title="关闭">×</button>
+          </div>
+          <div class="modal-body">
+            <label class="form-row"><span class="form-label">用户名 *</span><input type="text" id="f-username" class="form-input" autocomplete="off" spellcheck="false"></label>
+            <label class="form-row"><span class="form-label">密码 *</span><input type="password" id="f-password" class="form-input" autocomplete="new-password"></label>
+            <label class="form-row"><span class="form-label">显示名</span><input type="text" id="f-displayName" class="form-input"></label>
+            <label class="form-row"><span class="form-label">邮箱</span><input type="email" id="f-email" class="form-input"></label>
+            <label class="form-row">
+              <span class="form-label">初始状态</span>
+              <select id="f-status" class="form-input">
+                <option value="1">正常</option>
+                <option value="0">停用</option>
+              </select>
+            </label>
+          </div>
+          <div class="modal-actions">
+            <span class="st-spacer"></span>
+            <button type="button" class="btn" id="user-modal-cancel">取消</button>
+            <button type="button" class="btn btn-primary" id="user-modal-save">💾 保存</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 重置密码 模态框 -->
+      <div class="modal-mask" id="pw-modal-mask" hidden>
+        <div id="pw-modal" class="modal printer-dialog" style="min-width:400px">
+          <div class="modal-head">
+            <span id="pw-modal-title">重置密码</span>
+            <button type="button" class="btn ghost" id="pw-modal-close" title="关闭">×</button>
+          </div>
+          <div class="modal-body">
+            <label class="form-row"><span class="form-label">新密码 *</span><input type="password" id="f-pw-new" class="form-input" placeholder="至少 6 位" autocomplete="new-password"></label>
+            <label class="form-row"><span class="form-label">确认新密码 *</span><input type="password" id="f-pw-confirm" class="form-input" autocomplete="new-password"></label>
+            <div class="form-hint" style="margin-top:8px">重置后该用户所有会话将被强制下线。</div>
+          </div>
+          <div class="modal-actions">
+            <span class="st-spacer"></span>
+            <button type="button" class="btn" id="pw-modal-cancel">取消</button>
+            <button type="button" class="btn btn-primary" id="pw-modal-save">🔒 确认重置</button>
+          </div>
+        </div>
       </div>
     </section>
 
