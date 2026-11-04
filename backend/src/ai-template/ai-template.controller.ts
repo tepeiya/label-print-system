@@ -7,16 +7,21 @@ import { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { TenantGuard } from '../common/tenant.guard';
 import { Roles } from '../common/roles.guard';
+import { RequireModule } from '../common/module.guard';
+import { RequirePermission } from '../common/permission.guard';
 import { AiTemplateService } from './ai-template.service';
 
 const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/tiff'];
 
 @Controller('ai-template')
 @UseGuards(TenantGuard)
+// AI 是加购模块（BASIC 含 ai 是历史种子配置，见 docs/10 §10.15 的套餐偏差说明）
+@RequireModule('ai')
 export class AiTemplateController {
   constructor(private svc: AiTemplateService) {}
 
   /** 纯文本描述生成模板：用户用中文描述标签 → LLM 直接输出模板 JSON（不需要图片） */
+  @RequirePermission('ai:text-to-template')
   @Roles('admin', 'operator')
   @Post('text-to-template')
   textToTemplate(@Body() body: { description: string; widthMm?: number; heightMm?: number }) {
@@ -31,6 +36,7 @@ export class AiTemplateController {
   }
 
   /** 主入口：上传图片 + 尺寸 → 生成模板 */
+  @RequirePermission('ai:generate')
   @Roles('admin', 'operator')
   @Post('generate')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
@@ -58,6 +64,7 @@ export class AiTemplateController {
   }
 
   /** 多联大图批量生成：上传一张包含 rows×cols 个相同标签的大图 → 切格 → 每格跑一次 generate */
+  @RequirePermission('ai:generate')
   @Roles('admin', 'operator')
   @Post('batch-generate')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 20 * 1024 * 1024 } }))
@@ -107,6 +114,7 @@ export class AiTemplateController {
   }
 
   /** 单元素重算：前端发现某个元素识别不准时，只重算这一个省 token */
+  @RequirePermission('ai:regenerate')
   @Roles('admin', 'operator')
   @Post('regenerate-element')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
@@ -148,6 +156,7 @@ export class AiTemplateController {
   }
 
   /** 透视矫正 / 自动裁边：Vision LLM 检测 4 角 → sharp bbox 裁剪，返回 PNG */
+  @RequirePermission('ai:rectify')
   @Roles('admin', 'operator')
   @Post('rectify')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 20 * 1024 * 1024 } }))
@@ -180,6 +189,7 @@ export class AiTemplateController {
   }
 
   /** 保存为正式模板 */
+  @RequirePermission('template:write')
   @Roles('admin', 'operator')
   @Post('save')
   save(@Body() body: any) { return this.svc.saveAsTemplate(body); }
@@ -189,18 +199,22 @@ export class AiTemplateController {
   jobs(@Query() q: any) { return this.svc.listJobs(Number(q.limit ?? 20)); }
 
   /** 模型配置 */
+  @RequirePermission('ai:models:manage')
   @Roles('admin')
   @Get('models')
   listModels() { return this.svc.listModels(); }
 
+  @RequirePermission('ai:models:manage')
   @Roles('admin')
   @Post('models')
   createModel(@Body() body: any) { return this.svc.createModel(body); }
 
+  @RequirePermission('ai:models:manage')
   @Roles('admin')
   @Post('models/:id/test')
   testModel(@Param('id') id: number) { return this.svc.testModel(+id); }
 
+  @RequirePermission('ai:models:manage')
   @Roles('admin')
   @Delete('models/:id')
   removeModel(@Param('id') id: number) { return this.svc.removeModel(+id); }

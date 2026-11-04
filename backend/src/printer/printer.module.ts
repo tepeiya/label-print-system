@@ -7,6 +7,7 @@ import { createConnection } from 'net';
 import { Printer } from '../entities/print.entity';
 import { TenantGuard } from '../common/tenant.guard';
 import { Roles, RoleName } from '../common/roles.guard';
+import { RequireModule } from '../common/module.guard';
 import { useTenantId } from '../common/tenant.context';
 import { PrinterProviderRegistry } from '../../printer/printer-provider.interface';
 import { AuditModule, AuditService } from '../audit/audit.module';
@@ -170,6 +171,9 @@ export class PrinterService {
 
 @Controller('printers')
 @UseGuards(TenantGuard)
+// 打印机是 print 模块内的资源，P0 只上门禁不加权限点：
+// 旧行为里 operator 就能管打印机，加 print:printer:manage 会削弱它（docs/11 §11.12.1 要求映射后行为不变）
+@RequireModule('print')
 export class PrinterController {
   constructor(private svc: PrinterService) {}
   @Get() list() { return this.svc.list(); }

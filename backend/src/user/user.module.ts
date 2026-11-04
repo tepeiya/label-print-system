@@ -10,6 +10,8 @@ import * as bcrypt from 'bcryptjs';
 import { User, UserRole, RefreshToken } from '../entities/tenant.entity';
 import { TenantGuard } from '../common/tenant.guard';
 import { Roles, RoleName } from '../common/roles.guard';
+import { RequireModule } from '../common/module.guard';
+import { RequirePermission } from '../common/permission.guard';
 import { useTenant, useTenantId } from '../common/tenant.context';
 import { AuditModule, AuditService } from '../audit/audit.module';
 
@@ -21,6 +23,8 @@ const USERNAME_MIN = 2;
 @Roles('admin')
 @Controller('users')
 @UseGuards(TenantGuard)
+// 模块门 + 权限钥匙（admin 走 PermissionGuard 超管放行，所以旧行为不变）
+@RequireModule('users')
 export class UserAdminController {
   constructor(
     @InjectRepository(User) private users: Repository<User>,
@@ -34,6 +38,7 @@ export class UserAdminController {
   // -------------------------------------------------------------------------
 
   /** 列出当前租户所有用户（含角色） */
+  @RequirePermission('sys:user:read')
   @Get()
   async list() {
     const tenantId = useTenantId();
@@ -61,6 +66,7 @@ export class UserAdminController {
   // 新建用户
   // -------------------------------------------------------------------------
 
+  @RequirePermission('sys:user:manage')
   @Post()
   async create(
     @Body() body: { username: string; password: string; displayName?: string; email?: string; status?: number },
@@ -95,6 +101,7 @@ export class UserAdminController {
   // 编辑 / 启停
   // -------------------------------------------------------------------------
 
+  @RequirePermission('sys:user:manage')
   @Patch(':id')
   async update(
     @Param('id') id: number,
@@ -123,6 +130,7 @@ export class UserAdminController {
   // 重置密码
   // -------------------------------------------------------------------------
 
+  @RequirePermission('sys:user:manage')
   @Post(':id/reset-password')
   async resetPassword(
     @Param('id') id: number,
@@ -146,6 +154,7 @@ export class UserAdminController {
   // 删除用户
   // -------------------------------------------------------------------------
 
+  @RequirePermission('sys:user:manage')
   @Delete(':id')
   async remove(@Param('id') id: number) {
     const tenantId = useTenantId();
@@ -166,6 +175,7 @@ export class UserAdminController {
   // 角色管理（grant/revoke 保持不变，补充审计）
   // -------------------------------------------------------------------------
 
+  @RequirePermission('sys:user:manage')
   @Post(':id/roles')
   async grantRole(
     @Param('id') id: number,
@@ -183,6 +193,7 @@ export class UserAdminController {
     return { ok: true };
   }
 
+  @RequirePermission('sys:user:manage')
   @Delete(':id/roles/:role')
   async revokeRole(
     @Param('id') id: number,

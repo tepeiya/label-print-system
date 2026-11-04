@@ -1,12 +1,15 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { User, RefreshToken, UserRole, Tenant } from '../entities/tenant.entity';
+import { Role } from '../entities/saas.entity';
 import { ModulesService } from '../saas/modules.service';
 import { PermissionsService } from '../saas/permissions.service';
+import { TenantConfigService } from '../saas/tenant-config.service';
+import { buildMenus } from '../saas/menu.catalog';
 
 export interface JwtPayload { sub: number; tenantId: number; roles: string[]; }
 
@@ -22,9 +25,11 @@ export class AuthService {
     @InjectRepository(RefreshToken) private refresh: Repository<RefreshToken>,
     @InjectRepository(UserRole) private userRoles: Repository<UserRole>,
     @InjectRepository(Tenant) private tenants: Repository<Tenant>,
+    @InjectRepository(Role) private roles: Repository<Role>,
     private jwt: JwtService,
     private modulesSvc: ModulesService,
     private permsSvc: PermissionsService,
+    private configSvc: TenantConfigService,
   ) {}
 
   /** 登录：按 tenantCode 查租户 → 租户内用户名+密码校验（密码 bcrypt 加盐哈希） */
@@ -39,10 +44,22 @@ export class AuthService {
     return this.issue(user, roles);
   }
 
-  /** 按 userId+tenantId 读取有效角色列表（去重） */
+  /**
+   * 按 userId+tenantId 读取有效角色列表（去重）。
+   * §11.12.3 兼容期双码返回：既给 user_roles.role 的旧字符串（admin/operator/sql/viewer，
+   * 现有前端 RBAC 和 DDL CHECK 认它），也给 user_roles.role_id 对应的 roles.code（tenant_admin/manager/...），
+   * RolesGuard 与 PermissionsService 都已支持两套码。下个版本删旧码时只留后者。
+   */
   async loadRoles(userId: number, tenantId: number): Promise<string[]> {
     const rows = await this.userRoles.find({ where: { userId, tenantId } });
-    return Array.from(new Set(rows.map((r) => r.role)));
+    const legacy = rows.map((r) => r.role).filter(Boolean);
+    const roleIds = rows.map((r) => r.roleId).filter((v): v is number => !!v);
+
+    const codes: string[] = roleIds.length
+      ? (await this.roles.find({ where: { id: In(roleIds) } })).map((r) => r.code)
+      : [];
+
+    return Array.from(new Set([...legacy, ...codes]));
   }
 
   /** 签发 Access + Refresh */
@@ -72,21 +89,24 @@ export class AuthService {
   }
 
   /**
-   * 获取当前登录用户详情 —— SaaS P0 扩展：
-   * 除基本字段 + roles 外，附加 modules（租户开通模块）+ permissions（角色权限展开）
-   * + tenantCode（前端用于展示）
-   * 供前端渲染菜单、按钮、hasPermission() 使用。
+   * 获取当前登录用户详情 —— SaaS P0 完整形态（docs/11 §11.4.6）：
+   * 基本字段 + roles（新旧双码）+ modules（L2 订阅）+ permissions（L1 权限点）
+   * + menus（后端算好的动态菜单，前端不再硬编码）+ features（D7 灰度）
+   * + dataScopes（L3 数据范围）+ tenant（类型/套餐/试用到期）。
+   * 供前端渲染菜单、路由、按钮，以及订阅页展示。
    */
   async me(userId: number) {
     const user = await this.users.findOne({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('用户不存在');
     const roles = await this.loadRoles(user.id, user.tenantId);
 
-    // SaaS P0 附加：租户模块 + 角色权限
-    const [modules, permissions, tenant] = await Promise.all([
-      this.modulesSvc.listTenantActive(user.tenantId).catch(() => []),
-      this.permsSvc.listByRoles(roles).catch(() => []),
+    const [modules, permissions, tenant, plan, features, dataScopes] = await Promise.all([
+      this.modulesSvc.listTenantActive(user.tenantId).catch(() => [] as string[]),
+      this.permsSvc.listByRoles(roles).catch(() => [] as string[]),
       this.tenants.findOne({ where: { id: user.tenantId } }),
+      this.modulesSvc.getPlan(user.tenantId).catch(() => null),
+      this.configSvc.featuresFor(user.tenantId).catch(() => ({}) as Record<string, boolean>),
+      this.configSvc.dataScopeFor(user.tenantId, user.id, roles).catch(() => null),
     ]);
 
     return {
@@ -98,8 +118,22 @@ export class AuthService {
       email: user.email,
       status: user.status,
       roles,
-      modules,       // SaaS P0
-      permissions,    // SaaS P0
+      modules,          // L2：租户订阅的模块
+      permissions,      // L1：角色权限点
+      menus: buildMenus(modules, permissions),   // P1 动态菜单入口
+      features,         // D7：功能开关
+      dataScopes,       // L3：数据范围
+      tenant: tenant ? {
+        id: tenant.id,
+        code: tenant.code,
+        name: tenant.name,
+        type: tenant.type ?? 'shared',
+        status: tenant.status,
+        plan: plan?.code ?? null,
+        planName: plan?.name ?? null,
+        seatLimit: tenant.seatLimit ?? null,
+        trialEndsAt: tenant.trialEndsAt ?? null,
+      } : null,
     };
   }
 }

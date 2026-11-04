@@ -14,9 +14,11 @@ import { ResponseInterceptor } from './common/response.interceptor';
 import { TenantContextInterceptor } from './common/tenant-context.interceptor';
 import { ModulesService } from './saas/modules.service';
 import { PermissionsService } from './saas/permissions.service';
+import { TenantConfigService } from './saas/tenant-config.service';
 import { AllExceptionsFilter } from './common/errors.filter';
 import { Reflector } from '@nestjs/core';
 import { Tenant, User, UserRole } from './entities/tenant.entity';
+import { Role } from './entities/saas.entity';
 import { JWT_SECRET, PORT } from './common/config';
 
 async function seedDefaultTenantAndAdmin(dataSource: DataSource) {
@@ -48,7 +50,14 @@ async function seedDefaultTenantAndAdmin(dataSource: DataSource) {
     where: { tenantId: tenant.id, userId: admin.id, role: 'admin' },
   });
   if (!exists) {
-    await roleRepo.save({ tenantId: tenant.id, userId: admin.id, role: 'admin' });
+    // 兼容期双写：role 用旧码，role_id 指向 roles 表的 tenant_admin。
+    // roles 表由 scripts/saas_p0_roles.sql 建，没跑脚本的老库这里取到 null 也不影响登录。
+    const tenantAdminRole = await dataSource.getRepository(Role)
+      .findOne({ where: { tenantId: tenant.id, code: 'tenant_admin' } })
+      .catch(() => null);
+    await roleRepo.save({
+      tenantId: tenant.id, userId: admin.id, role: 'admin', roleId: tenantAdminRole?.id ?? null,
+    });
     console.log('已授予 admin 用户 "admin" 角色');
   }
 }
@@ -62,6 +71,7 @@ async function bootstrap() {
   // ModuleGuard / PermissionGuard 需要 ModulesService / PermissionsService，手动构造传入
   const modulesSvc = app.get(ModulesService);
   const permsSvc = app.get(PermissionsService);
+  const configSvc = app.get(TenantConfigService);
   app.useGlobalGuards(
     new JwtAuthGuard(jwt, reflector),
     new ModuleGuard(reflector, modulesSvc),
@@ -70,7 +80,10 @@ async function bootstrap() {
   );
 
   app.setGlobalPrefix('api/v1');
-  app.useGlobalInterceptors(new TenantContextInterceptor(modulesSvc, permsSvc), new ResponseInterceptor());
+  app.useGlobalInterceptors(
+    new TenantContextInterceptor(modulesSvc, permsSvc, configSvc),
+    new ResponseInterceptor(),
+  );
   app.useGlobalFilters(new AllExceptionsFilter());
   app.enableCors();
 

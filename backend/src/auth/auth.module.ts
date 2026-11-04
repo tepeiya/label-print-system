@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtModule } from '@nestjs/jwt';
 import { User, RefreshToken, Tenant, UserRole } from '../entities/tenant.entity';
+import { Role } from '../entities/saas.entity';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JWT_SECRET } from '../common/config';
@@ -10,7 +11,7 @@ import { SaasModule } from '../saas/saas.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, RefreshToken, Tenant, UserRole]),
+    TypeOrmModule.forFeature([User, RefreshToken, Tenant, UserRole, Role]),
     JwtModule.register({ secret: JWT_SECRET }),
     SaasModule,
   ],

@@ -3,17 +3,22 @@ import { Observable } from 'rxjs';
 import { tenantStorage, TenantCtx } from './tenant.context';
 import { ModulesService } from '../saas/modules.service';
 import { PermissionsService } from '../saas/permissions.service';
+import { TenantConfigService } from '../saas/tenant-config.service';
 
 /**
- * 扩展版：在 AsyncLocalStorage 中除 tenantId/userId/roles 外，
- * 还注入 modules（tenant_modules active 列表）+ permissions（role_permissions 展开）
- * 供 ModuleGuard / PermissionGuard / useModules() / usePermissions() 使用。
+ * 扩展版：在 AsyncLocalStorage 中除 tenantId/userId/roles/modules/permissions 外，
+ * 再注入 plan / features / dataScopes / dataSourceKey（docs/11 §11.14），
+ * 供 ModuleGuard / PermissionGuard / useModules() / usePermissions() / useFeatureEnabled() 使用。
+ *
+ * 注意：这里所有查询都容错降级成空值 —— SaaS 表没建（老库直接升级）时不能把所有请求打挂，
+ * 顶多是模块判定为未开通，由运维补跑 scripts/saas_p0_roles.sql。
  */
 @Injectable()
 export class TenantContextInterceptor implements NestInterceptor {
   constructor(
     private modulesSvc: ModulesService,
     private permsSvc: PermissionsService,
+    private configSvc: TenantConfigService,
   ) {}
 
   async intercept(ctx: ExecutionContext, next: CallHandler): Promise<Observable<any>> {
@@ -24,14 +29,25 @@ export class TenantContextInterceptor implements NestInterceptor {
     const roles: string[] = u.roles ?? [];
 
     // 只有登录用户才查 SaaS 数据；public 路由（login 等）留空
-    const [modules, permissions] = tenantId > 0
-      ? await Promise.all([
-          this.modulesSvc.listTenantActive(tenantId).catch(() => [] as string[]),
-          this.permsSvc.listByRoles(roles).catch(() => [] as string[]),
-        ])
-      : [[], []];
+    let store: TenantCtx = { tenantId, userId, roles, modules: [], permissions: [] };
 
-    const store: TenantCtx = { tenantId, userId, roles, modules, permissions };
+    if (tenantId > 0) {
+      const [modules, permissions, plan, features, dataScopes] = await Promise.all([
+        this.modulesSvc.listTenantActive(tenantId).catch(() => [] as string[]),
+        this.permsSvc.listByRoles(roles).catch(() => [] as string[]),
+        this.modulesSvc.getPlan(tenantId).catch(() => null),
+        this.configSvc.featuresFor(tenantId).catch(() => ({}) as Record<string, boolean>),
+        this.configSvc.dataScopeFor(tenantId, userId, roles).catch(() => null),
+      ]);
+      store = {
+        tenantId, userId, roles, modules, permissions,
+        plan: plan?.code ?? null,
+        features,
+        dataScopes,
+        dataSourceKey: 'default',   // D2：P0 只有共享库，字段先留好
+      };
+    }
+
     return tenantStorage.run(store, () => next.handle());
   }
 }

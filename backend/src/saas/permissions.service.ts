@@ -1,12 +1,16 @@
 // 权限服务：从 role_permissions + permissions 表读取角色权限
-import { Injectable, Logger } from '@nestjs/common';
+// 同一组角色在 60s 内复用缓存；改角色权限后最多等 60s，或用 invalidateRoles() 主动失效
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { RolePermission, Permission } from '../entities/saas.entity';
+import { matchPermission } from '../common/permission-match';
+
+const CACHE_TTL_MS = 60_000;
 
 @Injectable()
 export class PermissionsService {
-  private log = new Logger('PermissionsService');
+  private cache = new Map<string, { codes: string[]; at: number }>();
 
   constructor(
     @InjectRepository(RolePermission) private rpRepo: Repository<RolePermission>,
@@ -16,41 +20,38 @@ export class PermissionsService {
   /** 按角色列表返回所有 permission code（去重） */
   async listByRoles(roles: string[]): Promise<string[]> {
     if (!roles?.length) return [];
-    const rows = await this.rpRepo.find({
-      where: { role: In(roles) },
-    });
+    const key = [...roles].sort().join(',');
+    const hit = this.cache.get(key);
+    if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.codes;
+
+    const rows = await this.rpRepo.find({ where: { role: In(roles) } });
     const codes = Array.from(new Set(rows.map((r) => r.permissionCode)));
+    this.cache.set(key, { codes, at: Date.now() });
     return codes;
   }
 
-  /** 通配匹配：admin 全通，template:* 匹配 template:read */
+  invalidateRoles(roles: string[] = []) {
+    if (!roles.length) this.cache.clear();
+    else this.cache.delete([...roles].sort().join(','));
+  }
+
+  /** 通配匹配（实现见 common/permission-match，这里保留方法名供老调用方使用） */
   hasPermission(permissions: string[], wanted: string): boolean {
-    if (!wanted) return true;
-    if (!permissions?.length) return false;
-
-    // 超管全通
-    if (permissions.includes('*')) return true;
-
-    // 精确匹配
-    if (permissions.includes(wanted)) return true;
-
-    // 通配匹配：把 wanted 最后一段换成 * 试
-    // 例：wanted=template:read → template:* 或 *:*:*
-    const parts = wanted.split(':');
-    while (parts.length > 0) {
-      parts[parts.length - 1] = '*';
-      const pattern = parts.join(':');
-      if (permissions.includes(pattern)) return true;
-      parts.pop();
-    }
-    // 全局通配
-    if (permissions.includes('*')) return true;
-
-    return false;
+    return matchPermission(permissions, wanted);
   }
 
   /** 全量权限字典（平台视角） */
   async listAll() {
-    return this.permRepo.find({ order: { moduleCode: 'ASC', resource: 'ASC', action: 'ASC' } });
+    const rows = await this.permRepo.find({
+      order: { moduleCode: 'ASC', resource: 'ASC', action: 'ASC' },
+    });
+    return rows.map((p) => ({
+      code: p.code,
+      moduleCode: p.moduleCode,
+      resource: p.resource,
+      action: p.action,
+      name: p.name || p.description || p.code,
+      isHighRisk: !!p.isHighRisk,
+    }));
   }
 }

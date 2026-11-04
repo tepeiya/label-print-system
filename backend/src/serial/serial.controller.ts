@@ -1,10 +1,12 @@
 import { Controller, Get, Post, Put, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { SerialModuleService } from './serial.service';
 import { TenantGuard } from '../common/tenant.guard';
+import { RequireModule } from '../common/module.guard';
 import { useTenantId } from '../common/tenant.context';
 
 @Controller('serial-sequences')
 @UseGuards(TenantGuard)
+@RequireModule('serial')
 export class SerialController {
   constructor(private svc: SerialModuleService) {}
   // 列表/创建/更新/重置等常规 CRUD 略，聚焦核心分配（供 PrintService 调用）

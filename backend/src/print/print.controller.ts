@@ -11,6 +11,8 @@ import { RenderService } from './render.service';
 import { renderPrintHtml, HtmlRenderOutput } from './html-renderer';
 import { TenantGuard } from '../common/tenant.guard';
 import { Roles, RoleName } from '../common/roles.guard';
+import { RequireModule } from '../common/module.guard';
+import { RequirePermission } from '../common/permission.guard';
 import { generateZpl, mmToDots } from '../../core/zpl-generator';
 import { buildJob as buildTsplJob } from '../../core/tspl-generator';
 import { PrintEvents } from './events.event';
@@ -21,21 +23,35 @@ const PRINT_ACTION: RoleName[] = ['admin', 'operator'];
 
 @Controller('print/jobs')
 @UseGuards(TenantGuard)
+// 模块门：print 是所有套餐的必含模块（docs/11 §11.16），挂上门禁对现有租户零影响，
+// 但没订阅 print 的租户（未来 FREE/停用）会被 4031 统一拦下。
+@RequireModule('print')
 export class PrintController {
   constructor(private svc: PrintService) {}
+  // 提交：人工入口沿用 print:job:write，Agent 走 print:job:submit（D7 灰度，任一即可）
+  @RequirePermission('print:job:write', 'print:job:submit')
   @Roles(...PRINT_ACTION)
   @Post() create(@Body() b: any) { return this.svc.createJob(b); }
+  @RequirePermission('print:job:read')
   @Get() list(@Query() q: any) { return this.svc.list(q); }
+  @RequirePermission('print:stats:read')
   @Get('stats') stats(@Query('days') days?: string) {
     return this.svc.stats({ days: days ? parseInt(days, 10) : undefined });
   }
+  @RequirePermission('print:job:read')
   @Get('logs') logs(@Query() q: any) { return this.svc.logs(q); }
+  @RequirePermission('print:job:read')
   @Get(':id') get(@Param('id') id: number) { return this.svc.getJob(+id); }
+  @RequirePermission('print:job:read')
   @Get(':id/logs') jobLogs(@Param('id') id: number, @Query() q: any) { return this.svc.jobLogs(+id, q); }
+  // 取消/重试/重打：operator 旧行为里就能做，所以把 print:job:write 也列为等效钥匙（saas_p0_roles.sql 第 12 节）
+  @RequirePermission('print:job:cancel', 'print:job:write')
   @Roles(...PRINT_ACTION)
   @Post(':id/cancel') cancel(@Param('id') id: number) { return this.svc.cancel(+id); }
+  @RequirePermission('print:job:write')
   @Roles(...PRINT_ACTION)
   @Post(':id/retry') retry(@Param('id') id: number, @Body() b: any) { return this.svc.retry(+id, b?.seqNos); }
+  @RequirePermission('print:job:write')
   @Roles(...PRINT_ACTION)
   @Post(':id/reprint') reprint(@Param('id') id: number, @Body() b: any) { return this.svc.retry(+id, b?.seqNos); }
 }

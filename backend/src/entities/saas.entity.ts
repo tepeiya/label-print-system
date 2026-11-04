@@ -14,6 +14,8 @@ export class ModuleRecord {
   @Column({ length: 40, nullable: true }) icon: string;
   @Column({ name: 'sort_order', default: 0 }) sortOrder: number;
   @Column({ name: 'is_core', default: false }) isCore: boolean;
+  @Column({ name: 'depends_on', type: 'text', array: true, default: () => '{}' }) dependsOn: string[];
+  @Column({ name: 'trial_days', default: 14 }) trialDays: number;
   @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
 }
 
@@ -82,7 +84,7 @@ export class TenantModule {
     length: 20,
     default: 'plan',
   })
-  source: 'plan' | 'purchase' | 'trial' | 'gift' | 'manual';
+  source: 'plan' | 'purchase' | 'addon' | 'trial' | 'gift' | 'manual';
   @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
 }
 
@@ -96,14 +98,57 @@ export class Permission {
   @Column({ length: 40 }) resource: string;
   @Column({ length: 20 }) action: string;
   @Column({ length: 200, nullable: true }) description: string;
+  @Column({ length: 80, default: '' }) name: string;
+  @Column({ name: 'is_high_risk', default: false }) isHighRisk: boolean;
   @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
 }
 
 // ============================================================
 // 角色 → 权限（4 个固定角色：admin/operator/sql/viewer）
+// 兼容期仍以 role 字符串为主键，role_id 为 §11.12.2 预留列
 // ============================================================
 @Entity('role_permissions')
 export class RolePermission {
   @PrimaryColumn({ length: 30 }) role: string;
   @PrimaryColumn({ name: 'permission_code', length: 60 }) permissionCode: string;
+  @Column({ name: 'role_id', type: 'bigint', nullable: true }) roleId: number | null;
+}
+
+// ============================================================
+// 角色（tenant_id IS NULL = 系统内置模板角色，§11.12.2 第 1 步）
+// 唯一性由 DDL 保证：UNIQUE (tenant_id, code) + partial index uq_role_system_code
+// ============================================================
+@Entity('roles')
+export class Role {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ name: 'tenant_id', type: 'bigint', nullable: true }) tenantId: number | null;
+  @Column({ length: 40 }) code: string;
+  @Column({ length: 60 }) name: string;
+  @Column({ name: 'is_system', default: false }) isSystem: boolean;
+  @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
+}
+
+// ============================================================
+// 数据范围（L3，§11.4.5）
+// ============================================================
+@Entity('data_scopes')
+export class DataScopeRecord {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ name: 'tenant_id' }) tenantId: number;
+  // 联合字面量类型同样反射不出列类型，必须显式写 type
+  @Column({ name: 'subject_type', type: 'varchar', length: 10 }) subjectType: 'user' | 'role' | 'agent';
+  @Column({ name: 'subject_id', type: 'bigint' }) subjectId: number;
+  @Column({ name: 'scope_type', type: 'varchar', length: 20 }) scopeType: 'all' | 'dept' | 'warehouse' | 'self';
+  @Column({ name: 'scope_value', type: 'varchar', length: 60, nullable: true }) scopeValue: string | null;
+}
+
+// ============================================================
+// 功能开关（D7：agent.print.submit 默认关闭，灰度用）
+// ============================================================
+@Entity('feature_flags')
+export class FeatureFlag {
+  @PrimaryColumn({ name: 'tenant_id' }) tenantId: number;
+  @PrimaryColumn({ length: 60 }) key: string;
+  @Column({ default: false }) enabled: boolean;
+  @Column({ type: 'jsonb', default: () => '{}' }) rollout: Record<string, any>;
 }
