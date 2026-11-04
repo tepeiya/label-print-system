@@ -40,6 +40,9 @@ export class BackupController {
     res.send(rec.data ?? Buffer.alloc(0));
   }
 
+  // 原来是 @Post(':id')：① 和前端约定的 DELETE /backups/:id（docs/10 §10.3）不一致，
+  // 前端点删除一直 404；② 用 POST 表达删除语义，容易被重放。改回 DELETE 并补权限点。
   @Roles(...ADMIN)
-  @Post(':id') remove(@Param('id') id: number) { return this.svc.remove(+id); }
+  @RequirePermission('backup:write')
+  @Delete(':id') remove(@Param('id') id: number) { return this.svc.remove(+id); }
 }
