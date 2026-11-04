@@ -72,6 +72,7 @@ export class AuthService {
   /**
    * 获取当前登录用户详情 —— SaaS P0 扩展：
    * 除基本字段 + roles 外，附加 modules（租户开通模块）+ permissions（角色权限展开）
+   * + tenantCode（前端用于展示）
    * 供前端渲染菜单、按钮、hasPermission() 使用。
    */
   async me(userId: number) {
@@ -80,9 +81,10 @@ export class AuthService {
     const roles = await this.loadRoles(user.id, user.tenantId);
 
     // SaaS P0 附加：租户模块 + 角色权限
-    const [modules, permissions] = await Promise.all([
+    const [modules, permissions, tenant] = await Promise.all([
       this.modulesSvc.listTenantActive(user.tenantId).catch(() => []),
       this.permsSvc.listByRoles(roles).catch(() => []),
+      this.tenants.findOne({ where: { id: user.tenantId } }),
     ]);
 
     return {
@@ -90,6 +92,7 @@ export class AuthService {
       username: user.username,
       displayName: user.displayName,
       tenantId: user.tenantId,
+      tenantCode: tenant?.code ?? '',   // SaaS P0 补充
       email: user.email,
       status: user.status,
       roles,

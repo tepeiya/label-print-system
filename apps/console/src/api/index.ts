@@ -28,7 +28,7 @@ http.interceptors.response.use(
       window.location.href = '/login';
       ElMessage.error('登录已过期，请重新登录');
     } else if (status === 403) {
-      ElMessage.error('权限不足');
+      ElMessage.error(msg || '权限不足');
     } else {
       ElMessage.error(msg || '请求失败');
     }
@@ -66,5 +66,14 @@ export const apiRestoreBackup = (id: number) => http.post(`/backups/${id}/restor
 
 // ========== AI Quota ==========
 export const apiAiQuota = () => http.get('/ai-template/quota');
+
+// ========== SaaS P0: Subscription (租户视角) ==========
+export const apiSubscription = () => http.get('/subscription');
+export const apiSubscriptionUsage = () => http.get('/subscription/usage');
+
+// ========== SaaS P0: Platform (平台视角，admin only) ==========
+export const apiPlatformModules = () => http.get('/platform/modules');
+export const apiPlatformPlans = () => http.get('/platform/plans');
+export const apiPlatformPermissions = () => http.get('/platform/permissions');
 
 export default http;

@@ -9,6 +9,9 @@ export interface UserInfo {
   roles: string[];
   tenantId: number;
   tenantCode: string;
+  // SaaS P0 新增：后端 /auth/me 直接返回
+  modules: string[];
+  permissions: string[];
 }
 
 export const useAuthStore = defineStore('auth', {
@@ -22,23 +25,8 @@ export const useAuthStore = defineStore('auth', {
     isLoggedIn: (s) => !!s.accessToken,
     displayName: (s) => s.user?.displayName || s.user?.username || '',
     isAdmin: (s) => s.user?.roles?.includes('admin') || false,
-    permissions: (s) => {
-      // 简化：按角色推导权限点（后续 SaaS 化时从后端 /auth/me 返回）
-      const perms: string[] = [];
-      const roles = s.user?.roles || [];
-      if (roles.includes('admin')) {
-        perms.push('*:*');
-      } else {
-        if (roles.includes('operator')) {
-          perms.push('template:read', 'template:write', 'print:*', 'ai:*');
-        }
-        if (roles.includes('sql')) {
-          perms.push('template:*', 'sql:*', 'print:*');
-        }
-        perms.push('print:read', 'template:read');
-      }
-      return perms;
-    },
+    modules: (s): string[] => s.user?.modules || [],
+    permissions: (s): string[] => s.user?.permissions || [],
   },
   actions: {
     async login(username: string, password: string, tenantCode?: string) {
@@ -53,8 +41,20 @@ export const useAuthStore = defineStore('auth', {
     },
     async fetchMe() {
       try {
-        const me: any = await apiMe();
-        this.user = me;
+        // ResponseInterceptor 统一返回 { code, message, data }
+        const res: any = await apiMe();
+        const me = res?.data ?? res;   // 兼容两种情况
+        this.user = {
+          id: me.id,
+          username: me.username,
+          displayName: me.displayName,
+          email: me.email,
+          roles: me.roles || [],
+          tenantId: me.tenantId,
+          tenantCode: me.tenantCode || this.tenantCode,
+          modules: me.modules || [],
+          permissions: me.permissions || [],
+        };
       } catch {
         this.logout();
       }
@@ -67,16 +67,38 @@ export const useAuthStore = defineStore('auth', {
       localStorage.removeItem('labelflow_refresh');
       localStorage.removeItem('labelflow_tenant');
     },
-    hasPermission(perm: string) {
+
+    // ========== SaaS P0 权限检查 ==========
+
+    /** 检查是否有指定权限（支持通配：template:* 匹配 template:read；* 全通） */
+    hasPermission(perm: string): boolean {
       const perms = this.permissions;
-      return perms.includes('*:*') || perms.includes(perm) || perms.some((p) => {
-        // 'template:*' 匹配 'template:read'
-        if (p.endsWith(':*')) {
-          const prefix = p.slice(0, -1); // 'template:'
-          return perm.startsWith(prefix);
-        }
-        return false;
-      });
+      if (!perm) return true;
+      if (!perms.length) return false;
+      if (perms.includes('*')) return true;
+      if (perms.includes(perm)) return true;
+      // 通配：从右往左把每一段换成 * 试
+      const parts = perm.split(':');
+      while (parts.length > 0) {
+        parts[parts.length - 1] = '*';
+        const pattern = parts.join(':');
+        if (perms.includes(pattern)) return true;
+        parts.pop();
+      }
+      return false;
+    },
+
+    /** 检查租户是否开通了指定模块 */
+    hasModule(code: string): boolean {
+      if (!code) return true;
+      return this.modules.includes(code);
+    },
+
+    /** 综合检查：路由 meta 中可能同时有 permission 和 module */
+    canAccess(meta: { permission?: string; module?: string }): boolean {
+      if (meta.module && !this.hasModule(meta.module)) return false;
+      if (meta.permission && !this.hasPermission(meta.permission)) return false;
+      return true;
     },
   },
 });
