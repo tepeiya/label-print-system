@@ -116,7 +116,7 @@ export class DataSourceService {
 
   async uploadCsv(name: string, csvText: string, fieldMap: Record<string, string> = {}) {
     const { header, rows } = parseCsv(csvText);
-    if (!header.length) throw new Error('CSV 内容为空');
+    if (!header.length) throw new BadRequestException('CSV 内容为空');
     const payloads = rows.map((cells) => {
       const row: Record<string, any> = {};
       header.forEach((h, i) => { row[fieldMap[h] ?? h] = cells[i] ?? ''; });
@@ -143,9 +143,9 @@ export class DataSourceService {
 
   /** 保存 SQL 数据源定义（连接串加密） */
   async saveSql(dto: { name: string; connectionUrl: string; queryTemplate?: string; description?: string }) {
-    if (!dto.connectionUrl) throw new Error('缺少 connectionUrl');
+    if (!dto.connectionUrl) throw new BadRequestException('缺少 connectionUrl');
     if (!dto.connectionUrl.startsWith('postgresql://') && !dto.connectionUrl.startsWith('postgres://')) {
-      throw new Error('仅支持 postgresql:// 连接串（需带用户名/密码/端口）');
+      throw new BadRequestException('仅支持 postgresql:// 连接串（需带用户名/密码/端口）');
     }
     const encryptedUrl = encrypt(dto.connectionUrl);
     const src = await this.ds.save({
@@ -168,7 +168,7 @@ export class DataSourceService {
   /** 测试 SQL 数据源连接（SELECT 1） */
   async testSql(id: number) {
     const src = await this.get(id);
-    if (src.type !== 'sql') throw new Error('该数据源不是 SQL 类型');
+    if (src.type !== 'sql') throw new BadRequestException('该数据源不是 SQL 类型');
     const url = decrypt(src.config.encryptedUrl);
     return sqlx.ping({ connection: url });
   }
@@ -176,9 +176,9 @@ export class DataSourceService {
   /** 执行 SQL（参数化 + 只读强制） */
   async execSql(id: number, params: any[] = [], limit = 1000): Promise<sqlx.SqlExecResult> {
     const src = await this.get(id);
-    if (src.type !== 'sql') throw new Error('该数据源不是 SQL 类型');
+    if (src.type !== 'sql') throw new BadRequestException('该数据源不是 SQL 类型');
     const query = String(src.config.queryTemplate || '').trim();
-    if (!query) throw new Error('该 SQL 数据源尚未配置查询模板');
+    if (!query) throw new BadRequestException('该 SQL 数据源尚未配置查询模板');
     const url = decrypt(src.config.encryptedUrl);
     let result: sqlx.SqlExecResult;
     try {
@@ -212,13 +212,13 @@ export class DataSourceController {
   @Post('upload-excel')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
   async uploadExcel(@UploadedFile() file: Express.Multer.File, @Body() body: { name?: string; fieldMap?: string } = {} as any) {
-    if (!file) throw new Error('缺少 file');
-    if (!/\.xlsx?$/i.test(file.originalname || '')) throw new Error('仅支持 .xlsx / .xls');
+    if (!file) throw new BadRequestException('缺少 file');
+    if (!/\.xlsx?$/i.test(file.originalname || '')) throw new BadRequestException('仅支持 .xlsx / .xls');
     const wb = XLSX.read(file.buffer, { type: 'buffer', cellDates: false });
     const sheetName = wb.SheetNames[0];
-    if (!sheetName) throw new Error('Excel 中没有工作表');
+    if (!sheetName) throw new BadRequestException('Excel 中没有工作表');
     const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: '', raw: false });
-    if (!rows.length) throw new Error('Excel 没有数据行');
+    if (!rows.length) throw new BadRequestException('Excel 没有数据行');
     const headers = Object.keys(rows[0]);
     let fieldMap: Record<string, string> = {};
     if (body.fieldMap) {
