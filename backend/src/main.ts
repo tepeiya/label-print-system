@@ -58,18 +58,18 @@ async function bootstrap() {
   const reflector = app.get(Reflector);
   const jwt = app.get(JwtService);
 
-  // 全局守卫顺序：JWT(注入 req.user) → ModuleGuard(订阅检查) → PermissionGuard(权限检查) → RolesGuard(角色回退)
-  // ModuleGuard/PermissionGuard 不需要依赖注入（只读 Reflector + AsyncLocalStorage），直接 new
+  // 全局守卫顺序：JWT(注入 req.user) → ModuleGuard(订阅模块) → PermissionGuard(细粒度权限) → RolesGuard(角色回退)
+  // ModuleGuard / PermissionGuard 需要 ModulesService / PermissionsService，手动构造传入
+  const modulesSvc = app.get(ModulesService);
+  const permsSvc = app.get(PermissionsService);
   app.useGlobalGuards(
     new JwtAuthGuard(jwt, reflector),
-    new ModuleGuard(reflector),
-    new PermissionGuard(reflector),
+    new ModuleGuard(reflector, modulesSvc),
+    new PermissionGuard(reflector, permsSvc),
     new RolesGuard(reflector),
   );
 
   app.setGlobalPrefix('api/v1');
-  const modulesSvc = app.get(ModulesService);
-  const permsSvc = app.get(PermissionsService);
   app.useGlobalInterceptors(new TenantContextInterceptor(modulesSvc, permsSvc), new ResponseInterceptor());
   app.useGlobalFilters(new AllExceptionsFilter());
   app.enableCors();

@@ -7,6 +7,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { DataSource as DS, DataRow } from '../entities/print.entity';
 import { TenantGuard } from '../common/tenant.guard';
 import { Roles, RoleName } from '../common/roles.guard';
+import { RequireModule } from '../common/module.guard';
+import { RequirePermission } from '../common/permission.guard';
 import { useTenantId } from '../common/tenant.context';
 import { AuditModule, AuditService } from '../audit/audit.module';
 import { encrypt, decrypt, hasProdKey } from './sql-crypto';
@@ -191,18 +193,22 @@ export class DataSourceService {
 
 @Controller('data-sources')
 @UseGuards(TenantGuard)
+@RequireModule('datasource')   // 订阅层：BASIC 没开 datasource → 403
 export class DataSourceController {
   constructor(private svc: DataSourceService) {}
 
+  @RequirePermission('datasource:read')
   @Get() list() { return this.svc.list(); }
 
   @Roles(...DS_WRITE)
+  @RequirePermission('datasource:write')
   @Post('upload') upload(@Body() b: { name: string; csvText: string; fieldMap: Record<string, string> }) {
     return this.svc.uploadCsv(b.name, b.csvText, b.fieldMap ?? {});
   }
 
   /** 服务端 Excel 上传 */
   @Roles(...DS_WRITE)
+  @RequirePermission('datasource:write')
   @Post('upload-excel')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
   async uploadExcel(@UploadedFile() file: Express.Multer.File, @Body() body: { name?: string; fieldMap?: string } = {} as any) {

@@ -6,6 +6,8 @@ import { Response } from 'express';
 import { AuditLog } from '../entities/print.entity';
 import { TenantGuard } from '../common/tenant.guard';
 import { Roles } from '../common/roles.guard';
+import { RequireModule } from '../common/module.guard';
+import { RequirePermission } from '../common/permission.guard';
 import { useTenant, useTenantId } from '../common/tenant.context';
 
 /** 审计写入（操作/打印日志统一入口） */
@@ -55,15 +57,18 @@ function csvEscape(v: any): string {
 
 @Controller('audit/logs')
 @UseGuards(TenantGuard)
+@RequireModule('audit')   // 订阅层：BASIC 没开 audit → 403
 export class AuditController {
   constructor(private svc: AuditService) {}
 
+  @RequirePermission('audit:read')
   @Get() list(@Query() q: any) {
     return this.svc.find(q);
   }
 
   /** 导出 CSV / JSON（仅 admin） */
   @Roles('admin')
+  @RequirePermission('audit:export')
   @Get('export')
   async export(@Query() q: any, @Res() res: Response) {
     const rows = await this.svc.exportRows(q);
