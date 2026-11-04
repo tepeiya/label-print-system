@@ -47,7 +47,8 @@ label-print-system/
 │   ├── 05-api.md                   # 后端 API 清单
 │   ├── 08-plan.md                  # 开发计划 + 测试要点
 │   ├── 09-ai-template-generation.md # AI 标签图片 → 模板自动生成（OCR/条码/分类/LLM）
-│   └── 10-dev-handover.md          # 开发交接文档（面向接手的 AI / 开发者）
+│   ├── 10-dev-handover.md          # 开发交接文档（面向接手的 AI / 开发者）
+│   └── 11-saas-and-agent-architecture.md # SaaS 化（订阅/权限分级）+ MCP 智能体接入
 ├── backend/
 │   ├── core/
 │   │   ├── serial-number.service.ts   # 流水号并发安全（行锁 + 号段预分配）

@@ -410,6 +410,10 @@ cd backend && npm test     # core/__tests__：16 个用例（公式/校验位/�
 
 ## 10.10 未完成路线图
 
+> **⚠️ 重大规划变更**：项目将从「单租户内部系统」升级为 **SaaS 多租户 + 模块订阅 + MCP 智能体接入**。
+> 完整设计、DDL、权限模型、路线（P0–P6）见 **`docs/11-saas-and-agent-architecture.md`**（决策 D1–D12 已锁定）。
+> 做 SaaS 相关开发前**必须先读该文档 §11.15**，其中的硬性约束会改变本文档 §10.5.4 的角色定义（`sql` 角色将废弃）。
+
 ### P0（商用必备缺口）
 
 | 项 | 说明 | 建议落点 |
@@ -561,4 +565,5 @@ RBAC 回归（用 operator 登录 `operator/op123`）：
   docs/08-plan.md           里程碑与人日
   docs/09-ai-template-generation.md  AI 生成完整设计 + 落地说明
   docs/10-dev-handover.md   本文档
+  docs/11-saas-and-agent-architecture.md  SaaS 化（订阅/权限分级）+ MCP 智能体接入（设计稿）
 ```
