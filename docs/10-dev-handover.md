@@ -175,21 +175,16 @@ DB_URL="postgresql://labelflow:labelflow@localhost:5433/labelflow" \
 
 ### 10.4.3 手工补的数据（新环境必须做）
 
-`main.ts` 的 seed 只保证：租户 `default` + 用户 `admin` + 给 admin 授予 `admin` 角色。
-若需要 `operator` 账号与 AI 测试数据，手工执行：
+**一键方案（推荐）**：已存 [backend/scripts/seed.sql](file:///workspace/backend/scripts/seed.sql)，包含租户 `default` + 用户 `admin/admin123` + `operator/op123` + 角色绑定：
 
-```sql
--- 操作员账号（密码 op123）
-INSERT INTO users (tenant_id, username, password_hash, display_name, status)
-VALUES (1, 'operator', '<bcrypt hash of op123>', '操作员', 1)
-ON CONFLICT (tenant_id, username) DO NOTHING;
-
-INSERT INTO user_roles (tenant_id, user_id, role)
-SELECT 1, id, 'operator' FROM users WHERE username='operator' AND tenant_id=1
-ON CONFLICT DO NOTHING;
+```bash
+PGPASSWORD=labelflow psql -h localhost -U labelflow -d labelflow \
+  -f backend/scripts/seed.sql
 ```
 
-（bcrypt hash 可用 `node -e "console.log(require('bcryptjs').hashSync('op123',10))"` 生成）
+也可以让 `main.ts` 首次启动时自动种入（幂等），但 `backend/scripts/seed.sql` 同时显式提供 bcrypt hash 值，**避免接手人需要自己跑 bcrypt 生成**。
+
+> ⚠️ 如果跳过 seed.sql 或 main.ts 种入步骤，直接用一个空 DB 启动后端，你会得到 "tenant not found" / "invalid credentials" 错误——这是 e2e 实测确认过的。
 
 ---
 
@@ -506,16 +501,69 @@ cd backend && npm test     # core/__tests__：16 个用例（公式/校验位/�
 | `user_roles` 插入违反 CHECK | DDL 里是旧角色名 | 约束改为 `('admin','operator','sql','viewer')` |
 | 属性面板不跟随选中切换 | 焦点在旧输入框时跳过重建 | 加选择指纹校验，指纹变化强制重建 |
 | `git push` 报 HTTP2 framing layer | 本机网络对 github.com 抖动 | `git -c http.version=HTTP/1.1 push` + 补全 PATH（askpass 需要 mktemp/cat） |
+| **BackupModule 启动报依赖失败**（2026-11-04 e2e） | `BackupService` 注入 `AuditService` 但 `BackupModule.imports` 没 `AuditModule` | 加 `imports: [AuditModule, TypeOrmModule.forFeature([TenantBackup])]` |
+| **`POST /backups` 500：column "data" does not exist**（2026-11-04 e2e） | `TenantBackup` Entity 有 `data: bytea` 列但 `03-database.sql` 里 DDL 没加 | PG 执行 `ALTER TABLE tenant_backups ADD COLUMN data bytea;`（DDL 后续补版本号） |
+| **BackupService TENANT_TABLES 有假表名**（2026-11-04 e2e） | 写了 `printer_models` / `ai_models` / `serial_assignments`，但仓库真实表是 `printers` / `ai_model_configs` / `serial_usage_log` | 对齐 [backup.service.ts#L17-L28](file:///workspace/backend/src/backup/backup.service.ts#L17-L28) 的真实表清单；恢复时顺序：主表→子表 |
+| **后端监听 `[::1]:3200` IPv6 导致 curl localhost 连不上**（2026-11-04 e2e） | `app.listen(PORT)` 默认绑 IPv6 loopback，沙盒 curl 默认 IPv4 | `app.listen(PORT, '0.0.0.0')` 强制 IPv4（[main.ts#L66](file:///workspace/backend/src/main.ts#L66)） |
+| **Vite 代理 `/api` 502**（2026-11-04 e2e） | ① `target: 'localhost:3000'`（端口错，后端跑 3200）② `localhost` 在 Vite 里解析成 IPv6 `::1` | 改 `target: 'http://127.0.0.1:3200'` 强制 IPv4 + 正确端口（[vite.config.ts#L16](file:///workspace/apps/console/vite.config.ts#L16)） |
+| **Dashboard 0 数据显示 NaN% / NaNs**（2026-11-04 e2e） | `successRate * 100` 没防御，`avgDurationMs / 1000` 没防御；还错误引用了不存在的 `byStatus.success`（后端已改 `counts.success`） | 加 `|| 0` 链 + 用 `counts.success`（[Dashboard.vue#L8-L22](file:///workspace/apps/console/src/views/Dashboard.vue#L8-L22)） |
+| **Playwright / Puppeteer 自动测试 Vue 3 组件 v-model 值不生效** | 浏览器自动化工具无法完全模拟 Vue 受控组件的事件链 | 临时绕过：`page.evaluate('...')` 直接 set DOM + 手动触发 input 事件；或直接调 `/api/v1/auth/login` 拿 JWT 手动 set localStorage，再刷新 |
+
+### 端到端实测验证证据（2026-11-04）
+
+本次 e2e 实测把后端真正跑了起来（PostgreSQL 16 + Redis 7 + 种子数据），**之前只跑单测的 P2 新功能现在都确认了能集成工作**：
+
+```sql
+-- 审计 actor_id 修复（10.9 #1）真实验证
+SELECT actor_id, action, target_type FROM audit_logs;
+ actor_id |    action     | target_type
+----------+---------------+-------------
+        1 | backup.create |             ← ✅ actor_id 有值（之前全 null）
+```
+
+| 端点 | 结果 | 备注 |
+|------|------|------|
+| `POST /auth/login` + tenantCode | ✅ 200 | admin/admin123 bcrypt 验证通过 |
+| `GET /auth/me` | ✅ 200 | roles=["admin"], tenantId=1 |
+| `GET /users` | ✅ 200 | 2 用户 + 角色标签 + tenant 隔离 |
+| `GET /print/jobs/stats?days=7` | ✅ 200 | 空数据结构完整（counts/p50/byDay） |
+| **`POST /backups`（P2 新增）** | ✅ **200** | 742 bytes gzip，18 表全 dump，48ms |
+| **`GET /backups`（P2 新增）** | ✅ **200** | createdBy=1（TenantCtx 正确） |
 
 ---
 
 ## 10.12 自测清单（改动后按需执行）
 
+### 0. 环境准备（全新沙盒 / 新机器第一次跑必须做）
+
 ```bash
-# 0. 准备
-TOKEN=$(curl -s -X POST http://localhost:3200/api/v1/auth/login -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"admin123"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['accessToken'])")
-H="Authorization: Bearer $TOKEN"
+# ===== PostgreSQL + Redis（Ubuntu/Debian）=====
+sudo apt-get install -y postgresql redis-server
+sudo pg_ctlcluster 16 main start               # 或 systemctl start postgresql
+redis-server --daemonize yes                  # 或 systemctl start redis-server
+
+# ===== 建库 + 种子 =====
+sudo -u postgres psql -c "CREATE USER labelflow WITH PASSWORD 'labelflow';"
+sudo -u postgres psql -c "CREATE DATABASE labelflow OWNER labelflow;"
+PGPASSWORD=labelflow psql -h localhost -U labelflow -d labelflow \
+  -f backend/scripts/seed.sql
+
+# ===== 后端 .env（参考 backend/.env.example）=====
+# DB_HOST / DB_PORT / DB_USER / DB_PASS / DB_NAME
+# REDIS_URL / JWT_SECRET / SQL_SECRET_KEY
+# PORT=3200（与 apps/console/vite.config.ts proxy target 对齐）
+
+# ===== 起服务 =====
+# 后端
+cd backend && npx tsc -p tsconfig.json && \
+  node -r reflect-metadata dist/src/main.js        # 需要 reflect-metadata！
+# 前端
+cd apps/console && pnpm dev                         # Vite 5173
+# 设计器
+cd web && node serve.mjs 5180                       # 可选
+```
+
+> ⚠️ **后端必须先 `tsc` 编译再 `node -r reflect-metadata dist/src/main.js`**，直接 `npx tsx src/main.ts` 会报 `ColumnTypeUndefinedError`（装饰器元数据在非编译模式下丢失）。
 
 # 1. 鉴权 & 角色
 curl -s http://localhost:3200/api/v1/auth/me -H "$H"
