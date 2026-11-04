@@ -16,14 +16,13 @@ import { AuditService } from '../audit/audit.module';
 
 /** 需要备份的表（带 tenant_id）。顺序：先主表，后外键引用表 */
 const TENANT_TABLES = [
-  'tenants',               // 先备份自己（恢复时要先有 tenantId）
-  'users',
-  'user_roles',
-  'printers', 'printer_models',
+  'tenants',
+  'users', 'user_roles', 'refresh_tokens',
+  'printers',
   'templates', 'template_versions', 'template_assets', 'template_shares',
-  'serial_sequences', 'serial_assignments',
-  'data_sources',
-  'ai_models', 'ai_template_jobs',
+  'serial_sequences', 'serial_usage_log',
+  'data_sources', 'data_rows',
+  'ai_model_configs', 'ai_template_jobs',
   'print_jobs', 'print_logs',
   'audit_logs',
 ];

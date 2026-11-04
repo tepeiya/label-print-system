@@ -63,7 +63,7 @@ async function bootstrap() {
   // 首次启动种入默认租户、管理员与 admin 角色（幂等）
   await seedDefaultTenantAndAdmin(app.get(DataSource));
 
-  await app.listen(PORT);
-  console.log(`LabelFlow API 已启动: ${await app.getUrl()}`);
+  await app.listen(PORT, '0.0.0.0');
+  console.log(`LabelFlow API 已启动: http://0.0.0.0:${PORT}`);
 }
 bootstrap();

@@ -7,19 +7,19 @@
     <div class="stat-grid" v-if="stats">
       <div class="stat-card">
         <div class="label">打印任务总数</div>
-        <div class="value">{{ stats.total }}</div>
+        <div class="value">{{ stats.total || 0 }}</div>
       </div>
       <div class="stat-card">
         <div class="label">成功率</div>
-        <div class="value">{{ (stats.successRate * 100).toFixed(1) }}%</div>
+        <div class="value">{{ ((stats.successRate || 0) * 100).toFixed(1) }}%</div>
       </div>
       <div class="stat-card">
         <div class="label">成功 / 失败</div>
-        <div class="value">{{ stats.byStatus?.success || 0 }} / {{ stats.byStatus?.failed || 0 }}</div>
+        <div class="value">{{ stats.counts?.success || 0 }} / {{ stats.counts?.failed || 0 }}</div>
       </div>
       <div class="stat-card">
         <div class="label">平均耗时</div>
-        <div class="value">{{ (stats.avgDurationMs / 1000).toFixed(1) }}s</div>
+        <div class="value">{{ ((stats.avgDurationMs || 0) / 1000).toFixed(1) }}s</div>
       </div>
     </div>
     <div class="card" style="margin-top: 20px;" v-if="stats?.byDay">
