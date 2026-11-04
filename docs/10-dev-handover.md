@@ -327,7 +327,7 @@ POST /print/jobs
 | 多租户 + JWT/Refresh + bcrypt | ✅ | 租户隔离靠 `AsyncLocalStorage` |
 | RBAC 四档角色 + 守卫 | ✅ | admin/operator/sql/viewer |
 | 模板 CRUD / 复制 / 收藏 / 搜索 / 版本快照 / 回滚 | ✅ | 版本表已用 |
-| 模板缩略图自动生成 | ✅ | `encodeGrayPng` 生成占位白图（非真实渲染） |
+| 模板缩略图自动生成 | ✅ | `thumbnail-renderer.ts`（sharp + SVG composite，图形/条码/二维码全可见，服务端保存模板时自动渲染） |
 | 设计器（12 类元素、标尺/网格/参考线、撤销重做、快捷键、复制粘贴） | ✅ | 原生实现 |
 | 变量 / 公式引擎（自研 AST + 循环依赖） | ✅ | `core/formula-engine.ts` |
 | 流水号（行锁 + 号段预分配） | ✅ | 有并发测试 |
@@ -338,7 +338,7 @@ POST /print/jobs
 | Excel/CSV 导入 + 字段映射 + 后端 Excel 上传 | ✅ | `POST /data-sources/upload-excel` |
 | SQL 数据源（AES 加密连接串 + 参数化 + 只读强制） | ✅ | 仅 postgres 驱动 |
 | 审计日志 + CSV/JSON 导出（admin） | ✅ | |
-| 用户管理 API（列用户/授权/撤权） | ✅ | **无前端页签** |
+| 用户管理 API + 前端页签 | ✅ | 列用户/CRUD/启停/重置密码/角色 checkbox；审计自动写入 |
 | AI 图片生成模板（条码/OCR/几何/启发式/LLM/校验） | ✅ | 页签 `ai` |
 | PWA（manifest + SW） | ✅ | 网络优先缓存 `labelflow-v3` |
 
@@ -358,51 +358,58 @@ cd backend && npm test     # core/__tests__：16 个用例（公式/校验位/�
 
 ### 🔴 高优先级
 
-1. **审计日志的 `actorId` 全是 null**
+> 以下 1–3 已落地修复（2026-11-04），标记 ✅。
+
+1. **✅ 已修复** 审计日志的 `actorId` 全是 null
    `audit.write()` 共 **22 处调用**，无一传 `actorId`（传的都是 `undefined`），
    而 `TenantContextInterceptor` 其实已经把 `userId` 写进了上下文。
-   修法：把 `undefined` 换成 `useTenant().userId`，并在 `AuditService.write` 内部兜底取上下文。
-   涉及：`printer.module.ts`(5)、`template.service.ts`(6)、`print.service.ts`(3)、
-   `datasource.module.ts`(4)、`ai-template.service.ts`(4)。
+   修复：在 `AuditService.write()` 内部加兜底 `actorId ?? useTenant().userId`，
+   调用方不再需要显式传参。
+   落点：`backend/src/audit/audit.module.ts`（`write` 方法顶部）。
 
-2. **登录硬编码租户**
-   `backend/src/auth/auth.service.ts:27`：`where: { username, tenantId: 1 }`。
-   `login()` 参数里有 `tenantCode` 但没用到。多租户上线前必须改成
-   「按 `tenant.code` 查 tenantId 再查用户」。
+2. **✅ 已修复** 登录硬编码租户
+   原 `backend/src/auth/auth.service.ts:27`：`where: { username, tenantId: 1 }`。
+   修复：注入 `Tenant` 仓库，按 `tenant.code` 先查租户 → 校验 `status` → 再查用户。
+   未传 `tenantCode` 时默认回退到 `TENANT_CODE` 环境变量（兼容单租户部署）。
+   落点：`backend/src/auth/auth.service.ts`（`login` 方法前半段）。
 
-3. **JWT 密钥 4 处重复读取**
-   - `app.module.ts:57`（global）
-   - `auth/auth.module.ts:10`
-   - `main.ts:51`
-   - `print/print.controller.ts:153`（SSE 手动 verify）
-   任意一处漏改会导致「登录成功但 SSE 401」。建议抽 `common/config.ts` 单点导出。
+3. **✅ 已修复** JWT 密钥 4 处重复读取
+   原 4 处：`app.module.ts`（global）、`auth/auth.module.ts`、`main.ts`、`print/print.controller.ts`（SSE）。
+   修复：抽 `backend/src/common/config.ts` 单点导出 `JWT_SECRET / PORT / SQL_SECRET_KEY`，4 处全部改用。
+   密钥从环境变量 `JWT_SECRET` 读取，默认值只用于本地开发。
 
 ### 🟡 中优先级
 
-4. **没有 dotenv / 没有进程守护**
-   全靠 shell 内联环境变量；后端挂了不会自动拉起。
-   建议：`@nestjs/config` 或 `dotenv` + `.env.example` + `pm2 ecosystem.config.cjs`（或 systemd unit）。
+4. **✅ 已完成** 没有 dotenv / 没有进程守护
+   落地：`backend/.env.example`（DB / Redis / JWT / SQL_SECRET_KEY / AI / OCR 全覆盖）
+   + `backend/ecosystem.config.cjs`（PM2 守护，双进程：`labelflow-api` + `labelflow-worker`，自动重启 + 开机自启）
+   + `backend/src/main.ts` 顶部 `import 'dotenv/config'`。
+   运行：`pm2 start ecosystem.config.cjs` → `pm2 save && pm2 startup`。
 
-5. **后端零单测**
+5. **仍待补** 后端零单测
    建议至少补：`RolesGuard` 4 条规则、`sql-executor.assertReadOnly`（INSERT/多语句/SELECT）、
    `validate-ai-template`（脏输入）、`datasource.service.testSql`（真实 PG）。
+   现有单测集中在 `core/__tests__/*.test.ts`（公式引擎 / 流水号 / DPI / ZPL / TSPL / 条码渲染 / 渲染层），16 条全通过。
 
-6. **后端 `/users` 无前端页签**
-   分配角色目前只能 curl。补一个「👥 用户管理」tab 即可闭环（API 已就绪）。
+6. **✅ 已完成** 后端 `/users` 无前端页签
+   落地：新 tab `👥 用户管理`（index.html）+ `web/js/users.js`（搜索 / 状态筛选 / 新增模态框 / 编辑模态框 / 重置密码模态框 / 行内角色 checkbox / 删除确认 / 自我保护）
+   + `web/js/api.js` 新增 `createUser / updateUser / deleteUser / resetUserPassword` 四个方法。
 
-7. **`print_jobs.createdBy` 依赖前端传参**
-   `print.service.ts` 里是 `...(dto.params?.createdBy ? {...} : {})`，前端从不传 → 永远 null。
-   应与 #1 一起改成从上下文取。
+7. **✅ 已修复** `print_jobs.createdBy` 依赖前端传参
+   修复：`print.service.ts` 从上下文 `useTenant().userId` 直接写入，不再依赖前端 DTO。
 
 8. **TCP 通道端口默认值不一致**
    `printer.module.ts` 的测试连通用 `9100`，但 `docs/05-api.md` 写过 9000（笔误）。以代码 9100 为准。
+   文档已在 §05-api.md v2 里修正。
 
 ### 🟢 低优先级
 
-9. `docs/05-api.md` 与实际实现有偏差（历史设计稿）：
-   `/users/me` → 实际是 `/auth/me`；`PUT /users/:id/roles` → 实际是
-   `POST /users/:id/roles` + `DELETE /users/:id/roles/:role`。**以代码为准**。
-10. 模板缩略图只是纯白占位图，未真实渲染元素。
+9. **✅ 已修正** `docs/05-api.md` 与实际实现有偏差（历史设计稿）
+   原 `/users/me` → 实际是 `/auth/me`；原 `PUT /users/:id/roles` → 实际是
+   `POST /users/:id/roles` + `DELETE /users/:id/roles/:role`。已在 §5.1 完整重写为实际接口。
+10. **✅ 已完成** 模板缩略图纯白占位
+    落地：`backend/src/print/thumbnail-renderer.ts`（sharp + SVG composite，图形/条码/二维码/表格全可见，
+    文本简化为占位框）。`TemplateService.save` 保存时自动渲染缩略图写入 `templates.thumbnail` 字段。
 11. SQL 数据源仅支持 `postgresql://`，MySQL/SQLServer 未实现。
 12. 前端 `js/` 下无 lint/格式化配置。
 
@@ -414,24 +421,24 @@ cd backend && npm test     # core/__tests__：16 个用例（公式/校验位/�
 > 完整设计、DDL、权限模型、路线（P0–P6）见 **`docs/11-saas-and-agent-architecture.md`**（决策 D1–D12 已锁定）。
 > 做 SaaS 相关开发前**必须先读该文档 §11.15**，其中的硬性约束会改变本文档 §10.5.4 的角色定义（`sql` 角色将废弃）。
 
-### P0（商用必备缺口）
+### P0（商用必备缺口）✅ 本轮已完成
 
-| 项 | 说明 | 建议落点 |
+| 项 | 说明 | 状态 |
 | --- | --- | --- |
-| 修 #1/#2/#3 | 审计操作人、租户登录、密钥单点 | 见 §10.9 |
-| 部署持久化 | dotenv + pm2/systemd + 开机自启 | `ecosystem.config.cjs` |
-| 用户管理前端 | 列用户 + 授权/撤权 | 新 tab `users` + `web/js/users.js` |
+| 修 #1/#2/#3 | 审计操作人、租户登录、密钥单点 | ✅ 全部修复，见 §10.9 |
+| 部署持久化 | dotenv + pm2/systemd + 开机自启 | ✅ `.env.example` + `ecosystem.config.cjs` |
+| 用户管理前端 | 列用户 + 授权/撤权 | ✅ 新 tab + `web/js/users.js` + 完整 CRUD 后端 |
 
 ### P1（重要增强）
 
-| 项 | 说明 |
-| --- | --- |
-| 多联/多行排布（labelsPerRow/Col） | `page.columns/rows/gapX/gapY` 已有字段，渲染层未实现 |
-| 批量统计仪表盘 | 完成率 / 平均耗时 / 失败率（数据在 `print_jobs`/`print_logs`） |
-| 模板缩略图真实渲染 | 复用 `render.service.ts` 输出 PNG |
-| AI：透视矫正 / 四边检测 | 当前要求上传满幅标签图 |
-| AI：表格结构识别（合并单元格） | 当前只输出线段 |
-| AI：单元素重算接口 | `POST /ai-template/regenerate-element`（省 token） |
+| 项 | 说明 | 状态 |
+| --- | --- | --- |
+| 多联/多行排布（labelsPerRow/Col） | `page.columns/rows/gapX/gapY` 已有字段 | 🟡 后端 `html-renderer.ts` 已实现 columns/rows/gapXMm/gapYMm/marginMm 拼版，前端 buildPrintHtml 也有支持；端到端验证待跑 |
+| 批量统计仪表盘 | 完成率 / 平均耗时 / 失败率（数据在 `print_jobs`/`print_logs`） | ⏳ 待做 |
+| 模板缩略图真实渲染 | 复用 `render.service.ts` 输出 PNG | ✅ `thumbnail-renderer.ts` 已落地，服务端保存模板时自动渲染 |
+| AI：透视矫正 / 四边检测 | 当前要求上传满幅标签图 | ⏳ 待做 |
+| AI：表格结构识别（合并单元格） | 当前只输出线段 | ⏳ 待做 |
+| AI：单元素重算接口 | `POST /ai-template/regenerate-element`（省 token） | ⏳ 待做 |
 
 ### P2（可选）
 
@@ -552,6 +559,14 @@ RBAC 回归（用 operator 登录 `operator/op123`）：
   backend/src/common/roles.guard.ts  角色定义与全局权限
   backend/src/common/tenant.context.ts  租户上下文（所有查询依赖）
 
+2026-11-04 新增 / 重点文件：
+  backend/src/common/config.ts        JWT_SECRET / PORT / SQL_SECRET_KEY 单点配置入口（替代 4 处硬编码）
+  backend/src/user/user.module.ts      用户管理完整后端（CRUD + 自我保护 + 审计）
+  backend/src/print/thumbnail-renderer.ts  模板缩略图真实渲染引擎（sharp + SVG composite）
+  backend/ecosystem.config.cjs         PM2 守护（labelflow-api + labelflow-worker 双进程）
+  backend/.env.example                 环境变量样例（DB / Redis / JWT / AI / OCR）
+  web/js/users.js                      用户管理前端页签（搜索 / 筛选 / 模态框 / 行内角色）
+
 最容易出错的服务：
   backend/src/print/print.processor.ts   队列消费 / SSE 推送 / 状态机
   backend/src/ai-template/heuristics.ts  分类规则（改 AI 效果先看这里）
@@ -561,7 +576,7 @@ RBAC 回归（用 operator 登录 `operator/op123`）：
   docs/01-requirements.md   功能矩阵与优先级
   docs/03-database.sql      完整 DDL
   docs/04-template-schema.md 模板 schema
-  docs/05-api.md            API 清单（历史稿，以代码为准）
+  docs/05-api.md            API 清单（v2 已对齐代码实际实现）
   docs/08-plan.md           里程碑与人日
   docs/09-ai-template-generation.md  AI 生成完整设计 + 落地说明
   docs/10-dev-handover.md   本文档

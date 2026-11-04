@@ -10,15 +10,27 @@
 
 ## 5.1 鉴权与用户
 
+> **v2（2026-11-04）对齐代码实际实现**。权限名以 `backend/src/common/roles.guard.ts` 为准：`admin / operator / sql / viewer`。
+
 | 方法 | 路径 | 入参 | 出参 | 权限 |
 | --- | --- | --- | --- | --- |
-| POST | `/auth/login` | `{username, password}` | `{accessToken, refreshToken, expiresIn}` | 公开 |
+| POST | `/auth/login` | `{username, password, tenantCode?}` | `{accessToken, refreshToken, expiresIn}` | 公开 |
 | POST | `/auth/refresh` | `{refreshToken}` | `{accessToken, refreshToken}` | 公开 |
 | POST | `/auth/logout` | `{refreshToken}` | `{ok:true}` | 登录用户 |
-| GET | `/users/me` | — | `User` | 登录 |
-| GET | `/users` | 分页/搜索 | `Page<User>` | super_admin |
-| POST | `/users` | `{username,email,password,roles[]}` | `User` | super_admin |
-| PUT | `/users/:id/roles` | `{roles[]}` | `User` | super_admin |
+| GET | `/auth/me` | — | `User`（含 roles 数组、tenant 信息） | 登录 |
+| GET | `/users` | — | `User[]`（每个用户带 `roles: string[]`） | admin |
+| POST | `/users` | `{username, password, displayName?, email?, status?}` | `User` | admin |
+| PATCH | `/users/:id` | `{displayName?, email?, status?}` | `{ok:true}` | admin |
+| DELETE | `/users/:id` | — | `{ok:true}` | admin（不能删自己的账号） |
+| POST | `/users/:id/reset-password` | `{newPassword: string}` | `{ok:true}` | admin（重置后该用户所有 refresh token 强制下线） |
+| POST | `/users/:id/roles` | `{role: 'admin'\|'operator'\|'sql'\|'viewer'}` | `{ok:true, already?:boolean}` | admin |
+| DELETE | `/users/:id/roles/:role` | — | `{ok:true}` | admin（**最后一位 admin 不能撤销自己的 admin 角色**） |
+
+> **安全保护（后端双重校验 + 审计）**：
+> - 不能删除 / 停用自己的账号
+> - 不能撤销当前租户最后一位 admin 的 admin 角色
+> - 重置密码 → 该用户全部 refresh_tokens 清空（所有会话强制下线）
+> - 所有写操作自动写 `audit_logs`：`user.create / user.update / user.delete / user.reset_password / user.grant_role / user.revoke_role`
 
 ## 5.2 模板
 
@@ -172,6 +184,9 @@ export class TemplateController {
 ```
 
 ## 5.12 实现补充（当前代码已落地、设计稿未列出的接口）
+
+> **注意**：用户管理相关接口（`GET/POST/PATCH/DELETE /users`、`reset-password`、`roles`）已在 §5.1 v2 完整列出，本节不再重复。
+> 本表聚焦"不属于 5.1–5.11 主干章节但实际已实现"的接口。
 
 | 方法 | 路径 | 入参 | 出参 | 说明 |
 | --- | --- | --- | --- | --- |
