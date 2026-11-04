@@ -2,7 +2,7 @@
   <div>
     <div class="page-header">
       <h2>👥 用户管理</h2>
-      <el-button type="primary" :disabled="!auth.isAdmin" @click="openCreate">
+      <el-button type="primary" v-permission="'sys:user:manage'" @click="openCreate">
         <el-icon><UserFilled /></el-icon> 新增用户
       </el-button>
     </div>
@@ -33,18 +33,22 @@
                 :type="row.roles?.includes(role) ? 'primary' : 'info'"
                 :effect="row.roles?.includes(role) ? 'dark' : 'plain'"
                 size="small"
-                style="cursor: pointer;"
+                :style="{ cursor: auth.hasPermission('sys:user:manage') ? 'pointer' : 'default' }"
+                :title="auth.hasPermission('sys:user:manage') ? '点击切换' : ''"
                 @click="toggleRole(row, role)"
-                title="点击切换"
               >{{ role }}</el-tag>
             </div>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
-            <el-button link size="small" @click="openEdit(row)">编辑</el-button>
-            <el-button link size="small" @click="openResetPw(row)">重置密码</el-button>
-            <el-popconfirm title="确认删除？该用户所有数据一并删除" @confirm="doDelete(row)" v-if="row.id !== auth.user?.id">
+            <!-- P1：用户管理的写操作在后端是 sys:user:manage（角色 tag 点击同理），
+                 这里统一用权限点判定，不再判 isAdmin —— 租户管理员没有 isAdmin
+                 也能管自己租户的用户。 -->
+            <el-button link size="small" v-permission="'sys:user:manage'" @click="openEdit(row)">编辑</el-button>
+            <el-button link size="small" v-permission="'sys:user:manage'" @click="openResetPw(row)">重置密码</el-button>
+            <el-popconfirm v-if="row.id !== auth.user?.id && auth.hasPermission('sys:user:manage')"
+                           title="确认删除？该用户所有数据一并删除" @confirm="doDelete(row)">
               <template #reference>
                 <el-button link size="small" type="danger">删除</el-button>
               </template>
@@ -176,7 +180,7 @@ async function doSave() {
 }
 
 async function toggleRole(row: any, role: string) {
-  if (!auth.isAdmin) return;
+  if (!auth.hasPermission('sys:user:manage')) return;
   const has = row.roles?.includes(role);
   if (has) {
     await apiRevokeRole(row.id, role);

@@ -28,6 +28,12 @@
               <el-descriptions-item label="到期时间">
                 {{ sub?.endsAt ? formatDate(sub.endsAt) : '长期有效' }}
               </el-descriptions-item>
+              <el-descriptions-item label="试用到期" v-if="tenant?.trialEndsAt">
+                {{ formatDate(tenant.trialEndsAt) }}
+              </el-descriptions-item>
+              <el-descriptions-item label="席位上限" v-if="tenant?.seatLimit">
+                {{ tenant.seatLimit }}
+              </el-descriptions-item>
             </el-descriptions>
           </div>
           <el-empty v-else description="加载中..." />
@@ -92,17 +98,40 @@
         </el-col>
       </el-row>
     </el-card>
+
+    <!-- 升级引导（docs/11 §11.10「未订阅模块有升级引导」）：
+         套餐目录是平台侧数据，租户端只有 /platform/plans 且要 admin，这里只给文字引导。 -->
+    <el-alert type="info" :closable="false" style="margin-top: 16px;" v-if="notOpen.length">
+      <template #title>
+        想用的功能还没开通：{{ notOpen.join('、') }}。
+        模块在接口层由订阅守卫拦截（后端返回 4031），前端点进去会看到「模块未订阅」页面。
+      </template>
+      <div style="margin-top: 6px;">
+        开通方式：联系平台管理员为当前租户订阅对应模块，或升级套餐。
+        <span v-if="!auth.isAdmin">当前角色只能看到自己已订阅的模块，需要联系管理员。</span>
+      </div>
+    </el-alert>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref, computed } from 'vue';
 import { apiSubscription, apiSubscriptionUsage } from '@/api';
+import { useAuthStore } from '@/store/auth';
+import { MODULE_LABELS, moduleName } from '@/constants/modules';
 
+const auth = useAuthStore();
 const sub = ref<any>(null);
 const plan = ref<any>(null);
 const modules = ref<any[]>([]);
 const usage = ref<any>(null);
+
+const tenant = computed(() => auth.tenant);
+
+/** 目录里有、当前租户没订阅的模块 —— 只做文案提示，权限判定一律以后端为准 */
+const notOpen = computed(() =>
+  Object.keys(MODULE_LABELS).filter((c) => !auth.hasModule(c)).map(moduleName),
+);
 
 const planTagType = computed(() => {
   const code = plan.value?.code;
@@ -121,10 +150,13 @@ async function load() {
     const res: any = await apiSubscription();
     sub.value = res.subscription;
     plan.value = res.plan;
-    // 从 plan.modules 展开到详细信息（平台 modules 列表暂不缓存，这里先用 code 做占位）
-    modules.value = (res.modules || []).map((code: string) => ({
-      code, name: code, icon: '📦', description: '-', isCore: false,
-    }));
+    // P1：后端 /subscription 已带 moduleDetails（名称/图标/说明/是否核心）；
+    // 拿不到时退回用 code 占位，保证老后端也不会白屏。
+    modules.value = res.moduleDetails?.length
+      ? res.moduleDetails
+      : (res.modules || []).map((code: string) => ({
+          code, name: code, icon: '📦', description: '-', isCore: false,
+        }));
   } catch { /* 拦截器已弹 */ }
 
   try {

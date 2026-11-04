@@ -1,6 +1,12 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
 import { useAuthStore } from '@/store/auth';
 
+/**
+ * 路由表（P1）
+ * 路由本身仍是静态声明的（Vue Router 需要组件映射），但**能不能进、菜单怎么排**
+ * 由后端 /auth/me 的 menus / modules / permissions 决定，前端不再自行维护菜单清单。
+ * meta 里的 module / permission 与 backend/src/saas/menu.catalog.ts 的条目一一对应。
+ */
 const routes: RouteRecordRaw[] = [
   { path: '/login', component: () => import('@/views/Login.vue'), meta: { public: true } },
   {
@@ -9,17 +15,26 @@ const routes: RouteRecordRaw[] = [
     redirect: '/dashboard',
     children: [
       { path: 'dashboard', component: () => import('@/views/Dashboard.vue'),
-        meta: { title: '仪表盘', icon: 'DataBoard', module: 'print' } },
+        meta: { title: '仪表盘', icon: 'DataBoard', module: 'print', permission: 'print:stats:read' } },
       { path: 'designer', component: () => import('@/views/Designer.vue'),
-        meta: { title: '标签设计器', icon: 'Edit', module: 'print', permission: 'template:write' } },
+        meta: { title: '标签设计器', icon: 'Edit', module: 'templates', permission: 'template:write' } },
       { path: 'templates', component: () => import('@/views/Templates.vue'),
         meta: { title: '模板库', icon: 'Document', module: 'templates', permission: 'template:read' } },
       { path: 'print-jobs', component: () => import('@/views/PrintJobs.vue'),
         meta: { title: '打印任务', icon: 'Printer', module: 'print', permission: 'print:job:read' } },
+      { path: 'ai', component: () => import('@/views/AiGenerate.vue'),
+        meta: { title: 'AI 生成模板', icon: 'MagicStick', module: 'ai', permission: 'ai:generate' } },
+      { path: 'datasource', component: () => import('@/views/DataSources.vue'),
+        meta: { title: '数据源管理', icon: 'Coin', module: 'datasource', permission: 'datasource:read' } },
       {
         path: 'users',
         component: () => import('@/views/UserManagement.vue'),
-        meta: { title: '用户管理', icon: 'User', module: 'users', permission: 'sys:user:manage' },
+        meta: { title: '用户管理', icon: 'User', module: 'users', permission: 'sys:user:read' },
+      },
+      {
+        path: 'audit',
+        component: () => import('@/views/AuditLogs.vue'),
+        meta: { title: '审计日志', icon: 'Document', module: 'audit', permission: 'audit:read' },
       },
       {
         path: 'backups',
@@ -29,7 +44,13 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'subscription',
         component: () => import('@/views/SubscriptionInfo.vue'),
-        meta: { title: '我的订阅', icon: 'Tickets' },
+        meta: { title: '我的订阅', icon: 'Tickets', always: true },
+      },
+      // 未订阅 / 权限不足的统一落地页（§11.10「模块未订阅」）
+      {
+        path: 'blocked',
+        component: () => import('@/views/Blocked.vue'),
+        meta: { title: '无法访问', always: true },
       },
     ],
   },
@@ -38,21 +59,39 @@ const routes: RouteRecordRaw[] = [
 
 const router = createRouter({ history: createWebHistory(), routes });
 
-// SaaS P0 综合守卫：登录 → 模块 → 权限
-router.beforeEach((to, _from, next) => {
+/** 跳统一拦截页：kind=module 给「升级套餐」引导，kind=permission 给「找管理员」引导 */
+function toBlocked(kind: 'module' | 'permission', code: string, from: string) {
+  return { path: '/blocked', query: { kind, code, from } };
+}
+
+// P1 守卫：登录 → 拉一次 /auth/me（刷新页面时 user 为空）→ 模块（L2）→ 权限点（L1）
+router.beforeEach(async (to, _from, next) => {
   const auth = useAuthStore();
 
   if (to.meta.public) return next();
   if (!auth.isLoggedIn) return next({ path: '/login', query: { redirect: to.fullPath } });
 
-  // SaaS P0：先检查模块订阅，再检查细粒度权限
-  if (to.meta.module && !auth.hasModule(to.meta.module as string)) {
-    // 模块未开通 → 跳订阅页
-    return next('/subscription');
+  // 直接敲 URL / 刷新页面时 store 是空的，不先补一次就会把所有入口判成「无权限」
+  if (!auth.user) {
+    try { await auth.fetchMe(); } catch { /* fetchMe 内部会 logout，下面兜住 */ }
+    if (!auth.isLoggedIn) return next({ path: '/login', query: { redirect: to.fullPath } });
   }
-  if (to.meta.permission && !auth.hasPermission(to.meta.permission as string)) {
-    // 模块已开但无具体权限 → 说明是角色限制，跳 dashboard
-    return next('/dashboard');
+
+  // 订阅页与拦截页永远可达，否则「被降级后看不到自己买了什么」
+  if (to.meta.always) return next();
+
+  const meta = to.meta as { module?: string; permission?: string };
+
+  if (meta.module && !auth.hasModule(meta.module)) {
+    return next(toBlocked('module', meta.module, to.fullPath));
+  }
+  if (meta.permission && !auth.hasPermission(meta.permission)) {
+    // 模块已开但没有权限点：角色限制，给权限码而不是模块名
+    return next(toBlocked('permission', meta.permission, to.fullPath));
+  }
+  // 菜单里没有 = 后端认为该用户不该有这个入口（例如被裁剪掉的分组）
+  if (auth.menus.length && !auth.menuPaths.has(to.path)) {
+    return next(toBlocked('permission', meta.permission ?? meta.module ?? to.path, to.fullPath));
   }
   next();
 });

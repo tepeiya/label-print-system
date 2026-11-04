@@ -3,7 +3,7 @@
     <div class="page-header">
       <h2>💾 备份中心</h2>
       <div style="display: flex; gap: 8px;">
-        <el-button type="primary" :disabled="!auth.isAdmin" @click="doCreate" :loading="creating">
+        <el-button type="primary" v-permission="'backup:write'" @click="doCreate" :loading="creating">
           <el-icon><Plus /></el-icon> 创建备份
         </el-button>
       </div>
@@ -23,13 +23,18 @@
         </el-table-column>
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
-            <el-button link size="small" :disabled="!auth.isAdmin" @click="doRestore(row)">恢复</el-button>
-            <el-popconfirm title="恢复会覆盖当前数据，确认？" @confirm="doRestore(row)" v-if="auth.isAdmin">
+            <!-- P1：改判权限点，不再判 isAdmin。恢复只保留带确认的那一个入口
+                 （原来旁边还有个点了就恢复的按钮，两个并存容易误触发）。
+                 popconfirm 用 v-if 而不是 v-permission.hide —— 指令直接删 DOM 会连
+                 reference 插槽一起摘掉，组件层的条件渲染更稳。 -->
+            <el-popconfirm v-if="auth.hasPermission('backup:restore')"
+                           title="恢复会覆盖当前数据，确认？" @confirm="doRestore(row)">
               <template #reference>
-                <el-button link size="small" type="primary">恢复（带确认）</el-button>
+                <el-button link size="small" type="primary">恢复</el-button>
               </template>
             </el-popconfirm>
-            <el-button link size="small" type="danger" :disabled="!auth.isAdmin" @click="doDelete(row)">删除</el-button>
+            <el-button link size="small" type="danger" v-permission.hide="'backup:write'"
+                       @click="doDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

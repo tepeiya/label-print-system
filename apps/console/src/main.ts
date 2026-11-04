@@ -5,6 +5,7 @@ import 'element-plus/dist/index.css';
 import * as ElementPlusIconsVue from '@element-plus/icons-vue';
 import App from './App.vue';
 import router from './router';
+import { registerPermissionDirectives } from './directives/permission';
 import './styles/main.css';
 
 const app = createApp(App);
@@ -17,4 +18,6 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 app.use(createPinia());
 app.use(router);
 app.use(ElementPlus);
+// v-permission / v-module 必须在 pinia 之后注册（指令内部用 useAuthStore）
+registerPermissionDirectives(app);
 app.mount('#app');
