@@ -1,8 +1,8 @@
 # 10. 开发交接文档（面向接手的 AI / 开发者）
 
 > 本文档目标：**任何 AI 或开发者读完本文即可无缝接手继续开发**，不需要再翻历史对话。
-> 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）**。
-> 最后更新：2026-11-04（SaaS **P0 权限与订阅底座**已落地，见 §10.15；上一版对应 commit `c822386`）
+> 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）**。
+> 最后更新：2026-11-04（SaaS **P0 权限与订阅底座** + **P1 前端动态化**已落地，见 §10.15 / §10.16；上一版对应 commit `c822386`）
 
 ---
 
@@ -383,7 +383,7 @@ apps/console/src/
 ### 10.8.1 自动化测试（P0 后已不再是「只有 16 条」）
 
 ```bash
-cd backend && npm test     # 115 条全通过（core/__tests__ 16 + src/**/__tests__ 99，见 §10.15.6 分布）
+cd backend && npm test     # 117 条全通过（core/__tests__ 16 + src/**/__tests__ 101，见 §10.15.6 分布）
 ```
 
 覆盖已补到：守卫链（Module/Permission/Roles）、`/auth/me` 菜单裁剪、模块依赖闭包、数据范围、
@@ -432,9 +432,9 @@ cd backend && npm test     # 115 条全通过（core/__tests__ 16 + src/**/__tes
    `datasource.service.testSql` 改为在 executor 层覆盖（原因见下）。新增：
    `roles.guard` 7 条 + `saas-guards` 10 条（4031/4032/放行/OR 语义/通配）、
    `sql-executor` 14 条（含引号内分号、注释走私、真实 PG 集成，PG 不可达自动 skip）、
-   `validate-ai-template` 23 条（脏输入）、`menu.catalog` 10 条、`module-deps` 6 条、
+   `validate-ai-template` 23 条（脏输入）、`menu.catalog` 12 条、`module-deps` 6 条、
    `data-scope` 7 条、`permission-match` 8 条、`errors.filter` 4 条。
-   `cd backend && npm test` → **115 条全通过**（原 `core/__tests__` 16 条 + `html-renderer` 10 条仍在）。
+   `cd backend && npm test` → **117 条全通过**（原 `core/__tests__` 16 条 + `html-renderer` 10 条仍在）。
    ⚠️ 唯一没按原建议做的是 `datasource.service.testSql` 的 service 级测试：`npx tsx` 不产装饰器元数据，
    import 实体就 `ColumnTypeUndefinedError`，因此覆盖下沉到 executor 层，原因写在
    `src/datasource/__tests__/sql-executor.test.ts` 头注释。
@@ -531,6 +531,10 @@ cd backend && npm test     # 115 条全通过（core/__tests__ 16 + src/**/__tes
 | **viewer 写模板返回 403/403 而不是 4032**（2026-11-04 P0） | 当时只有 audit / datasource / backup 挂了 `@RequireModule`/`@RequirePermission`，模板等核心路由仍只靠 `@Roles` | 把装饰器铺到 templates / print / printers / users / ai-template / serial（§10.15.3 表），并跑验收脚本 H 段确认旧角色没被削弱 |
 | **`SELECT 1; DROP TABLE users` 通过只读校验**（2026-11-04 P0） | 旧 `assertReadOnly` 只在**分号数 > 1** 时报错；单分号时它只把最后一个分号前的内容拿去查前缀，后面的语句直接不校验（实际执行的是原始 SQL）。附带问题：字符串里含 2 个以上分号的合法 SELECT 会被误拒 | 改成按引号状态扫描的 `splitStatements()`，切出 >1 条即拒；合法语句里的引号分号不误伤。pg 扩展协议本身也会以 42601 拒多语句，所以这是**应用层独立防线**而非唯一防线（`sql-executor.ts` 头注释已写明） |
 | **单测里 import 实体就报 `ColumnTypeUndefinedError`**（2026-11-04） | `npm test` 走 `node --import tsx`，esbuild 不生成装饰器元数据 | 单测只测纯函数 / 类边界；需要真实实体的行为下沉到 executor 层测（见 `sql-executor.test.ts` 头注释），跑 Nest 容器要等接进 `tsc` 编译后再测 |
+| **`vue-tsc` 报 `Property 'value' does not exist on type '{...}'`，指向 `dlg.form.connectionUrl`**（2026-11-04 P1） | vue-tsc 3.3 对模板里 `v-model` 绑定 `reactive()` 的三层路径会去探测 `.value`；`reactive<any>` 的老页面（UserManagement）因为类型是 `any` 所以一直没暴露 | 该表单改成 `ref({ visible, saving, form })`，模板自动解包、脚本显式 `.value`（`DataSources.vue` 头注释）。新表单别学 reactive 三层路径 |
+| **`v-permission` + `v-module` 叠在同一个按钮上，未订阅模块的按钮照样能点**（2026-11-04 P1） | 两个指令都往同一 DOM 写 `disabled`，后 mounted/updated 的那个把前一个结论覆盖掉 | 一个元素只挂一个指令；要双重条件写 `v-if="auth.hasModule(x) && auth.hasPermission(y)"`（§10.16.4） |
+| **原生前端 admin 看不到「用户管理」页签**（2026-11-04 P1 顺带修的旧缺陷） | `setAttribute('hidden', String(!isAdmin))` 会写 `hidden="false"`，HTML 规范里属性只要存在即生效 | 改 `el.hidden` 布尔属性（`web/js/app.js#hideById`） |
+| **点「删除备份」一直 404**（2026-11-04 P1） | `backup.controller.ts` 的 `remove()` 标的是 `@Post(':id')`，而 docs/10 §10.3 和前端都按 `DELETE /backups/:id` 实现 | 路由改回 `@Delete(':id')`，并补 `@RequirePermission('backup:write')`（原来只有 `@Roles('admin')`） |
 
 ### 端到端实测验证证据（2026-11-04）
 
@@ -593,6 +597,18 @@ cd web && node serve.mjs 5180                       # 可选
 ```
 
 > ⚠️ **后端必须先 `tsc` 编译再 `node -r reflect-metadata dist/src/main.js`**，直接 `npx tsx src/main.ts` 会报 `ColumnTypeUndefinedError`（装饰器元数据在非编译模式下丢失）。
+>
+> ⚠️ **没有 sudo 的沙盒（接手 AI 常见环境）**：`sudo pg_ctlcluster` / `sudo -u postgres` 都不可用，
+> 且发行版集群默认监听 5432（本项目约定 5433）。实测可行的起法是自己建一份数据目录、
+> 用 `su postgres` 直接拉 `pg_ctl`，socket 放 `/tmp`：
+>
+> ```bash
+> su postgres -c "/usr/lib/postgresql/14/bin/initdb -D /tmp/pfdata --auth=trust -U labelflow"
+> su postgres -c "/usr/lib/postgresql/14/bin/pg_ctl -D /tmp/pfdata -l /tmp/pg.log -o '-p 5433 -k /tmp' start"
+> su postgres -c "psql -h /tmp -p 5433 -U labelflow -d postgres -c \"CREATE DATABASE labelflow OWNER labelflow\""
+> redis-server --port 6380 --daemonize no --save '' &      # 注意：--daemonize yes 在某些环境会被父进程 wait 卡住
+> # 之后 §0 的 psql 建表命令照跑，只是 -h 用 /tmp 或 localhost 都行（trust 认证，不需要 PGPASSWORD）
+> ```
 
 # 1. 鉴权 & 角色
 curl -s http://localhost:3200/api/v1/auth/me -H "$H"
@@ -621,10 +637,16 @@ curl -s -X POST http://localhost:3200/api/v1/ai-template/generate -H "$H" \
 curl -N "http://localhost:3200/api/v1/print-stream/events?token=$TOKEN"
 
 # 8. 单元测试
-cd backend && npm test     # 期望 115/115
+cd backend && npm test     # 期望 117 条全绿（PG 不可达时 110 pass / 7 skip）
 
 # 9. SaaS P0 验收（§11.11.1 六条 + 旧角色回归，需要后端 + PG + Redis 都在跑）
 cd backend && T_CODE=p0a1 T2_CODE=p0a2 bash scripts/p0-acceptance.sh   # 期望「通过 62 / 失败 0」
+
+# 10. SaaS P1 前端（§10.16）：类型检查 + 构建必须 0 error
+cd apps/console && npm run build            # vue-tsc -b && vite build
+cd backend && npx tsc -p tsconfig.json      # 后端编译（改了 menu.catalog / subscription.controller 必跑）
+npx esbuild --format=esm --outfile=/dev/null web/js/app.js    # 原生前端零构建，只能这样验语法
+npx esbuild --format=esm --outfile=/dev/null web/js/api.js
 ```
 
 RBAC 回归（用 operator 登录 `operator/op123`，`tenantCode` 传 `default`）：
@@ -702,6 +724,15 @@ SaaS P0 底座（2026-11-04 新增，详见 §10.15）：
   backend/scripts/saas_p0.sql            P0 基础 DDL + 模块/套餐/权限字典种子
   backend/scripts/saas_p0_roles.sql      P0 生命周期 + roles 两步迁移 + 序列复位（13 节，幂等）
   backend/scripts/p0-acceptance.sh       §11.11.1 可重跑验收脚本
+
+SaaS P1 前端动态化（2026-11-04 新增，详见 §10.16）：
+  apps/console/src/api/index.ts          唯一 axios 出口：拆信封 + 401 单飞刷新 + 4031/4032 业务码
+  apps/console/src/store/auth.ts         menus/features/dataScopes/tenant + menuPaths
+  apps/console/src/directives/permission.ts  v-permission / v-module（UX 层，不是安全边界）
+  apps/console/src/router/index.ts       异步守卫：L2 模块 → L1 权限点 → menus 兜底
+  apps/console/src/layouts/MainLayout.vue    菜单只渲染 auth.menus + 到期横幅
+  apps/console/src/views/Blocked.vue     未订阅 / 权限不足统一落地页
+  web/js/app.js                          原生前端：权限点优先 + 角色兜底 + 页签按模块裁剪
 
 文档入口：
   docs/01-requirements.md   功能矩阵与优先级
@@ -829,11 +860,11 @@ docs/03-database.sql → backend/scripts/seed.sql → backend/scripts/saas_p0.sq
 ### 10.15.6 测试与验收覆盖
 
 ```bash
-cd backend && npm test                       # 115 条（原 26 → 新增 89）
+cd backend && npm test                       # 117 条（原 26 → P0 新增 89 → P1 新增 2）
 T_CODE=p0a1 T2_CODE=p0a2 bash backend/scripts/p0-acceptance.sh   # 62 项断言，期望「通过 62 / 失败 0」
 ```
 
-- 单测分布（本轮新增）：`validate-ai-template` 23、`sql-executor` 14（含真实 PG 集成，PG 不可达自动 skip）、`saas-guards` 10、`menu.catalog` 10、`data-scope` 7、`roles.guard` 7、`module-deps` 6、`permission-match` 8、`errors.filter` 4。
+- 单测分布（本轮新增）：`validate-ai-template` 23、`sql-executor` 14（含真实 PG 集成，PG 不可达自动 skip）、`saas-guards` 10、`menu.catalog` 12（P1 加了 AI 入口 + 菜单/路由一致性两条）、`data-scope` 7、`roles.guard` 7、`module-deps` 6、`permission-match` 8、`errors.filter` 4。
 - 验收脚本覆盖：A 单事务开通（subscriptions=1、tenant_modules ≥ 套餐、6 角色复制、`user_roles` 双写、trial 状态、flag 默认值）→ B 4031（BASIC 拒 / 同接口 PRO 200）→ C 4032（viewer 建备份）→ D tenant_admin=37 / viewer 只读 → E `/auth/me` 五件套（modules/permissions/menus/features/dataScopes + plan/seatLimit）→ F 加购与依赖闭包 → G 开关与退订（`canceled_at` + 90 天硬删时间 + 幂等）→ H 旧 4 角色回归（登录、双码回显、读模板、读任务、operator 可写、viewer 被拒）。
 - ⚠️ **`npx tsx` 跑测试时不生成装饰器元数据**：任何 import TypeORM 实体或 Nest module 的测试文件都会 `ColumnTypeUndefinedError`。因此 `datasource.service.testSql` 的覆盖下沉到 `sql-executor` 层（见 `src/datasource/__tests__/sql-executor.test.ts` 头注释）。被测代码要走纯函数/服务类边界，别在单测里拉起 `DataSource`。
 - 脚本会真实建 2 个租户 + 1 次加购 + 1 次退订，数据留在库里（可重跑，用新的 `T_CODE`/`T2_CODE`）。
@@ -841,5 +872,124 @@ T_CODE=p0a1 T2_CODE=p0a2 bash backend/scripts/p0-acceptance.sh   # 62 项断言�
 ### 10.15.7 P0 明确没做（别当成已完成）
 
 - RLS（P6）、独立库租户（D2 → P6）、`platform_users` 独立 JWT scope（P2）、计费/额度/账单（P3）、Agent/MCP（P4/P5）、白标域名校验（D6 → P6）。
-- 前端 `apps/console` **仍是硬编码菜单 + 静态路由**，还没消费 `/auth/me.menus`（P1 的活；后端数据已就绪，含未订阅模块的可见性裁剪）。
-- 未订阅模块的「购买引导页」、`GET /subscription` 页面（P1）。
+- ~~前端 `apps/console` 仍是硬编码菜单、未订阅引导页、订阅页~~ → **P1 已做完，见 §10.16**。
+- 平台运营后台（`apps/platform`）仍不存在（P2）；`/platform/*` 接口已就绪但只有 Swagger/curl 能用。
+
+---
+
+## 10.16 SaaS P1 前端动态化（2026-11-04 落地）
+
+> 目标（docs/11 §11.10 / §11.4.6）：**前端不再硬编码菜单**，路由、菜单、按钮、页签一律按
+> L1 权限点 + L2 订阅模块判定；被拦时给「模块未订阅 → 升级引导」而不是空白页或裸 403。
+>
+> 本轮同时改两套前端：`apps/console`（Vue 3 + Element Plus，要构建）和 `web/`（零构建原生 DOM，
+> 设计器 iframe 就走这套）。两套读的是同一个 `/auth/me`，只改一套会出现「console 里看不到的入口，
+> 在设计器里照样能点」。
+
+### 10.16.1 代码地图
+
+| 文件 | 作用 | 本轮改动 |
+| --- | --- | --- |
+| `apps/console/src/api/index.ts` | 唯一 axios 出口 | **拆信封**：成功返回 `data`，失败抛带 `bizCode/httpStatus/modules/permissions/action` 的 `ApiError`；401 刷新单飞（并发只发一次 refresh）；新增 `apiLogout` / 数据源 / 审计（含 `auditExportUrl` 走 `?token=`）/ AI 系列 |
+| `apps/console/src/store/auth.ts` | Pinia 登录态 | 新增 `menus` / `features` / `dataScopes` / `tenant` 与 `menuPaths`（菜单树叶子展平）；`isAdmin` 认 `admin` + `tenant_admin`；`hasPermission` 对超管直接放行（与后端 `PermissionGuard` 一致） |
+| `apps/console/src/directives/permission.ts` | **`v-permission` / `v-module`** | 新增：数组 = OR；`.hide` 移除节点，否则 `disabled` + `data-denied` + 半透明；`main.ts` 在 pinia 之后注册 |
+| `apps/console/src/router/index.ts` | 路由 + 守卫 | 守卫改异步：无 `user` 先 `fetchMe()`（刷新页面时 store 是空的）→ `meta.always` 放行 → L2 模块 → L1 权限点 → `menuPaths` 兜底；不通过跳 `/blocked?kind=&code=&from=` |
+| `apps/console/src/layouts/MainLayout.vue` | 顶栏 | 菜单**只渲染 `auth.menus`**（两级 `el-sub-menu` + 图标）；套餐标签取 `tenant.plan/planName`；试用/到期横幅；退出登录改为先调 `POST /auth/logout` 吊销 refreshToken |
+| `apps/console/src/views/Blocked.vue` | 统一拦截落地页 | 新增：4031 给套餐/已开通模块/加购引导，4032 给角色与权限点；「重新检查权限」按钮重跑 `fetchMe` |
+| `apps/console/src/views/DataSources.vue` `AuditLogs.vue` `AiGenerate.vue` | 三个此前只有后端的页面 | 新增（数据源 CRUD + 测试连接、审计列表 + 导出、AI 图生/文生模板 + 保存为模板 + 最近任务） |
+| `apps/console/src/views/Backups.vue` `UserManagement.vue` `Templates.vue` | 存量页面 | `!auth.isAdmin` → 权限点判定（`backup:write/restore`、`sys:user:manage`、`template:write`、`audit:export`、`datasource:read/write`） |
+| `apps/console/src/constants/modules.ts` | 模块中文名 | 新增，**纯文案表**：只给「租户没订阅、接口里查不到名字」的模块兜底显示，不是菜单/权限来源 |
+| `backend/src/saas/menu.catalog.ts` | 菜单目录 | 补 AI 入口（`module: 'ai'` + `permission: 'ai:generate'`）；写明 `serial` 为何不进菜单 |
+| `backend/src/saas/subscription.controller.ts` | `GET /subscription` | 加 `moduleDetails`（名称/图标/说明/`isCore`），`modules` 数组保持原样 |
+| `backend/src/backup/backup.controller.ts` | 备份 | `remove()` 的 `@Post(':id')` → `@Delete(':id')` + `@RequirePermission('backup:write')` |
+| `backend/src/datasource/datasource.module.ts` | 数据源 | 10 处 `throw new Error(...)` → `BadRequestException`（用户输错原来是 500） |
+| `web/js/api.js` | 原生前端请求层 | 新增 `BIZ_CODE` / `bizError()`：4031/4032 转成「模块未订阅：x，需要升级套餐」/「缺少权限：y，请联系管理员」，其余沿用后端 message |
+| `web/js/app.js` | 原生前端主控 | `applyRoleConstraints()` 改「权限点优先 + 角色兜底」；新增 `hasPerm/hasModule/applyModuleTabs/setTabLockMark`，按订阅模块显隐 8 个页签 |
+
+### 10.16.2 一次页面刷新的完整链路
+
+```
+浏览器 → router.beforeEach（无 user）→ GET /auth/me
+       → store 落 modules/permissions/menus/features/dataScopes/tenant
+       → 守卫按 L2(module) → L1(permission) → menus 路径 三级校验
+            不通过 → /blocked?kind=module|permission&code=xxx&from=/yyy
+       → MainLayout 渲染 auth.menus（后端已裁剪，前端不再判断该不该显示）
+       → 页面内按钮 v-permission / auth.hasPermission
+       → 请求真的被后端拦时，axios 层把 4031/4032 翻成中文 toast（不做二次跳转，
+          避免和路由守卫互相打转）
+```
+
+`hasPermission` 的通配规则与 `backend/src/common/permission-match.ts` 逐条对齐：
+`*` 全通、`template:*` 放行 `template:read`、三段码兜底裁到 `模块:*`。**前端判定只是 UX，
+安全性一律在后端守卫**——这句话在指令文件头注释里也写了，别把它当成访问控制。
+
+### 10.16.3 加一个新页面的正确姿势（三步，顺序无所谓）
+
+1. `backend/src/saas/menu.catalog.ts` 加目录项：`path` 必须和前端路由一致，
+   `module` / `permission` 必须和该页面对应控制器的 `@RequireModule` / `@RequirePermission` 一致。
+2. `apps/console/src/router/index.ts` 加路由 + `meta: { title, icon, module, permission }`。
+3. 视图里的写操作按钮加 `v-permission`。
+
+漏第 1 步 = 菜单里看不到入口（路由还能靠手输 URL 进，守卫会按 meta 拦）；
+漏第 2 步 = 点了菜单进通配重定向。**这条已经有单测兜着**：
+`menu.catalog.test.ts` 会遍历 `MENU_CATALOG` 的每个叶子 path，断言它出现在
+`apps/console/src/router/index.ts` 里（找不到源码文件时自动 skip，不会让只跑后端的 CI 变红）。
+
+### 10.16.4 指令的两个坑（踩过）
+
+- **别在一个元素上叠 `v-permission` 和 `v-module`**：两个指令都往同一个 DOM 上写
+  `disabled`，后执行的会把前一个的结论覆盖掉，出现「有权限点但没订阅模块，按钮照样能点」。
+  需要双重条件时写 `v-if="auth.hasModule('x') && auth.hasPermission('y')"`。
+- **`el-popconfirm` / `el-tooltip` 这类包一层的组件用 `v-if`，别用 `v-permission.hide`**：
+  指令是直接 `removeChild`，会把 reference 插槽一起摘掉。`Backups.vue`、`UserManagement.vue`
+  的删除确认都是这么处理的。
+- 超管在前端也走放行（`isAdmin` → `admin || tenant_admin`），否则会出现「后端能调、按钮却灰着」。
+
+### 10.16.5 原生前端（`web/`）的裁剪口径
+
+- 页签是固定 DOM，不是后端菜单树 → 用 `TAB_MODULES` 做「页签名 → 模块码」映射，
+  未订阅的页签 `hidden` 并在文案后加 `🔒`（纯文本标记，重复调用幂等，不动样式结构）。
+- `users` 页签要同时满足「订阅 users」+「有 `sys:user:read`」；拿不到 `permissions`
+  （老登录态）时退回原来的 admin 判断，**行为与改动前逐条等价**。
+- `hasModule()` 在 `modules` 缺失/为空时返回 `true`：宁可多显示入口（点了被后端 4031 拦、
+  有中文提示），也不要因为一次登录态异常把所有页签裁光。
+- 顺带修了个旧缺陷：原来写 `setAttribute('hidden', String(!isAdmin))` 会输出 `hidden="false"`，
+  按 HTML 规范属性只要存在就生效 → admin 反而看不到「用户管理」页签。现改 `el.hidden` 布尔属性。
+
+### 10.16.6 怎么验证（本轮全部实跑通过）
+
+```bash
+# 1) 前端类型检查 + 构建（期望 0 error）
+cd apps/console && npm run build
+
+# 2) 后端编译 + 单测（P1 新增 1 条菜单/路由一致性断言）
+cd backend && npx tsc -p tsconfig.json && npm test
+#    PG 起着：117 tests / 117 pass；PG 不可达：117 tests / 110 pass / 7 skip（sql-executor 集成用例自动跳过）
+
+# 3) P0 验收回归（P1 没动守卫链，期望仍是「通过 62 / 失败 0」）
+cd backend && T_CODE=p0a1 T2_CODE=p0a2 bash scripts/p0-acceptance.sh
+
+# 4) 原生前端语法检查（无构建，只能用 esbuild 过一遍）
+npx esbuild --format=esm --outfile=/dev/null web/js/app.js
+npx esbuild --format=esm --outfile=/dev/null web/js/api.js
+```
+
+手工验收（default 租户是 BASIC：`print/templates/ai/users/serial`）：
+
+- admin 登录后菜单只有 仪表盘 / 打印（任务·设计器·模板库）/ AI 生成模板 / 系统管理（用户管理）/ 我的订阅；
+  数据源、审计、备份**不出现**——因为模块没订阅，不是权限点问题。
+- 手输 `/datasource` → `/blocked?kind=module&code=datasource`，页面显示当前套餐与已开通模块 + 升级引导。
+- 用 `POST /platform/tenants/1/modules` 给 default 加购 `datasource` → 60s 内（`ModulesService` 进程缓存 TTL）
+  点「重新检查权限」即可看到菜单出现新入口。
+- 拿 viewer 登录后 AI 按钮应灰掉（`ai:generate` 不在 viewer 权限集合里）。
+
+### 10.16.7 P1 明确没做
+
+- `apps/platform` 平台运营前端（P2）；`/platform/*` 仍只能 Swagger/curl。
+- `web/` 没接 `features`（D7 灰度）：`web/index.html` 的 AI 视图里没有透视矫正按钮，
+  `api.rectifyAiImage()` 是前端零调用的死接口 —— 没有可挂的 UI，就没做猜测性映射。
+  `web/` 也没消费 `me.menus` 菜单树（页签是固定 DOM，见 §10.16.5）。
+- L3 数据范围（`dataScopes`）只读回来了，UI 上没有体现（属 P2/P6）。
+- `/serial` 没有页面：后端 `serial-sequences` 只有 `segment-preview`，没有列表/CRUD。
+- `POST /templates` 仍无 DTO 校验，缺字段直接撞 `23502` → HTTP 500（P0 验收 H.5 就是被这个坑到的，
+  见 §10.15.6）。前端「保存为模板」传的是合法 `content`，不受影响，但这是已知待修项。

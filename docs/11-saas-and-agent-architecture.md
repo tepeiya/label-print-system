@@ -826,7 +826,7 @@ Agent 调用 print.submit_job
 | 阶段 | 内容 | 交付物 | 估算 |
 | --- | --- | --- | --- |
 | **P0 权限与订阅底座** ✅ 已完成（2026-11-04） | 平台/租户/模块/套餐/订阅表；`permissions` 字典；`role_permissions`；`user_roles.role_id` 迁移（含 `sql → manager`）；`ModuleGuard` + `PermissionGuard`；`TenantCtx.dataSourceKey`；连接池 `SET app.tenant_id`；`feature_flags` 表；`tenants.canceled_at`；`/auth/me` 扩展 | 后端可校验模块与权限点；现有 4 角色平滑映射 | 4–5 天 |
-| **P1 前端动态化** | 动态菜单/路由/按钮权限；模块未订阅页；订阅信息页（只读） | 前端不再硬编码菜单 | 3–4 天 |
+| **P1 前端动态化** ✅ 已完成（2026-11-04） | 动态菜单/路由/按钮权限；模块未订阅页；订阅信息页（只读） | 前端不再硬编码菜单：`apps/console` 菜单与路由守卫改为消费 `/auth/me.menus`；新增 `v-permission` / `v-module` 指令、`/blocked` 落地页、`/subscription` 到期横幅、数据源/审计/AI 三个页面；零构建的 `web/` 同步改为「权限点优先 + 角色兜底」+ 按订阅模块裁剪页签（细节见 docs/10 §10.16） | 3–4 天 |
 | **P2 平台运营后台** | 租户开通/停用/加购；套餐配置；用量看板；到期提醒任务 | 可人工售卖与开通 | 1.5–2 周 |
 | **P3 计费闭环** | 用量采集 + 配额 + 账单 + 支付（先手动登记）+ 发票 | 可出账、可对账 | 2–3 周 |
 | **P4 Agent / MCP** | agent 表 + `/agent/v1` + stdio MCP + 6 个只读工具 | Claude Desktop 可查库存/齐套 | 4–5 天 |
@@ -847,9 +847,10 @@ Agent 调用 print.submit_job
 - [x] `tenant_admin` 可访问全部模块；`viewer` 只有 `*:read`
       （偏差：`viewer` 另有 `template:favorite`，沿用 P0 初始种子，见 docs/10 §10.15.5 第 7 条）
 - [x] `/auth/me` 返回 modules / permissions / menus，前端菜单据此渲染
-      （后端已就绪并带裁剪逻辑；**前端仍硬编码菜单**，属 P1）
+      （后端裁剪逻辑见 `src/saas/menu.catalog.ts`；**前端已于 P1 接入**，
+      `apps/console` 顶栏与路由守卫只读 `me.menus`，见 docs/10 §10.16）
 - [x] 现有 `admin/operator/sql/viewer` 映射后行为不变（回归测试 16 项 + 手工 8 项）
-      （实测：单测 115 条 + 验收脚本 H 段 18 项；`sql` 登录后双码回显 `["sql","manager"]`）
+      （实测：单测 117 条 + 验收脚本 H 段 18 项；`sql` 登录后双码回显 `["sql","manager"]`）
 
 ### 11.11.2 验收标准（P4）
 
@@ -989,6 +990,12 @@ SELECT COUNT(*) FROM user_roles WHERE role_id IS NULL;  -- 期望 0
 | 2026-11-04 | §11.5.2 的 `tenants.status VARCHAR` 未采用，保持 `SMALLINT(1/0)`；`role_permissions` 主键仍是 `role` 字符串 + 可空 `role_id` | 前者要推翻 `auth.service` 的 `status !== 1` 判定且无收益（生命周期已由 `subscriptions.status` + `canceled_at` 表达，D12 满足）；后者属 §11.12.2 第 4 步之后的切换 |
 | 2026-11-04 | §11.16 的套餐模块集合**暂不套用**：BASIC 仍含 `templates/ai/serial/users`，`inventory/masterdata/bom/alert` 不进套餐（只走 D1 加购） | P0 的硬约束是「现有租户零回归」，default 租户在 BASIC；按 §11.16 重排会让它当场失去模板/AI/用户管理权限。价格口径需产品重新确认后再改 seed |
 | 2026-11-04 | §11.15.1 第 1 条「所有取连接必须经 `TenantDataSourceManager.get(ctx)`」**部分落地**：P0 只在 `provision.service` 事务内使用（含 `applyTenantScope`），普通查询链路仍直接 `@InjectRepository` | 钩子、类型、`dataSourceKey` 已就位；全量替换集中在 P6 接独立库/RLS 时做，避免 P0 铺开无收益的改动面 |
+| 2026-11-04 | **P1 前端动态化落地**（`apps/console` + `web/`；细节见 docs/10 §10.16），§11.11 P1 行标记完成 | 按 §11.11 排期执行 |
+| 2026-11-04 | §11.10「动态路由 \| 由 `/auth/me` 的 `menus` 生成」实现为**静态路由表 + 守卫按 `menus`/`modules`/`permissions` 校验**，没有用 `router.addRoute()` 动态注册 | 路由必须有组件映射，路由表本身就是前端源码的一部分，动态注册只是把同一份表换个写法；真正要后端说了算的是「可见性、排序、入口裁剪」，这三项已完全由 `me.menus` 决定（菜单不再硬编码）。新增页面仍需在前端加一条路由 + `menu.catalog.ts` 一条目录项 |
+| 2026-11-04 | `serial` 模块已订阅（BASIC 内含）但**不进菜单**：`serial-sequences` 只实现了 `segment-preview`，没有列表/CRUD 接口 | 避免前端出现点进去就 404/空白的入口；P2 补 CRUD 时再加目录项 |
+| 2026-11-04 | `GET /subscription` 响应新增 `moduleDetails`（名称/图标/说明/`isCore`），原 `modules`（code 数组）保持不变 | 设计稿没定义该字段；只回 code 的话订阅页只能把英文码当模块名显示。加字段而非改形状，验收脚本 E/F 段断言不受影响 |
+| 2026-11-04 | 修 `DELETE /backups/:id`：后端 `remove()` 原来标的是 `@Post(':id')`，与 docs/10 §10.3 的约定和前端调用都不一致 | 前端「删除备份」一直 404；顺带补 `@RequirePermission('backup:write')`（原先只有 `@Roles('admin')`，缺 L1 权限点判定） |
+| 2026-11-04 | `web/`（零构建原生前端，§11.10 未覆盖）同步改为权限点优先 + 角色兜底，并按订阅模块裁剪主标签页；**`features`（D7 灰度）在该前端无处挂载**，未接入 | 现网仍有用户直接用 `web/`；它读同一个 `/auth/me`，不做裁剪就会出现「前端能点、后端 403」。`web/index.html` 的 AI 视图没有透视矫正按钮，`ai.vision` 开关没有可挂的 UI，未做猜测性映射 |
 
 ---
 
