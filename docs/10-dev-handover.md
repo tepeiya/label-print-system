@@ -755,10 +755,16 @@ SaaS P0 底座（2026-11-04 新增，详见 §10.15）：
 docs/03-database.sql → backend/scripts/seed.sql → backend/scripts/saas_p0.sql → backend/scripts/saas_p0_roles.sql
 ```
 
+> 空库实测（2026-11-04，`labelflow_fresh`）：按此顺序跑 4 个脚本 0 error，结果
+> `subscriptions=1`、`tenant_modules=5`（BASIC 展开）、`permissions=37`、`roles=12`（6 模板 + default 租户复制的 6）、
+> `feature_flags=2`、`user_roles.role_id IS NULL` 计数 0；再把 `saas_p0_roles.sql` 重跑一遍，无 error 且行数不变（幂等）。
+
 三条实测踩过的坑：
 
 1. `saas_p0.sql` 里「默认订阅 + `tenant_modules` 展开」依赖 `tenants.code='default'` 已存在，而 default 租户是 `seed.sql` 建的。顺序颠倒不会报错，只会得到 `subscriptions=0 / tenant_modules=0`，然后所有接口 4031。
-2. `docs/03-database.sql` 没有 `IF NOT EXISTS`，同一库重跑会报 48 个 `relation already exists`；要重建必须先 `DROP SCHEMA public CASCADE; CREATE SCHEMA public;`（owner 给 `labelflow`）。
+2. `docs/03-database.sql` 没有 `IF NOT EXISTS`，同一库重跑会报 `relation "tenants" already exists` 并中断；
+   重跑前先 `DROP DATABASE labelflow; CREATE DATABASE labelflow OWNER labelflow;`（最干净），
+   或者 `DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO labelflow;`。
 3. `seed.sql` 用了显式 `id`（tenants id=1…），序列停在 1 → `POST /platform/tenants` 直接撞 `tenants_pkey`（`duplicate key … Key (id)=(1) already exists`）。`saas_p0_roles.sql` §11 把 P0 相关表（tenants/users/user_roles/roles/subscriptions/tenant_modules/plans/data_scopes）的序列统一推到 `max(id)+1`，幂等。
 
 `saas_p0_roles.sql` 全文幂等（`IF NOT EXISTS` / `ON CONFLICT` / `WHERE NOT EXISTS`），PG14 实测连跑 3 遍 0 error、行数零漂移，可以当「补丁式迁移」反复执行；新加的列一律放这个脚本，不要再改 `03-database.sql` 之外的历史脚本。
