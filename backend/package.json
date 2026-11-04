@@ -6,7 +6,7 @@
     "start:dev": "nest start --watch",
     "build": "nest build",
     "worker": "node --import tsx worker.ts",
-    "test": "node --import tsx --test core/__tests__/*.test.ts",
+    "test": "node --import tsx --test core/__tests__/*.test.ts src/**/__tests__/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "migration": "psql $DB_URL -f ../docs/03-database.sql"
   },

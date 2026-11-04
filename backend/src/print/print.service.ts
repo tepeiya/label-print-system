@@ -34,6 +34,74 @@ export class PrintService {
     });
   }
 
+  /** 批量统计仪表盘：按状态 / 打印机 / 时间窗口聚合 */
+  async stats(q: { days?: number } = {}) {
+    const tenantId = useTenantId();
+    const days = Math.max(1, Math.min(90, q.days ?? 7));
+    const since = new Date(Date.now() - days * 24 * 3600 * 1000);
+
+    const rows = await this.jobs.find({
+      where: { tenantId, createdAt: since },
+      order: { createdAt: 'DESC' },
+      take: 1000,
+    });
+
+    const total = rows.length;
+    const byStatus: Record<string, number> = {};
+    const byPrinter: Record<number, { total: number; done: number; failed: number }> = {};
+    const durations: number[] = [];
+    const byDay: Record<string, number> = {};
+
+    for (const j of rows) {
+      byStatus[j.status] = (byStatus[j.status] ?? 0) + 1;
+      if (j.printerId) {
+        const p = byPrinter[j.printerId] ?? { total: 0, done: 0, failed: 0 };
+        p.total++;
+        if (j.status === 'done') p.done++;
+        if (j.status === 'failed') p.failed++;
+        byPrinter[j.printerId] = p;
+      }
+      if (j.status === 'done' && j.finishedAt) {
+        const d = j.finishedAt.getTime() - j.createdAt.getTime();
+        if (d >= 0 && d < 24 * 3600 * 1000) durations.push(d);
+      }
+      const day = j.createdAt.toISOString().slice(0, 10);
+      byDay[day] = (byDay[day] ?? 0) + 1;
+    }
+
+    const success = byStatus.done ?? 0;
+    const failed = byStatus.failed ?? 0;
+    const canceled = byStatus.canceled ?? 0;
+    const queued = byStatus.queued ?? 0;
+    const running = byStatus.running ?? 0;
+
+    const avgDurationMs = durations.length ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : 0;
+    const p50 = durations.length ? durations.sort((a, b) => a - b)[Math.floor(durations.length / 2)] : 0;
+    const successRate = total > 0 ? Math.round((success / total) * 1000) / 10 : 0;
+
+    return {
+      windowDays: days,
+      since,
+      total,
+      byStatus,
+      counts: { success, failed, canceled, queued, running },
+      successRate,
+      avgDurationMs,
+      p50DurationMs: p50,
+      byPrinter,
+      byDay,
+      printers: await this._resolvePrinterNames(Object.keys(byPrinter).map(Number), tenantId),
+    };
+  }
+
+  private async _resolvePrinterNames(ids: number[], tenantId: number): Promise<Record<number, string>> {
+    if (!ids.length) return {};
+    const list = await this.printers.findByIds(ids);
+    const out: Record<number, string> = {};
+    for (const p of list) out[p.id] = p.name;
+    return out;
+  }
+
   /** 创建批量打印任务：预分配流水号段 → 入队 → 立即返回 */
   async createJob(dto: { templateId: number; printerId?: number; rows?: any[]; copies?: number; params?: any; templateContent?: any; serialMap?: Record<string, string[]> }) {
     const tenantId = useTenantId();

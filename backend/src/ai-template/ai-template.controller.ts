@@ -1,8 +1,9 @@
 // AI 模板生成 API
 import {
-  Controller, Get, Post, Delete, Body, Param, Query,
+  Controller, Get, Post, Delete, Body, Param, Query, Res,
   UploadedFile, UseInterceptors, UseGuards, BadRequestException, ParseFilePipeBuilder,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { TenantGuard } from '../common/tenant.guard';
 import { Roles } from '../common/roles.guard';
@@ -80,6 +81,38 @@ export class AiTemplateController {
         : undefined,
       elementId: body.elementId,
       currentElement,
+    });
+  }
+
+  /** 透视矫正 / 自动裁边：Vision LLM 检测 4 角 → sharp bbox 裁剪，返回 PNG */
+  @Roles('admin', 'operator')
+  @Post('rectify')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 20 * 1024 * 1024 } }))
+  async rectify(@UploadedFile() file: Express.Multer.File, @Body() body: any, @Res() res: any) {
+    if (!file) throw new BadRequestException('缺少图片文件（字段名 file）');
+    if (!ALLOWED_MIME.includes(file.mimetype)) {
+      throw new BadRequestException('仅支持 jpg / png / webp / tiff 图片');
+    }
+    let corners: any = undefined;
+    if (body.corners) {
+      try { corners = typeof body.corners === 'string' ? JSON.parse(body.corners) : body.corners; }
+      catch { throw new BadRequestException('corners 不是合法 JSON'); }
+    }
+    const result = await this.svc.rectify(file.buffer, { corners });
+    // 返回 JSON 元数据 + base64 图片（前端直接 `<img src="data:image/png;base64,${data}">` 预览）
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.json({
+      code: 0,
+      data: {
+        bbox: result.bbox,
+        originalSize: result.originalSize,
+        cornersPx: result.cornersPx,
+        cornersConfidence: result.cornersConfidence,
+        llmUsed: result.llmUsed,
+        llmError: result.llmError,
+        elapsedMs: result.elapsedMs,
+        dataUrl: `data:image/png;base64,${result.cropped.toString('base64')}`,
+      },
     });
   }
 

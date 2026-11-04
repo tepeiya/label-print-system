@@ -152,6 +152,7 @@ export const api = {
   // ----------------------------- 打印 -----------------------------
   createPrintJob: (body) => req('POST', '/print/jobs', body),
   listPrintJobs: (q = {}) => req('GET', '/print/jobs?' + new URLSearchParams(q)),
+  printJobStats: (days = 7) => req('GET', `/print/jobs/stats?days=${days}`),
   getPrintJob: (id) => req('GET', `/print/jobs/${id}`),
   printJobLogs: (id, q = {}) => req('GET', `/print/jobs/${id}/logs?` + new URLSearchParams(q)),
   printLogs: (q = {}) => req('GET', '/print/jobs/logs?' + new URLSearchParams(q)),
@@ -225,6 +226,22 @@ export const api = {
     });
     const json = await res.json().catch(() => ({}));
     if (res.status === 401) { await doLogin(); return api.regenerateAiElement(file, opts); }
+    if (!res.ok || json.code !== 0) throw new Error(json.message || `HTTP ${res.status}`);
+    return json.data;
+  },
+
+  /** 透视矫正 / 自动裁边：返回 data:image/png;base64,... 可直接当 <img src> */
+  rectifyAiImage: async (file, corners = null) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (corners) fd.append('corners', JSON.stringify(corners));
+    const res = await fetch(BASE + '/ai-template/rectify', {
+      method: 'POST',
+      headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
+      body: fd,
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.status === 401) { await doLogin(); return api.rectifyAiImage(file, corners); }
     if (!res.ok || json.code !== 0) throw new Error(json.message || `HTTP ${res.status}`);
     return json.data;
   },

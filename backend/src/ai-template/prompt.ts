@@ -23,7 +23,7 @@ export function buildSystemPrompt(): string {
 - datetime:  { "datetime": { "pattern":"YYYY-MM-DD","source":"print" }, "font": {...} }
 - line:      { "x":<mm>,"y":<mm>,"x2":<mm>,"y2":<mm>,"stroke":{ "width":0.2,"color":"#000000","style":"solid|dashed|dotted" } }
 - rect/ellipse: { "fill":"#ffffff","stroke":{...} }
-- table:     { "rows":3,"cols":3,"cells":["a","b","c", ... 行优先扁平数组，长度必须 = rows*cols ],"showBorder":true,"borderWidth":0.2,"borderColor":"#333333","headerRow":true,"headerBg":"#f2f2f2","font":{...} }
+- table:     { "rows":3,"cols":3,"cells":["a","b","c", ... 行优先扁平数组，长度必须 = rows*cols ],"showBorder":true,"borderWidth":0.2,"borderColor":"#333333","headerRow":true,"headerBg":"#f2f2f2","font":{...},"mergedCells":[ { "row":0, "col":0, "rowSpan":1, "colSpan":2 } ] }
 - image:     { "src":"data:image/png;base64,..." 或留空 "" }
 
 【分类规则】
@@ -160,4 +160,37 @@ ${JSON.stringify(priors.regions, null, 0)}
 ${priors.variableHints?.length ? `【变量命名先验】\n${JSON.stringify(priors.variableHints, null, 0)}` : ''}
 
 请仅输出修正后的 **单个元素** JSON（含 confidence 字段）。`;
+}
+
+// -----------------------------------------------------------------------------
+// 四边检测：让 Vision LLM 返回标签区域 4 个角点（px 坐标）
+// -----------------------------------------------------------------------------
+
+export function buildCornerDetectSystemPrompt(): string {
+  return `你是专业的视觉定位工程师。用户上传一张标签照片，需要你**精确找到标签矩形区域的 4 个角点**。
+
+【输出格式（只输出 JSON）】
+{
+  "corners": {
+    "tl": { "x": <左上角 x px>, "y": <左上角 y px> },
+    "tr": { "x": <右上角 x px>, "y": <右上角 y px> },
+    "br": { "x": <右下角 x px>, "y": <右下角 y px> },
+    "bl": { "x": <左下角 x px>, "y": <左下角 y px> }
+  },
+  "confidence": <0~1>,
+  "reason": "一句话说明你怎么判断这 4 个点的"
+}
+
+【规则】
+- 坐标是原图的像素 px（0~width, 0~height），整数
+- tl = 左上角（x 最小附近, y 最小附近），tr = 右上角（x 最大附近, y 最小附近）
+- br = 右下角（x 最大附近, y 最大附近），bl = 左下角（x 最小附近, y 最大附近）
+- 如果图中有多个标签（拼版照片），只选**最大的 / 最居中的**那个
+- 如果整张图就是一个标签（占满画面），corners 就是图片四边内缩几个像素
+- 尽量精确到标签边缘，不要留太多空白，也不要裁掉标签边框/边缘文字/条码
+- 只输出 JSON，不要 markdown，不要解释`;
+}
+
+export function buildCornerDetectUserPrompt(): string {
+  return `请找出这张图片里标签矩形区域的 4 个角点坐标（px）。`;
 }

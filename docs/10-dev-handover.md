@@ -429,16 +429,16 @@ cd backend && npm test     # core/__tests__：16 个用例（公式/校验位/�
 | 部署持久化 | dotenv + pm2/systemd + 开机自启 | ✅ `.env.example` + `ecosystem.config.cjs` |
 | 用户管理前端 | 列用户 + 授权/撤权 | ✅ 新 tab + `web/js/users.js` + 完整 CRUD 后端 |
 
-### P1（重要增强）
+### P1（重要增强）✅ 全部完成
 
-| 项 | 说明 | 状态 |
-| --- | --- | --- |
-| 多联/多行排布（labelsPerRow/Col） | `page.columns/rows/gapX/gapY` 已有字段 | 🟡 后端 `html-renderer.ts` 已实现 columns/rows/gapXMm/gapYMm/marginMm 拼版，前端 buildPrintHtml 也有支持；端到端验证待跑 |
-| 批量统计仪表盘 | 完成率 / 平均耗时 / 失败率（数据在 `print_jobs`/`print_logs`） | ⏳ 待做 |
-| 模板缩略图真实渲染 | 复用 `render.service.ts` 输出 PNG | ✅ `thumbnail-renderer.ts` 已落地，服务端保存模板时自动渲染 |
-| AI：透视矫正 / 四边检测 | 当前要求上传满幅标签图 | ⏳ 待做 |
-| AI：表格结构识别（合并单元格） | 当前只输出线段 | ⏳ 待做 |
-| AI：单元素重算接口 | `POST /ai-template/regenerate-element`（省 token） | ⏳ 待做 |
+| 项 | 说明 | 状态 | 落点 |
+| --- | --- | --- | --- |
+| 多联/多行排布 | `page.columns/rows/gapX/gapY` 拼版 | ✅ html-renderer.ts 已实现 + 10 条单元测试全过 | `backend/src/print/__tests__/html-renderer.test.ts` |
+| 批量统计仪表盘 | 完成率 / 平均耗时 / 失败率 / 打印机分组 / p50 | ✅ `GET /print/jobs/stats?days=N` | `backend/src/print/print.service.ts#stats` |
+| 模板缩略图真实渲染 | 复用 sharp 输出 PNG | ✅ 服务端保存模板时自动渲染 | `backend/src/print/thumbnail-renderer.ts` |
+| AI：透视矫正 / 四边检测 | Vision LLM 自动检测 4 角 → sharp bbox 裁剪 | ✅ 可选手动 corners（前端 canvas 点选）或 LLM 自动 | `POST /ai-template/rectify` · `vision-rectify.ts` |
+| AI：表格结构识别（合并单元格） | 扁平 cells 扩展 mergedCells [{row,col,rowSpan,colSpan}] | ✅ prompt 契约 + validate 校验 + html-renderer 渲染三处联动 | `prompt.ts` · `validate-ai-template.ts` · `html-renderer.ts#table` |
+| AI：单元素重算接口 | 省 token 的增量修正 | ✅ 只 Vision 单元素 prompt，LLM 失败优雅降级 | `POST /ai-template/regenerate-element` |
 
 ### P2（可选）
 

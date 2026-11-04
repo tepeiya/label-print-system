@@ -26,6 +26,9 @@ export class PrintController {
   @Roles(...PRINT_ACTION)
   @Post() create(@Body() b: any) { return this.svc.createJob(b); }
   @Get() list(@Query() q: any) { return this.svc.list(q); }
+  @Get('stats') stats(@Query('days') days?: string) {
+    return this.svc.stats({ days: days ? parseInt(days, 10) : undefined });
+  }
   @Get('logs') logs(@Query() q: any) { return this.svc.logs(q); }
   @Get(':id') get(@Param('id') id: number) { return this.svc.getJob(+id); }
   @Get(':id/logs') jobLogs(@Param('id') id: number, @Query() q: any) { return this.svc.jobLogs(+id, q); }

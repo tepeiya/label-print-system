@@ -209,6 +209,20 @@ export function validateAiTemplate(raw: any, expected: { widthMm: number; height
         base.headerRow = !!el.headerRow;
         base.headerBg = String(el.headerBg ?? '#f2f2f2');
         base.font = normalizeFont(el.font, 7);
+        // 合并单元格：[{ row, col, rowSpan, colSpan }]
+        if (Array.isArray(el.mergedCells)) {
+          const merged: any[] = [];
+          for (const mc of el.mergedCells) {
+            if (!mc || typeof mc !== 'object') continue;
+            const row = Math.max(0, Math.min(rows - 1, Number(mc.row ?? mc.r)));
+            const col = Math.max(0, Math.min(cols - 1, Number(mc.col ?? mc.c)));
+            const rowSpan = Math.max(1, Math.min(rows - row, Number(mc.rowSpan ?? mc.rs ?? 1)));
+            const colSpan = Math.max(1, Math.min(cols - col, Number(mc.colSpan ?? mc.cs ?? 1)));
+            if (rowSpan === 1 && colSpan === 1) continue;
+            merged.push({ row, col, rowSpan, colSpan });
+          }
+          if (merged.length) base.mergedCells = merged;
+        }
         break;
       }
       default:

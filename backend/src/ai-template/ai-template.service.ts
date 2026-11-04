@@ -13,9 +13,10 @@ import { recognize, disposeOcr } from './ocr-adapter';
 import { detectColorRegions, detectLines } from './geometry';
 import { buildTemplateFromPriors, AiWarning } from './heuristics';
 import { createMapper } from './coords-transform';
-import { buildSystemPrompt, buildUserPrompt, buildSingleElementSystemPrompt, buildSingleElementUserPrompt } from './prompt';
+import { buildSystemPrompt, buildUserPrompt, buildSingleElementSystemPrompt, buildSingleElementUserPrompt, buildCornerDetectSystemPrompt, buildCornerDetectUserPrompt } from './prompt';
 import { callVision, configFromEnv, extractJson, prepareImageForLlm, VisionConfig } from './vision-llm';
 import { validateAiTemplate } from './validate-ai-template';
+import { cornersToBbox, extractBbox, normalizeCorners } from './vision-rectify';
 
 export interface GenerateParams {
   widthMm: number;
@@ -389,6 +390,74 @@ export class AiTemplateService implements OnModuleDestroy {
       warnings,
       model,
       llmUsed: true,
+      llmError,
+      elapsedMs,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // 透视矫正（Vision LLM 自动检测四边 + sharp bbox 裁剪）
+  // ---------------------------------------------------------------------------
+
+  async rectify(buf: Buffer, params: { corners?: any[] | any } = {}) {
+    const ctx = useTenant();
+    const t0 = Date.now();
+
+    let meta: Metadata;
+    try { meta = await sharp(buf).metadata(); } catch { throw new BadRequestException('图片解码失败'); }
+    const imgW = meta.width ?? 0, imgH = meta.height ?? 0;
+    if (!imgW || !imgH) throw new BadRequestException('无法读取图片尺寸');
+
+    // 1. 取 corners：优先用前端手动传的，否则 Vision LLM 检测
+    let corners = params.corners ? normalizeCorners(params.corners) : null;
+    let llmUsed = false;
+    let llmConfidence = 0;
+    let llmError: string | null = null;
+
+    if (!corners) {
+      llmUsed = true;
+      const visionCfg = await this.resolveVisionConfig(ctx.tenantId).catch(() => null);
+      if (!visionCfg) {
+        throw new BadRequestException('未配置 AI 视觉模型，无法自动检测四边。请手动传入 corners（前端 canvas 点选 4 点）');
+      }
+      try {
+        const imageDataUrl = await prepareImageForLlm(buf);
+        const res = await callVision(
+          visionCfg,
+          imageDataUrl,
+          buildCornerDetectSystemPrompt(),
+          buildCornerDetectUserPrompt(),
+        );
+        const parsed = extractJson(res.raw);
+        corners = normalizeCorners(parsed?.corners) ?? null;
+        llmConfidence = typeof parsed?.confidence === 'number' ? parsed.confidence : 0;
+        if (!corners) throw new Error('模型输出缺少合法 corners');
+      } catch (e: any) {
+        llmError = e?.message ?? String(e);
+        this.logger.warn(`[rectify] Vision LLM 检测四边失败: ${llmError}`);
+        throw new BadRequestException(`AI 自动检测失败：${llmError}。请手动传入 corners 参数（4 个角点 px 坐标）`);
+      }
+    }
+
+    // 2. 取 bbox + sharp extract
+    const bbox = cornersToBbox(corners, imgW, imgH, 0.01);
+    if (bbox.width < imgW * 0.1 || bbox.height < imgH * 0.1) {
+      throw new BadRequestException('裁剪区域过小，可能 corners 不准。corners 需要覆盖图片主要标签区域');
+    }
+    const cropped = await extractBbox(buf, bbox);
+    const elapsedMs = Date.now() - t0;
+
+    await this.audit.write(ctx.tenantId, 'ai_template.rectify', {
+      llmUsed, llmConfidence, bbox, originalSize: { w: imgW, h: imgH }, elapsedMs,
+    }, ctx.userId);
+
+    return {
+      cropped,                         // 裁剪后的 PNG buffer
+      bbox,
+      originalSize: { w: imgW, h: imgH },
+      cornersPx: corners,
+      cornersConfidence: llmConfidence,
+      llmUsed,
       llmError,
       elapsedMs,
     };

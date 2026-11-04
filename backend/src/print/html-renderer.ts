@@ -191,9 +191,20 @@ function renderElement(e: any, mmToPx: number): string {
       const sw = +((e.borderWidth ?? 1) * mmToPx).toFixed(2);
       const color = e.borderColor ?? '#333';
       const cellW = w / cols, cellH = h / rows;
+      // 建立被合并单元格的 skip 集合（row,col）
+      const merged = Array.isArray(e.mergedCells) ? e.mergedCells : [];
+      const skipped = new Set<string>();
+      for (const mc of merged) {
+        for (let rr = mc.row; rr < mc.row + (mc.rowSpan ?? 1); rr++) {
+          for (let cc = mc.col; cc < mc.col + (mc.colSpan ?? 1); cc++) {
+            if (rr !== mc.row || cc !== mc.col) skipped.add(`${rr},${cc}`);
+          }
+        }
+      }
       const parts: string[] = [];
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
+          if (skipped.has(`${r},${c}`)) continue;
           const idx = r * cols + c;
           const txt = (e.cells?.[idx] ?? '').replace(/\{\{[^}]+\}\}/g, (m: any) => m);
           const f = e.font ?? {};
@@ -201,12 +212,16 @@ function renderElement(e: any, mmToPx: number): string {
           const bg = r === 0 && e.headerRow ? (e.headerBg ?? '#fafafa') : '#ffffff';
           const bold = r === 0 && e.headerRow ? 'font-weight:bold;' : '';
           const align = f.align ?? 'center';
+          // 检查是否是合并起点
+          const mc = merged.find((m: any) => m.row === r && m.col === c);
+          const spanW = (mc?.colSpan ?? 1) * cellW;
+          const spanH = (mc?.rowSpan ?? 1) * cellH;
           const style = [
             `position:absolute`,
             `left:${x + c * cellW}px`,
             `top:${y + r * cellH}px`,
-            `width:${cellW}px`,
-            `height:${cellH}px`,
+            `width:${spanW}px`,
+            `height:${spanH}px`,
             `background:${bg}`,
             `box-sizing:border-box`,
             `display:flex`,
