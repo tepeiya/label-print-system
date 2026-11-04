@@ -11,15 +11,15 @@
 ### 10.1.1 这是什么
 
 LabelFlow —— 专业级标签设计与打印系统。核心能力：
-拖拽式设计器（原生 HTML5，无框架、无构建）、模板版本管理、变量/公式/流水号、条码二维码、
-多打印机通道（浏览器 / 9100 TCP / 图像）、批量打印队列（BullMQ）、多租户 + RBAC、
-审计日志、SQL 数据源、**AI 图片自动生成模板**（条码识别 + OCR + 几何 + Vision LLM）。
+拖拽式设计器（原生 DOM，非 Canvas/Konva）+ Vue 3 后台管理、模板版本管理、变量/公式/流水号、条码二维码、
+多打印机通道（浏览器 / 9100 TCP / 图像）、批量打印队列（BullMQ）、多租户 + RBAC + ACL、
+审计日志、SQL 数据源、备份恢复、AI 图片自动生成模板、**AI 透视矫正 / 单元素重算 / 文本生模板 / 多联大图切分**。
 
 ### 10.1.2 本机运行现状
 
 | 项 | 值 |
 | --- | --- |
-| 前端 | `http://localhost:5180`（`web/serve.mjs` 静态服务器，零依赖） |
+| 前端 | Vue 3 后台 `http://localhost:5173`（`apps/console/` · pnpm dev）；设计器 iframe 嵌入 `http://localhost:5180`（`web/serve.mjs`） |
 | 后端 | `http://localhost:3200/api/v1` |
 | 数据库 | PostgreSQL `localhost:5433`，库/用户/密码均 `labelflow` |
 | Redis | `localhost:6380` |
@@ -44,8 +44,15 @@ DB_PORT=5433 REDIS_URL=redis://localhost:6380 JWT_SECRET=dev-secret PORT=3200 \
 SQL_SECRET_KEY=3a9f1b2c4d5e6f7890abcdef1234567890abcdef1234567890abcdef123456789 \
 nohup node -r reflect-metadata dist/src/main.js > /tmp/labelflow-backend.log 2>&1 &
 
-# 前端（改了 js/css 无需重启，静态服务器直接读盘）
+# 前端：两套并行（Vue 3 后台 + 原生 DOM 设计器 iframe）
+# —— 开发态：Vite dev server 5173 自动代理 /api 到后端
+cd apps/console && pnpm dev
+# —— 同时起原生设计器（Vue 3 的 Designer 页用 iframe 嵌入这个）
 node web/serve.mjs 5180
+
+# —— 生产部署：Vue 3 构建产物托管到 NestJS 静态目录
+cd apps/console && pnpm build          # 产物 dist/
+cp -r dist/* backend/public/           # NestJS 自动托管 public/ 目录
 ```
 
 `SQL_SECRET_KEY` 用于 AES-256-GCM 加密 SQL 连接串与 AI API Key；不配会用内置 dev key 并打 WARN。
@@ -301,6 +308,34 @@ POST /print/jobs
 
 ## 10.7 前端结构
 
+### 10.7.1 Vue 3 后台（apps/console/ —— 新增于 2026-11-04）
+
+```
+apps/console/src/
+├── main.ts                    Element Plus + Pinia + Router 入口
+├── App.vue                    纯 router-view
+├── styles/main.css            登录 / 布局 / 通用
+├── api/index.ts               axios：auth / users / print / backups / ai 6 组 API
+├── store/auth.ts              Pinia：login + fetchMe + logout + hasPermission()
+├── router/index.ts            动态菜单 + permission 路由守卫
+├── layouts/MainLayout.vue     顶部导航（动态菜单过滤）+ 头像下拉
+└── views/
+    ├── Login.vue              租户 / 用户名 / 密码
+    ├── Dashboard.vue          ECharts 打印统计仪表盘
+    ├── UserManagement.vue     完整 CRUD + 角色 checkbox + 重置密码 + 删除
+    ├── PrintJobs.vue          打印任务列表
+    ├── Backups.vue            备份中心（P2 新增）
+    ├── Templates.vue          引导页（模板管理在设计器里）
+    └── Designer.vue           iframe 嵌入 /designer.html（原生版）
+```
+
+> 设计器目前用 iframe 嵌入原生版本（见下），后续逐步 Vue 化：
+> `render.js#renderElement` → `<DesignerElement>` 组件
+> `interactions.js` → `useDrag()` 组合式
+> `store.js` → Pinia store
+
+### 10.7.2 原生 DOM 设计器（web/ —— 老版本，iframe 嵌入）
+
 | 文件 | 职责 |
 | --- | --- |
 | `app.js` | 启动、页签切换、工具栏、快捷键、RBAC UI 约束、审计导出 |
@@ -311,9 +346,10 @@ POST /print/jobs
 | `inspector.js` | 右侧属性面板（注意：选择指纹变化时要强制重建表单） |
 | `print.js` / `jobs.js` / `printers.js` / `templates.js` / `guides.js` | 各页签 |
 | `ai-template.js` | AI 生成页签：上传、生成、结果表、载入画布、模型配置 |
+| `users.js` | 用户管理页签（2026-11-04 新增） |
 | `api.js` | 统一请求封装（401 → refresh → 失败重登 → 重试一次） |
 
-页签：`design` / `print` / `jobs` / `printers` / `templates` / `audit` / `ai`。
+页签：`design` / `print` / `jobs` / `printers` / `templates` / `audit` / `ai` / `users`。
 `switchTab('xxx')` 会派发 `xxx-refresh` 事件，各模块自行监听。
 
 **载入 AI 结果为可编辑模板**：`store.loadTemplate(json)` + `resetCurrentTemplateId()`，
@@ -412,7 +448,7 @@ cd backend && npm test     # core/__tests__：16 个用例（公式/校验位/�
     落地：`backend/src/print/thumbnail-renderer.ts`（sharp + SVG composite，图形/条码/二维码/表格全可见，
     文本简化为占位框）。`TemplateService.save` 保存时自动渲染缩略图写入 `templates.thumbnail` 字段。
 11. SQL 数据源仅支持 `postgresql://`，MySQL/SQLServer 未实现。
-12. 前端 `js/` 下无 lint/格式化配置。
+12. 原生 `web/js/` 无 lint/格式化配置。Vue 3 后台 `apps/console/` 也未加 ESLint（TS 严格模式已开），后续可补。
 
 ---
 
