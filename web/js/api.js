@@ -18,6 +18,42 @@ export function apiBase() {
   return BASE;
 }
 
+/**
+ * SaaS 403 业务码（backend/src/common/business.errors.ts）
+ * HTTP 状态仍是 403，靠响应体 code 区分「没订模块」和「缺权限」。
+ */
+export const BIZ_CODE = {
+  MODULE_NOT_SUBSCRIBED: 4031,
+  PERMISSION_DENIED: 4032,
+};
+
+function bizList(v) {
+  if (Array.isArray(v)) return v.join(' / ') || '-';
+  return typeof v === 'string' && v ? v : '-';
+}
+
+/** 业务码 → 面向用户的提示文案（其它码沿用原有风格） */
+const BIZ_MESSAGE = {
+  [BIZ_CODE.MODULE_NOT_SUBSCRIBED]: (j) => `模块未订阅：${bizList(j.modules)}，需要升级套餐`,
+  [BIZ_CODE.PERMISSION_DENIED]: (j) => `缺少权限：${bizList(j.permissions)}，请联系管理员`,
+};
+
+/**
+ * 统一构造失败错误：把业务码挂到 err.bizCode 上，调用方可用
+ * `err.bizCode === BIZ_CODE.MODULE_NOT_SUBSCRIBED` 之类判断决定「去升级」还是「找管理员」。
+ */
+export function bizError(json, status, fallback) {
+  const code = Number(json && json.code) || 0;
+  const make = BIZ_MESSAGE[code];
+  const err = new Error(make ? make(json || {}) : ((json && json.message) || fallback || `请求失败 (${status})`));
+  err.bizCode = code || undefined;
+  err.httpStatus = status;
+  err.modules = Array.isArray(json?.modules) ? json.modules : [];
+  err.permissions = Array.isArray(json?.permissions) ? json.permissions : [];
+  err.action = json?.action || '';
+  return err;
+}
+
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY) || '';
 }
@@ -103,7 +139,7 @@ async function req(method, path, body, retried = false) {
     if (await doLogin()) return req(method, path, body, true);
   }
 
-  if (json && json.code !== 0) throw new Error(json.message || `请求失败 (${status})`);
+  if (json && json.code !== 0) throw bizError(json, status);
   if (!json) throw new Error(`HTTP ${status}`);
   return json.data;
 }
@@ -180,7 +216,7 @@ export const api = {
     });
     const json = await res.json().catch(() => ({}));
     if (res.status === 401) { await doLogin(); return api.uploadExcelDataSource(file, opts); }
-    if (json?.code !== 0) throw new Error(json.message || `HTTP ${res.status}`);
+    if (json?.code !== 0) throw bizError(json, res.status, `HTTP ${res.status}`);
     return json.data;
   },
   previewDataSource: (body) => req('POST', '/data-sources/preview', body),
@@ -226,7 +262,7 @@ export const api = {
     });
     const json = await res.json().catch(() => ({}));
     if (res.status === 401) { await doLogin(); return api.regenerateAiElement(file, opts); }
-    if (!res.ok || json.code !== 0) throw new Error(json.message || `HTTP ${res.status}`);
+    if (!res.ok || json.code !== 0) throw bizError(json, res.status, `HTTP ${res.status}`);
     return json.data;
   },
 
@@ -242,7 +278,7 @@ export const api = {
     });
     const json = await res.json().catch(() => ({}));
     if (res.status === 401) { await doLogin(); return api.rectifyAiImage(file, corners); }
-    if (!res.ok || json.code !== 0) throw new Error(json.message || `HTTP ${res.status}`);
+    if (!res.ok || json.code !== 0) throw bizError(json, res.status, `HTTP ${res.status}`);
     return json.data;
   },
   testAiModel: (id) => req('POST', `/ai-template/models/${id}/test`, {}),

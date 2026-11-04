@@ -96,6 +96,7 @@ async function boot() {
       subscribePrintEvents();
       bindAuditExport();
     } else {
+      window.LABEFLOW_CURRENT_USER = null;
       applyRoleConstraints(null);
     }
   });
@@ -502,7 +503,7 @@ function bindAuditExport() {
 }
 
 // ---------------------------------------------------------------------------
-// RBAC：按角色约束按钮可用性
+// RBAC：权限点优先 + 角色兜底，按钮可用性与页签按订阅模块显隐
 // ---------------------------------------------------------------------------
 
 /** 判断当前用户是否命中任一角色（admin 视为万能） */
@@ -515,34 +516,107 @@ function hasAnyRole(user, ...roles) {
 const WRITE_ROLES = ['admin', 'operator'];
 const ADMIN_ONLY = ['admin'];
 
+/** 当前登录用户（api.me() 的结果），未登录 / 离线时为 null */
+function currentUser() {
+  return window.LABEFLOW_CURRENT_USER || null;
+}
+
+/** 用户是否携带权限点数据；老 token / 旧登录态为空 → 调用方退回角色判断 */
+function hasPermData(user = currentUser()) {
+  return Array.isArray(user?.permissions) && user.permissions.length > 0;
+}
+
+/**
+ * 权限点判断，通配语义与后端 common/permission-match.ts 一致：
+ * 持有 '*' 全通过；持有 'template:*' 视为拥有 'template:write'。
+ */
+function hasPerm(code, user = currentUser()) {
+  const list = Array.isArray(user?.permissions) ? user.permissions : [];
+  if (!code) return true;
+  if (!list.length) return false;
+  if (list.includes(code) || list.includes('*')) return true;
+  const parts = String(code).split(':');
+  for (let i = parts.length - 1; i > 0; i--) {
+    if (list.includes([...parts.slice(0, i), '*'].join(':'))) return true;
+  }
+  return list.includes(`${parts[0]}:*`);
+}
+
+/** 模块订阅判断；modules 缺失/为空（老数据）时视为已订阅，避免误伤 */
+function hasModule(code, user = currentUser()) {
+  const mods = Array.isArray(user?.modules) ? user.modules : null;
+  if (!code) return true;
+  if (!mods || !mods.length) return true;
+  return mods.includes(code);
+}
+
+/** 主标签页 → 订阅模块码（docs/11 §11.11.1 L2） */
+const TAB_MODULES = {
+  design: 'templates',
+  templates: 'templates',
+  print: 'print',
+  jobs: 'print',
+  printers: 'print',
+  audit: 'audit',
+  users: 'users',
+  ai: 'ai',
+};
+
+/** 页签文案加/去锁定标记（保留原始文案，重复调用幂等） */
+function setTabLockMark(tab, locked) {
+  if (tab.dataset.baseLabel === undefined) tab.dataset.baseLabel = tab.textContent.trim();
+  tab.textContent = locked ? `${tab.dataset.baseLabel} 🔒` : tab.dataset.baseLabel;
+}
+
+/** 按订阅模块显隐主标签页；当前 active 页签被隐藏时自动切到 design */
+function applyModuleTabs(user) {
+  const ready = hasPermData(user);
+  let activeHidden = false;
+  const tabs = [...document.querySelectorAll('#main-tabs .tab')];
+  for (const tab of tabs) {
+    const name = tab.dataset.tab;
+    // 用户管理：既要订阅 users 模块，也要 sys:user:read 权限点；无权限点数据时退回旧的 admin 判断
+    const visible = name === 'users'
+      ? (ready ? (hasModule('users', user) && hasPerm('sys:user:read', user)) : hasAnyRole(user, ...ADMIN_ONLY))
+      : hasModule(TAB_MODULES[name], user);
+    tab.hidden = !visible;
+    setTabLockMark(tab, !visible);
+    if (!visible && tab.classList.contains('active')) activeHidden = true;
+  }
+  if (!activeHidden) return;
+  const design = tabs.find((t) => t.dataset.tab === 'design');
+  const next = (design && !design.hidden) ? 'design' : (tabs.find((t) => !t.hidden)?.dataset.tab || 'design');
+  switchTab(next);
+}
+
 /** 一次性 UI 约束：隐藏/禁用危险按钮 */
 function applyRoleConstraints(user) {
-  // 模板写操作：保存/新建/导出/导入
-  const canTplWrite = hasAnyRole(user, ...WRITE_ROLES);
-  disableById('btn-save', !canTplWrite);
-  disableById('btn-new', !canTplWrite);
-  // 导入导出：viewer 也能导出自己看，不让保存/新建足够
+  // 权限点优先；permissions 为空（老登录态）时退回原有角色判断，行为保持不变
+  const byPerm = (perm, roles) => (hasPermData(user) ? hasPerm(perm, user) : hasAnyRole(user, ...roles));
+
+  // 模板写操作：保存/新建
+  disableById('btn-save', !byPerm('template:write', WRITE_ROLES));
+  disableById('btn-new', !byPerm('template:write', WRITE_ROLES));
   // 数据源写操作
-  const canDsWrite = hasAnyRole(user, ...WRITE_ROLES);
-  disableById('btn-save-source', !canDsWrite);
+  disableById('btn-save-source', !byPerm('datasource:write', WRITE_ROLES));
   // 打印机写操作
-  const canPrinterWrite = hasAnyRole(user, ...WRITE_ROLES);
-  disableById('btn-printer-add', !canPrinterWrite);
+  disableById('btn-printer-add', !byPerm('print:printer:manage', WRITE_ROLES));
   // 打印提交
-  const canPrint = hasAnyRole(user, ...WRITE_ROLES);
-  disableById('btn-queue-print', !canPrint);
+  const canPrintJob = byPerm('print:job:write', WRITE_ROLES);
+  disableById('btn-queue-print', !canPrintJob);
   // AI 生成（无权限时单向锁定，避免覆盖「未选图片」的初始禁用态）
-  if (!canPrint) {
-    disableById('btn-ai-generate', true);
-    disableById('btn-ai-save-tpl', true);
-  }
-  // admin 专属
-  const isAdmin = hasAnyRole(user, ...ADMIN_ONLY);
-  const hideIf = (id, v) => { const el = document.getElementById(id); if (el) el.hidden = v; };
-  hideIf('btn-audit-export-csv', !isAdmin);
-  hideIf('btn-audit-export-json', !isAdmin);
-  // 用户管理整个 tab 对非 admin 隐藏
-  document.querySelector('#main-tabs .tab[data-tab="users"]')?.setAttribute('hidden', String(!isAdmin));
+  const canAi = byPerm('ai:generate', WRITE_ROLES);
+  const canAiSave = hasPermData(user)
+    ? (hasPerm('ai:generate', user) && hasPerm('template:write', user))
+    : hasAnyRole(user, ...WRITE_ROLES);
+  if (!canAi) disableById('btn-ai-generate', true);
+  if (!canAiSave) disableById('btn-ai-save-tpl', true);
+  // 审计导出
+  const canAuditExport = byPerm('audit:export', ADMIN_ONLY);
+  hideById('btn-audit-export-csv', !canAuditExport);
+  hideById('btn-audit-export-json', !canAuditExport);
+  // 页签：按订阅模块显隐（含「用户管理」的模块 + 权限点双重门槛）
+  applyModuleTabs(user);
 
   // 打印机详情卡片的危险按钮（JS 动态渲染）：post-process 委托
   document.body.dataset.roles = (user?.roles ?? []).join(',');
@@ -551,6 +625,11 @@ function applyRoleConstraints(user) {
 function disableById(id, v) {
   const el = document.getElementById(id);
   if (el) el.disabled = !!v;
+}
+
+function hideById(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.hidden = !!v;
 }
 
 /** 在顶栏 auth-badge 右侧渲染当前用户信息 */
