@@ -979,8 +979,11 @@ npx esbuild --format=esm --outfile=/dev/null web/js/api.js
 - admin 登录后菜单只有 仪表盘 / 打印（任务·设计器·模板库）/ AI 生成模板 / 系统管理（用户管理）/ 我的订阅；
   数据源、审计、备份**不出现**——因为模块没订阅，不是权限点问题。
 - 手输 `/datasource` → `/blocked?kind=module&code=datasource`，页面显示当前套餐与已开通模块 + 升级引导。
-- 用 `POST /platform/tenants/1/modules` 给 default 加购 `datasource` → 60s 内（`ModulesService` 进程缓存 TTL）
-  点「重新检查权限」即可看到菜单出现新入口。
+- 用 `POST /platform/tenants/1/modules` 加购（body 是 **单个** `{"moduleCode":"datasource","source":"addon"}`，
+  不是数组）→ 同进程内**立即**生效：`provision.addModule()` 会显式 `ModulesService.invalidate()`，
+  实测 `/auth/me.menus` 下一请求就多出 `/datasource`、`GET /data-sources` 从 4031 变 200。
+  只有跨进程（api ↔ worker）才受 60s TTL 限制，前端点「重新检查权限」即可看到新入口。
+  验证完用 `DELETE /platform/tenants/1/modules/datasource` 还原。
 - 拿 viewer 登录后 AI 按钮应灰掉（`ai:generate` 不在 viewer 权限集合里）。
 
 ### 10.16.7 P1 明确没做
