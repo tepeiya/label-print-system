@@ -6,7 +6,7 @@ import { Repository } from 'typeorm';
 import { Queue } from 'bullmq';
 import { PrintJob, PrintLog, Printer } from '../entities/print.entity';
 import { Template } from '../entities/template.entity';
-import { useTenantId } from '../common/tenant.context';
+import { useTenant, useTenantId } from '../common/tenant.context';
 import { SerialModuleService } from '../serial/serial.service';
 import { AuditService } from '../audit/audit.module';
 
@@ -66,10 +66,11 @@ export class PrintService {
       }
     }
 
+    const { userId } = useTenant();
     const job = await this.jobs.save({
       tenantId, templateId: dto.templateId ?? 0, printerId: dto.printerId,
       total: count, status: 'queued', params: { ...(dto.params ?? {}), copies, protocol: printer?.connection?.protocol }, dataRef: { rows, serialMap, templateContent: tpl.content },
-      ...(dto.params?.createdBy ? { createdBy: dto.params.createdBy } : {}),
+      createdBy: userId,
     });
     // 固定 bull 任务 id，取消时可精确移除
     await this.queue.add('print', {

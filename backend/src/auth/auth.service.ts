@@ -4,7 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
-import { User, RefreshToken, UserRole } from '../entities/tenant.entity';
+import { User, RefreshToken, UserRole, Tenant } from '../entities/tenant.entity';
 
 export interface JwtPayload { sub: number; tenantId: number; roles: string[]; }
 
@@ -19,12 +19,16 @@ export class AuthService {
     @InjectRepository(User) private users: Repository<User>,
     @InjectRepository(RefreshToken) private refresh: Repository<RefreshToken>,
     @InjectRepository(UserRole) private userRoles: Repository<UserRole>,
+    @InjectRepository(Tenant) private tenants: Repository<Tenant>,
     private jwt: JwtService,
   ) {}
 
-  /** 登录：租户内用户名+密码校验（密码 bcrypt 加盐哈希） */
+  /** 登录：按 tenantCode 查租户 → 租户内用户名+密码校验（密码 bcrypt 加盐哈希） */
   async login(username: string, password: string, tenantCode: string) {
-    const user = await this.users.findOne({ where: { username, tenantId: 1 } }); // 演示：默认租户 1
+    const tenant = await this.tenants.findOne({ where: { code: tenantCode } });
+    if (!tenant) throw new UnauthorizedException(`租户 "${tenantCode}" 不存在`);
+    if (tenant.status !== 1) throw new UnauthorizedException('该租户已停用');
+    const user = await this.users.findOne({ where: { username, tenantId: tenant.id } });
     if (!user || !(await bcrypt.compare(password, user.passwordHash)))
       throw new UnauthorizedException('用户名或密码错误');
     const roles = await this.loadRoles(user.id, user.tenantId);

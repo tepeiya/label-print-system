@@ -5,9 +5,10 @@ import { JwtModule } from '@nestjs/jwt';
 import { User, RefreshToken, Tenant, UserRole } from '../entities/tenant.entity';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
+import { JWT_SECRET } from '../common/config';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User, RefreshToken, Tenant, UserRole]), JwtModule.register({ secret: process.env.JWT_SECRET || 'dev-secret' })],
+  imports: [TypeOrmModule.forFeature([User, RefreshToken, Tenant, UserRole]), JwtModule.register({ secret: JWT_SECRET })],
   providers: [AuthService],
   controllers: [AuthController],
   exports: [AuthService],

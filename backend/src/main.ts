@@ -10,6 +10,7 @@ import { TenantContextInterceptor } from './common/tenant-context.interceptor';
 import { AllExceptionsFilter } from './common/errors.filter';
 import { Reflector } from '@nestjs/core';
 import { Tenant, User, UserRole } from './entities/tenant.entity';
+import { JWT_SECRET, PORT } from './common/config';
 
 async function seedDefaultTenantAndAdmin(dataSource: DataSource) {
   const tenantRepo = dataSource.getRepository(Tenant);
@@ -48,8 +49,7 @@ async function seedDefaultTenantAndAdmin(dataSource: DataSource) {
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const reflector = new Reflector();
-  const jwtSecret = process.env.JWT_SECRET || 'dev-secret';
-  const jwt = new JwtService({ secret: jwtSecret });
+  const jwt = new JwtService({ secret: JWT_SECRET });
   // 全局守卫顺序：先 JWT 写 req.user，再 Roles 做权限校验
   app.useGlobalGuards(new JwtAuthGuard(jwt, reflector), new RolesGuard(reflector));
   app.setGlobalPrefix('api/v1');
@@ -60,7 +60,7 @@ async function bootstrap() {
   // 首次启动种入默认租户、管理员与 admin 角色（幂等）
   await seedDefaultTenantAndAdmin(app.get(DataSource));
 
-  await app.listen(process.env.PORT || 3000);
+  await app.listen(PORT);
   console.log(`LabelFlow API 已启动: ${await app.getUrl()}`);
 }
 bootstrap();

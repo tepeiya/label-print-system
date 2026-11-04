@@ -15,6 +15,7 @@ import { generateZpl, mmToDots } from '../../core/zpl-generator';
 import { buildJob as buildTsplJob } from '../../core/tspl-generator';
 import { PrintEvents } from './events.event';
 import * as crypto from 'crypto';
+import { JWT_SECRET } from '../common/config';
 
 const PRINT_ACTION: RoleName[] = ['admin', 'operator'];
 
@@ -150,7 +151,7 @@ export class PrintEventsController {
     try {
       let tenantId: number;
       try {
-        const payload: any = this.jwt.verify(String(token || ''), { secret: process.env.JWT_SECRET || 'dev-secret' });
+        const payload: any = this.jwt.verify(String(token || ''), { secret: JWT_SECRET });
         tenantId = +payload.tenantId;
         if (!tenantId) throw new Error('缺少 tenantId');
       } catch (e) {

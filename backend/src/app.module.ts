@@ -16,6 +16,7 @@ import { AuditModule } from './audit/audit.module';
 import { UserAdminModule } from './user/user.module';
 import { AiTemplateModule } from './ai-template/ai-template.module';
 import { SnakeNamingStrategy } from './snake-naming.strategy';
+import { JWT_SECRET } from './common/config';
 
 const ENTITIES = Object.values(entities).filter((e) => typeof e === 'function');
 
@@ -54,7 +55,7 @@ function redisConnection() {
       synchronize: false,            // 生产用 migration（docs/03-database.sql）
       logging: false,
     }),
-    JwtModule.register({ secret: process.env.JWT_SECRET || 'dev-secret', global: true }),
+    JwtModule.register({ secret: JWT_SECRET, global: true }),
     // BullMQ：打印队列 worker 需要根配置才能启动（队列本身在 PrintModule 注册）
     BullModule.forRoot({ connection: redisConnection() }),
     AuthModule, TemplateModule, SerialModule, FormulaModule, BarcodeModule,
