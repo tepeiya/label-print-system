@@ -1,4 +1,5 @@
-import { IsArray, IsBoolean, IsIn, IsNumber, IsObject, IsOptional, IsString, Length, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Length, Matches, Min, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 
 /**
  * 平台运营 DTO（P2 前置）。原来 ProvisionTenantDto 只是 interface 没有任何校验，
@@ -103,4 +104,119 @@ export class UpsertPlanDto {
   @IsOptional()
   @IsArray()
   moduleCodes?: string[];
+
+  /** P3：月费（分）。0=免费/未定价；不传保持原价 */
+  @IsOptional()
+  @IsInt()
+  @Min(0, { message: 'priceCents 不能为负' })
+  priceCents?: number;
+}
+
+/** 运营设置配额（meter 走路径参数；null 表示取消该侧限制） */
+export class UpsertQuotaDto {
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  softLimit?: number | null;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  hardLimit?: number | null;
+
+  @IsOptional()
+  @IsIn(['month', 'day'])
+  period?: 'month' | 'day';
+}
+
+/** 账单项行（快照存 invoices.detail；amountCents 缺省按 qty×unitPriceCents 计） */
+export class InvoiceLineDto {
+  @IsOptional()
+  @IsString()
+  @Length(1, 40)
+  code?: string;
+
+  @IsString()
+  @Length(1, 200, { message: '账单项 title 必填' })
+  title!: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  qty?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  unitPriceCents?: number;
+
+  @IsOptional()
+  @IsInt({ message: 'amountCents 需为整数（分）' })
+  @Min(0)
+  amountCents?: number;
+}
+
+/** 出账（草稿）：items 与 amountCents 都不传 → 按租户当前套餐月费自动生成 */
+export class CreateInvoiceDto {
+  @IsInt({ message: 'tenantId 必填' })
+  @Min(1)
+  tenantId!: number;
+
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'periodStart 需为 YYYY-MM-DD' })
+  periodStart?: string;
+
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'periodEnd 需为 YYYY-MM-DD' })
+  periodEnd?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => InvoiceLineDto)
+  items?: InvoiceLineDto[];
+
+  @IsOptional()
+  @IsInt({ message: 'amountCents 需为整数（分）' })
+  @Min(0)
+  amountCents?: number;
+
+  @IsOptional()
+  @IsString()
+  @Length(3, 8)
+  currency?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 300)
+  note?: string;
+}
+
+/** 发出账单：dueDays 默认 15 */
+export class IssueInvoiceDto {
+  @IsOptional()
+  @IsInt()
+  @Min(1, { message: 'dueDays 至少 1 天' })
+  dueDays?: number;
+}
+
+/** 收款登记（D5：V1 仅 manual 有真实业务含义，其余通道字段预留） */
+export class CreatePaymentDto {
+  @IsInt({ message: 'amountCents 必填（分）' })
+  @Min(1, { message: '收款金额需为正整数（分）' })
+  amountCents!: number;
+
+  @IsOptional()
+  @IsIn(['manual', 'wechat', 'alipay', 'stripe', 'bank'])
+  provider?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 200)
+  providerRef?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 300)
+  note?: string;
 }

@@ -10,6 +10,7 @@ import { RenderService } from './render.service';
 import { PrintEvents } from './events.event';
 import { SerialModule } from '../serial/serial.module';
 import { AuditModule } from '../audit/audit.module';
+import { BillingModule } from '../billing/billing.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { AuditModule } from '../audit/audit.module';
     BullModule.registerQueue({ name: 'print' }),
     SerialModule,
     AuditModule,
+    BillingModule,
   ],
   providers: [PrintService, PrintProcessor, RenderService, PrintEvents],
   controllers: [PrintController, PrintPreviewController, PrintCommandsController, PrintEventsController],

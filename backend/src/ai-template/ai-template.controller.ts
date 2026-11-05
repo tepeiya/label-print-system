@@ -8,6 +8,9 @@ import { TenantGuard } from '../common/tenant.guard';
 import { Roles } from '../common/roles.guard';
 import { RequireModule } from '../common/module.guard';
 import { RequirePermission } from '../common/permission.guard';
+import { useTenantId } from '../common/tenant.context';
+import { QuotaExceededException } from '../common/business.errors';
+import { UsageService } from '../billing/usage.service';
 import { AiTemplateService } from './ai-template.service';
 import { CreateAiModelDto, SaveAiTemplateDto, TextToTemplateDto } from '../common/dto/render-and-ai.dto';
 
@@ -18,7 +21,24 @@ const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/tiff'];
 // AI 是加购模块（BASIC 含 ai 是历史种子配置，见 docs/10 §10.15 的套餐偏差说明）
 @RequireModule('ai')
 export class AiTemplateController {
-  constructor(private svc: AiTemplateService) {}
+  constructor(private svc: AiTemplateService, private usage: UsageService) {}
+
+  /** P3 计费守卫：hard_limit 拒绝（4033）；配额查询本身故障则降级放行（计量库抖动不该打断生成） */
+  private async assertAiQuota(tenantId: number, qty: number): Promise<boolean> {
+    try {
+      return (await this.usage.assertQuota(tenantId, 'ai_generate', qty)).warn;
+    } catch (e: any) {
+      if (e instanceof QuotaExceededException) throw e;
+      console.warn(`[billing] ai_generate 配额检查降级: ${e?.message}`);
+      return false;
+    }
+  }
+
+  private recordAi(tenantId: number, qty: number, endpoint: string) {
+    if (qty <= 0) return;
+    this.usage.record(tenantId, 'ai_generate', qty, { moduleCode: 'ai', meta: { endpoint } })
+      .catch((e: any) => console.warn(`[billing] ai_generate 计量写入失败: ${e?.message}`));
+  }
 
   /** 纯文本描述生成模板：用户用中文描述标签 → LLM 直接输出模板 JSON（不需要图片） */
   @RequirePermission('ai:text-to-template')
@@ -51,7 +71,9 @@ export class AiTemplateController {
     if (!(widthMm > 0) || !(heightMm > 0)) {
       throw new BadRequestException('缺少 widthMm / heightMm');
     }
-    return this.svc.generate(file.buffer, {
+    const tenantId = useTenantId();
+    const quotaWarn = await this.assertAiQuota(tenantId, 1);
+    const res: any = await this.svc.generate(file.buffer, {
       widthMm,
       heightMm,
       dpi,
@@ -61,6 +83,9 @@ export class AiTemplateController {
         ? String(body.variableHintKeywords).split(',').map((s) => s.trim()).filter(Boolean)
         : undefined,
     });
+    this.recordAi(tenantId, 1, 'generate');
+    if (quotaWarn) res.quotaWarn = true;
+    return res;
   }
 
   /** 多联大图批量生成：上传一张包含 rows×cols 个相同标签的大图 → 切格 → 每格跑一次 generate */
@@ -90,6 +115,9 @@ export class AiTemplateController {
       tileHeightMm: heightMm || undefined,
     });
 
+    const tenantId = useTenantId();
+    const quotaWarn = await this.assertAiQuota(tenantId, tiles.length);
+
     const results = [];
     for (const tile of tiles) {
       try {
@@ -110,7 +138,8 @@ export class AiTemplateController {
     }
 
     const ok = results.filter((r: any) => r._ok).length;
-    return { total: results.length, ok, failed: results.length - ok, results };
+    this.recordAi(tenantId, ok, 'batch-generate');
+    return { total: results.length, ok, failed: results.length - ok, results, quotaWarn };
   }
 
   /** 单元素重算：前端发现某个元素识别不准时，只重算这一个省 token */

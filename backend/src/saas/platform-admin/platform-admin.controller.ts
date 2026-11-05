@@ -1,8 +1,8 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, UseGuards, Request } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, UseGuards, Request } from '@nestjs/common';
 import { Public } from '../../common/public.decorator';
 import { PlatformJwtGuard } from './platform-jwt.guard';
 import { PlatformAdminService } from './platform-admin.service';
-import { AddModuleDto, FeatureFlagDto, PlatformLoginDto, ProvisionTenantDto, UpsertPlanDto } from '../dto/platform.dto';
+import { AddModuleDto, CreateInvoiceDto, CreatePaymentDto, FeatureFlagDto, IssueInvoiceDto, PlatformLoginDto, ProvisionTenantDto, UpsertPlanDto, UpsertQuotaDto } from '../dto/platform.dto';
 import { TenantConfigService } from '../tenant-config.service';
 import { SubscriptionService } from '../subscription.service';
 import { ModulesService } from '../modules.service';
@@ -74,7 +74,7 @@ export class PlatformAdminController {
   tenantFlags(@Param('id') id: string) { return this.configSvc.featuresFor(+id); }
 
   @Put('tenants/:id/flags')
-  async setFlag(@Param('id') id: string, @Body() body: FeatureFlagDto, @Request() req: any) {
+  async setFlag(@Param('id') id: string, @Body() body: FeatureFlagDto) {
     const row = await this.configSvc.setFlag(+id, body.key, !!body.enabled, body.rollout ?? {});
     return { tenantId: +id, key: row.key, enabled: row.enabled };
   }
@@ -97,6 +97,70 @@ export class PlatformAdminController {
 
   @Get('audit')
   audit() { return this.svc.listAudit(); }
+
+  // ---------- P3 计费：配额 / 原始用量（§11.7） ----------
+
+  @Get('tenants/:id/quotas')
+  tenantQuotas(@Param('id') id: string) { return this.svc.tenantQuotas(+id); }
+
+  @Put('tenants/:id/quotas/:meter')
+  setTenantQuota(@Param('id') id: string, @Param('meter') meter: string, @Body() dto: UpsertQuotaDto, @Request() req: any) {
+    return this.svc.setTenantQuota(req.platformUser, +id, meter, dto);
+  }
+
+  @Delete('tenants/:id/quotas/:meter')
+  removeTenantQuota(@Param('id') id: string, @Param('meter') meter: string, @Request() req: any) {
+    return this.svc.removeTenantQuota(req.platformUser, +id, meter);
+  }
+
+  /** 某租户的本月聚合 + 原始计量明细（对账入口） */
+  @Get('tenants/:id/meters')
+  tenantMeters(
+    @Param('id') id: string,
+    @Query('meter') meter?: string, @Query('from') from?: string, @Query('to') to?: string,
+    @Query('page') page?: string, @Query('pageSize') pageSize?: string,
+  ) {
+    return this.svc.tenantUsageDetail(+id, {
+      meter: meter || undefined, from: from || undefined, to: to || undefined,
+      page: page ? +page : undefined, pageSize: pageSize ? +pageSize : undefined,
+    });
+  }
+
+  // ---------- P3 计费：账单 / 收款（D5 手动登记） ----------
+
+  @Get('invoices')
+  listInvoices(
+    @Query('tenantId') tenantId?: string, @Query('status') status?: string,
+    @Query('page') page?: string, @Query('pageSize') pageSize?: string,
+  ) {
+    return this.svc.listInvoices({
+      tenantId: tenantId ? +tenantId : undefined, status: status || undefined,
+      page: page ? +page : undefined, pageSize: pageSize ? +pageSize : undefined,
+    });
+  }
+
+  @Post('invoices')
+  createInvoice(@Body() dto: CreateInvoiceDto, @Request() req: any) {
+    return this.svc.createInvoice(req.platformUser, dto);
+  }
+
+  @Get('invoices/:id')
+  invoiceDetail(@Param('id') id: string) { return this.svc.invoiceDetail(+id); }
+
+  @Post('invoices/:id/issue')
+  issueInvoice(@Param('id') id: string, @Body() dto: IssueInvoiceDto, @Request() req: any) {
+    return this.svc.issueInvoice(req.platformUser, +id, dto.dueDays ?? 15);
+  }
+
+  @Post('invoices/:id/void')
+  voidInvoice(@Param('id') id: string, @Request() req: any) {
+    return this.svc.voidInvoice(req.platformUser, +id);
+  }
+
+  @Post('invoices/:id/payments')
+  registerPayment(@Param('id') id: string, @Body() dto: CreatePaymentDto, @Request() req: any) {
+    return this.svc.registerPayment(req.platformUser, +id, dto);
+  }
 }
 
 /** 平台登录（唯一不需要平台 token 的运营接口） */

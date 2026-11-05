@@ -21,10 +21,12 @@ import { PlatformAdminService } from './platform-admin/platform-admin.service';
 import { PlatformAuditService } from './platform-admin/platform-audit.service';
 import { TenantDataSourceManager } from '../common/tenant-data-source.manager';
 import { AuditModule } from '../audit/audit.module';
+import { BillingModule } from '../billing/billing.module';
 
 @NestModule({
   imports: [
     AuditModule, // PlatformAdminService 写平台侧审计（platform.login / suspend 等）
+    BillingModule, // P3：平台运营 API 里的配额 / 账单 / 收款委托给 Usage/InvoiceService
     TypeOrmModule.forFeature([
       ModuleRecord, Plan, PlanModule, Subscription,
       TenantModule, Permission, RolePermission,

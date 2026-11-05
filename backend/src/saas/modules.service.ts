@@ -92,6 +92,9 @@ export class ModulesService {
       result.push({
         id: p.id, code: p.code, name: p.name,
         description: p.description, sortOrder: p.sortOrder,
+        // P3：月费（分）。GET /platform/plans 实际命中的是本方法（PlatformController 先注册），
+        // 运营端 Plans 页的价格列数据源在这里，不在 platform-admin 的同名路由上。
+        priceCents: Number(p.priceCents ?? 0),
         modules: raw,
         effectiveModules: expandWithDependencies(raw, catalog),
       });

@@ -3,6 +3,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Subscription, Plan, PlanModule, TenantModule } from '../entities/saas.entity';
+import { UsageService } from '../billing/usage.service';
 
 @Injectable()
 export class SubscriptionService {
@@ -11,6 +12,7 @@ export class SubscriptionService {
     @InjectRepository(Plan) private plans: Repository<Plan>,
     @InjectRepository(PlanModule) private planModules: Repository<PlanModule>,
     @InjectRepository(TenantModule) private tenantModules: Repository<TenantModule>,
+    private usageSvc: UsageService,
   ) {}
 
   /** 获取租户当前激活的订阅 + 套餐详情 + 开通模块 */
@@ -44,19 +46,25 @@ export class SubscriptionService {
       plan: plan ? {
         id: plan.id, code: plan.code, name: plan.name,
         description: plan.description,
+        // P3：月费（分），租户端 / 运营端展示用
+        priceCents: Number(plan.priceCents ?? 0),
       } : null,
       modules: tmods.map((m) => m.moduleCode),
     };
   }
 
-  /** 用量概览（先聚合 print_jobs，后续扩展 AI 次数等） */
+  /** 用量概览（P3 起读 usage_daily 真实聚合；limit=-1 表示未配硬配额，同旧契约） */
   async usage(tenantId: number) {
-    // 用原始查询跨表聚合——后续可按实际业务表扩展
+    const items = await this.usageSvc.monthSummary(tenantId);
+    const pick = (meter: string) => items.find((i) => i.meter === meter);
+    const print = pick('print_labels');
+    const ai = pick('ai_generate');
     return {
       tenantId,
       period: 'month',
-      printJobs: { used: 0, limit: -1 },   // -1 表示无限制
-      aiGenerations: { used: 0, limit: 50 },
+      printJobs: { used: print?.used ?? 0, limit: print?.hardLimit ?? -1 },
+      aiGenerations: { used: ai?.used ?? 0, limit: ai?.hardLimit ?? -1 },
+      items,
     };
   }
 }

@@ -236,6 +236,62 @@ c=$(api POST "/platform/tenants/$ID/resume" "$PT"); cc=$(jget code)
 c=$(api GET /platform/audit "$PT"); cc=$(jget code)
 [[ "$cc" == 0 ]] && ok "J.6 GET /platform/audit 平台审计" || no "J.6 平台审计" "HTTP $c $(body | head -c 160)"
 
+# ---------------------------------------------------------------------------
+# K. P3 计费闭环（docs/11 §11.7 / D5；验收口径「可出账、可对账」+ 4033 升级引导）
+#    计量走真实打印链路：BASIC 租户（BAT/$ID）打 8 张；出账走 PRO 租户（PAT/$ID2，月费 29900 分）
+# ---------------------------------------------------------------------------
+c=$(api PUT "/platform/tenants/$ID/quotas/print_labels" "$PT" '{"softLimit":5,"hardLimit":10}'); cc=$(jget code)
+[[ "$cc" == 0 && "$(jget data hardLimit)" == "10" ]] && ok "K.1 平台设配额 print_labels soft=5 hard=10" || no "K.1 设配额" "HTTP $c $(body | head -c 160)"
+c=$(api POST /print/jobs "$BAT" '{"templateContent":{"elements":[]},"rows":[1,2,3,4,5,6,7,8]}'); cc=$(jget code)
+[[ "$cc" == 0 && "$(jget data total)" == "8" && "$(jget data quotaWarn)" == "True" ]] \
+  && ok "K.2 打印 8 张成功且带软上限告警（quotaWarn）" || no "K.2 打印+软告警" "HTTP $c $(body | head -c 160)"
+c=$(api POST /print/jobs "$BAT" '{"templateContent":{"elements":[]},"rows":[1,2,3,4,5,6,7,8]}'); cc=$(jget code)
+[[ "$c" == 403 && "$cc" == 4033 && "$(jget action)" == "upgrade" ]] \
+  && ok "K.3 再打 8 张 → 403/4033 硬上限拒绝 + 升级引导" || no "K.3 硬上限" "HTTP $c code=$cc $(body | head -c 160)"
+c=$(api GET /billing/usage "$BAT"); cc=$(jget code)
+[[ "$cc" == 0 && "$(jget data items 0 meter)" == "print_labels" && "$(jget data items 0 used)" == "8" ]] \
+  && ok "K.4 租户账单页用量（print_labels 本月 8 张）" || no "K.4 用量查询" "HTTP $c $(body | head -c 160)"
+c=$(api GET /subscription/usage "$BAT"); cc=$(jget code)
+[[ "$cc" == 0 && "$(jget data printJobs used)" == "8" && "$(jget data printJobs limit)" == "10" ]] \
+  && ok "K.5 订阅用量已接真实聚合（used=8 limit=10）" || no "K.5 订阅用量" "HTTP $c $(body | head -c 160)"
+c=$(api PUT "/platform/tenants/$ID/quotas/print_labels" "$BAT" '{"hardLimit":9999}')
+[[ "$c" == 403 ]] && ok "K.6 租户 JWT 调配额写接口被拒（scope=platform）" || no "K.6 越权写配额" "HTTP $c"
+c=$(api POST /platform/invoices "$PT" "{\"tenantId\":$ID2}"); cc=$(jget code)
+INV=$(jget data id); NUM=$(jget data number)
+[[ "$cc" == 0 && "$(jget data status)" == "draft" && "$(jget data amountCents)" == "29900" ]] \
+  && ok "K.7 按套餐自动出账（PRO 月费 29900 分 $NUM）" || no "K.7 自动出账" "HTTP $c $(body | head -c 200)"
+c=$(api POST "/platform/invoices/$INV/issue" "$PT" '{"dueDays":7}'); cc=$(jget code)
+[[ "$cc" == 0 && "$(jget data status)" == "issued" && "$(jget data dueAt)" != "" ]] \
+  && ok "K.8 账单发出（issued + due_at）" || no "K.8 发单" "HTTP $c $(body | head -c 160)"
+c=$(api POST "/platform/invoices/$INV/payments" "$PT" '{"amountCents":10000,"note":"首笔"}'); cc=$(jget code)
+[[ "$cc" == 0 && "$(jget data status)" == "issued" && "$(jget data balanceCents)" == "19900" ]] \
+  && ok "K.9 部分收款 100 元 → 余额 199 元仍 issued" || no "K.9 部分收款" "HTTP $c $(body | head -c 160)"
+c=$(api POST "/platform/invoices/$INV/payments" "$PT" '{"amountCents":19900}'); cc=$(jget code)
+[[ "$cc" == 0 && "$(jget data status)" == "paid" && "$(jget data paidAt)" != "" && "$(jget data balanceCents)" == "0" ]] \
+  && ok "K.10 收清剩余 199 元 → paid + paid_at（累计判定）" || no "K.10 结清" "HTTP $c $(body | head -c 160)"
+c=$(api POST "/platform/invoices/$INV/void" "$PT"); cc=$(jget code)
+[[ "$c" == 400 ]] && ok "K.11 已付账单不可作废（400）" || no "K.11 作废保护" "HTTP $c $(body | head -c 160)"
+c=$(api GET /billing/invoices "$PAT"); cc=$(jget code)
+[[ "$cc" == 0 && "$(body | grep -c "$NUM")" == "1" ]] && ok "K.12 租户可见自家已发出账单（$NUM）" || no "K.12 租户账单列表" "HTTP $c"
+c=$(api GET "/billing/invoices/$INV" "$PAT"); cc=$(jget code)
+NPAY=$(jget data payments | python3 -c 'import sys,json;print(len(json.loads(sys.stdin.read()) or []))' 2>/dev/null)
+[[ "$cc" == 0 && "$NPAY" == "2" ]] && ok "K.13 账单详情含 2 笔收款记录（可对账）" || no "K.13 账单详情" "HTTP $c payments=$NPAY"
+c=$(api POST /platform/invoices "$PT" "{\"tenantId\":$ID}"); cc=$(jget code)
+[[ "$c" == 400 && "$cc" == 400 ]] && ok "K.14 无有效套餐租户自动出账被拒（G 段已退订，需显式金额）" || no "K.14 出账保护" "HTTP $c $(body | head -c 160)"
+c=$(api POST /platform/invoices "$PT" "{\"tenantId\":$ID,\"amountCents\":0,\"note\":\"0 元手工账\"}"); cc=$(jget code)
+DID=$(jget data id); DNUM=$(jget data number)
+[[ "$cc" == 0 && "$(jget data amountCents)" == "0" ]] && ok "K.15 显式 0 元账单可出（未定价不阻断）" || no "K.15 0 元账单" "HTTP $c $(body | head -c 160)"
+api GET /billing/invoices "$BAT" >/dev/null
+[[ "$(jget code)" == 0 && "$(body | grep -c "$DNUM")" == "0" ]] && ok "K.16 草稿账单租户不可见" || no "K.16 草稿隔离" "$(body | head -c 160)"
+c=$(api POST "/platform/invoices/$DID/void" "$PT"); cc=$(jget code)
+[[ "$cc" == 0 && "$(jget data status)" == "void" ]] && ok "K.17 草稿作废" || no "K.17 作废草稿" "HTTP $c $(body | head -c 160)"
+c=$(api GET "/platform/tenants/$ID/meters" "$PT"); cc=$(jget code)
+[[ "$cc" == 0 && "$(jget data meters 0 quantity)" == "8" && "$(jget data month 0 used)" == "8" ]] \
+  && ok "K.18 原始计量明细+月聚合（对账源表）" || no "K.18 计量明细" "HTTP $c $(body | head -c 200)"
+c=$(api GET "/platform/invoices?tenantId=$ID2&status=paid" "$PT"); cc=$(jget code)
+[[ "$cc" == 0 && "$(jget data total)" == "1" && "$(jget data items 0 paidCents)" == "29900" ]] \
+  && ok "K.19 运营侧按租户+状态筛账单（paid 1 张，已收=应付）" || no "K.19 运营筛选" "HTTP $c $(body | head -c 200)"
+
 echo
 echo "== 通过 $pass / 失败 $fail"
 if (( fail == 0 )); then echo "P0 验收通过（docs/11 §11.11.1）"; else echo "存在失败项，见上面 [FAIL]"; fi

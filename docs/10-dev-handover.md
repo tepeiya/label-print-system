@@ -1,8 +1,8 @@
 # 10. 开发交接文档（面向接手的 AI / 开发者）
 
 > 本文档目标：**任何 AI 或开发者读完本文即可无缝接手继续开发**，不需要再翻历史对话。
-> 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）**。
-> 最后更新：2026-11-05（P0/P1 已落地；新增 **§10.17 入参校验底座** + **§10.18 P2 平台运营后台**；上一版对应 commit `c822386`）
+> 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）** → **§10.19 P3 计费闭环（动账单/配额/计量前必读）**。
+> 最后更新：2026-11-05（P0/P1/P2/P3 已落地；本轮新增 **§10.19 P3 计费闭环**；单测 142 条 / 验收 91 项）
 >
 > ⚠️ **2026-11-05 历史瘦身**：`.pnpm-store`（232 MB pnpm 包缓存，被 `95b4970` 误提交）已从
 > `feat/dev-base` 的**全部历史**中移除，`.git` 从 54 MB 降到 1.4 MB。
@@ -96,7 +96,7 @@ curl -s http://localhost:3200/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 label-print-system/
 ├── backend/
 │   ├── core/                     # 纯函数引擎（ZPL/TSPL/公式/校验位/PNG 编码）
-│   │   └── __tests__/            # 16 个单测（引擎层；P0 后 src 下另有 99 个，见 §10.15.6）
+│   │   └── __tests__/            # 16 个单测（引擎层；P0 后 src 下另有 126 个，见 §10.15.6）
 │   ├── printer/                  # PrinterProvider 抽象与实现
 │   ├── assets/tessdata/          # OCR 语言包（.gitignore，需下载）
 │   └── src/
@@ -793,7 +793,7 @@ SaaS P1 前端动态化（2026-11-04 新增，详见 §10.16）：
 | `backend/src/entities/tenant.entity.ts` | tenants 扩展列 + roles / role_permissions / user_roles.role_id / feature_flags / data_scopes / tenant_domains / external_mcp_servers |
 | `backend/scripts/saas_p0.sql` | P0 基础 DDL + 模块/套餐/权限字典/4 旧角色权限展开种子 |
 | `backend/scripts/saas_p0_roles.sql` | 生命周期列 + roles 两步迁移 + data_scopes + feature_flags + 序列复位（共 13 节） |
-| `backend/scripts/p0-acceptance.sh` | §11.11.1 可重跑验收脚本（62 条断言） |
+| `backend/scripts/p0-acceptance.sh` | §11.11.1 可重跑验收脚本（91 条断言：A–K 段，K=P3 计费） |
 
 ### 10.15.2 DDL 执行顺序（错了不报错，静默得到空订阅）
 
@@ -875,8 +875,8 @@ docs/03-database.sql → backend/scripts/seed.sql → backend/scripts/saas_p0.sq
 ### 10.15.6 测试与验收覆盖
 
 ```bash
-cd backend && npm test                       # 125 条（原 26 → P0 新增 89 → P1 新增 2 → 校验底座新增 8）
-T_CODE=p0a1 T2_CODE=p0a2 bash backend/scripts/p0-acceptance.sh   # 62 项断言，期望「通过 62 / 失败 0」
+cd backend && npm test                       # 142 条（原 26 → P0 +89 → P1 +2 → 校验 +8 → P2 +5 → P3 +12）
+T_CODE=p0a1 T2_CODE=p0a2 bash backend/scripts/p0-acceptance.sh   # 91 项断言，期望「通过 91 / 失败 0」（重跑换新 T_CODE/T2_CODE）
 ```
 
 - 单测分布（本轮新增）：`validate-ai-template` 23、`sql-executor` 14（含真实 PG 集成，PG 不可达自动 skip）、`saas-guards` 10、`menu.catalog` 12（P1 加了 AI 入口 + 菜单/路由一致性两条）、`data-scope` 7、`roles.guard` 7、`module-deps` 6、`permission-match` 8、`errors.filter` 4。
@@ -1106,6 +1106,68 @@ npx esbuild --format=esm --outfile=/dev/null web/js/api.js
 
 ### 10.18.5 P2 明确没做（接 P3/P6）
 
-- 计费/账单/发票（P3）；`/platform/v1` 独立前缀（仍挂在 /api/v1 下）；
+- ~~计费/账单/发票（P3）~~ → **计费/账单已由 §10.19 落地**（税务发票开具仍未做）；`/platform/v1` 独立前缀（仍挂在 /api/v1 下）；
 - 模拟登录 impersonate（§11.6.2 列了，风险高，单独排期）；
 - platform_users 的 CRUD UI（后台只有种子账号，加人直接 SQL）；refresh token 机制。
+
+---
+
+## 10.19 P3 计费闭环（2026-11-05 落地）
+
+> 对应 docs/11 §11.11 P3 行 + §11.7 计量规则 + D5（支付先手动登记）。
+> 范围：用量采集、配额软/硬上限（4033）、出账、收款登记、租户账单查询、运营端账单中心。
+> 明确没做的见 §10.19.5。DDL：`backend/scripts/saas_p3_billing.sql`（幂等，执行顺序写在文件头注释）。
+
+### 10.19.1 数据模型（5 张新表 + plans 加列）
+
+| 表 | 关键点 |
+| --- | --- |
+| `plans.price_cents` | 月费，**分**（BIGINT）。BASIC=0（未定价）、PRO=29900、ENTERPRISE=99900，改价走 `PUT /platform/plans/:code`（`UpsertPlanDto.priceCents`） |
+| `usage_meters` | 原始计量（对账的事实源）：tenant_id/meter/quantity NUMERIC(14,2)/module_code/user_id/meta/occurred_at |
+| `usage_daily` | 日聚合，PK(tenant_id,meter,day)。**配额检查只读这张**（§11.7：别让每次打印去扫原始表） |
+| `quotas` | PK(tenant_id,meter)：soft_limit（超过只告警）、hard_limit（超过拒绝 4033）、period month/day |
+| `invoices` | number `INV-<t>-<yymm>-<seq>` 唯一；amount_cents；status draft/issued/paid/void/overdue；**detail JSONB 出账快照**（套餐/行项/单价冻结，之后改价不影响已出账单） |
+| `payments` | D5：`provider='manual'` 为主（wechat/alipay/stripe/bank 是预留枚举）；累计收款 ≥ 应付自动转 paid |
+
+- **钱一律用分**，杜绝浮点；pg 的 numeric/bigint 读出来是字符串，服务层统一 `Number()` 后再进响应。
+- 权限点 `sys:billing:read`（users 模块），种子直接授予 admin/tenant_admin。
+- 偏差：docs/11 §11.5 把计费表写在 `platform.` schema，实际沿用 P0/P2 的 public（表名不与租户业务表冲突），不单独引 schema。
+
+### 10.19.2 计量写路径（两个真实计费事件）
+
+- 流程：写 `usage_meters` → **同请求内即时 upsert `usage_daily`**（`ON CONFLICT DO UPDATE quantity += EXCLUDED`）；另有每小时定时任务用原始表幂等重算「今天+昨天」兜底（无 @nestjs/schedule，沿用 P2 的 unref 定时器模式）。
+- `print_labels`：`print.service.createJob`，数量 = rows×copies（张），入队成功后记账；`ai_generate`：`ai-template.controller` generate=1、batch-generate=成功格数。
+- 容错口径「**宁可漏检不漏印**」：配额查询/计量写入自身故障 → warn 日志放行；只有 4033 向上抛。
+- 与老的 `AiQuotaService`（按日次数防跑 token 滥用）**并存不合并**：那个防滥用，这个管计费。
+- ⚠️ 单测只能 import `billing.calc.ts` 纯函数（checkQuota/invoiceNumber/maxSeqOf/monthPeriod/sumLineCents/isSettled）；任何 import 实体的测试文件在 tsx 下必炸（§10.15.6 老坑），12 条新单测全走纯函数。
+
+### 10.19.3 配额与新业务码 4033
+
+- `assertQuota`：hard 判定用 `used + qty > hard`（拦在事前，防「超限后空任务照发」）；soft 命中只回 `{warn:true}`，打印响应带 `quotaWarn`、AI 响应注入 `quotaWarn` 字段。
+- `QuotaExceededException` → **BizCode 4033**（HTTP 403），detail 带 `meter/used/limit/period/action:'upgrade'/suggestion`，前端按 4031 同款「升级引导」处理（business.errors.ts）。
+- 配额管理只开放平台身份：`PUT /platform/tenants/:id/quotas/:meter`（字段传 null=取消该侧限制；soft>hard → 400），`DELETE` 整条删除；租户 JWT 调用 → scope 403（验收 K.6）。
+
+### 10.19.4 出账 → 收款 → 租户对账
+
+- 运营侧接口（全在 PlatformAdminController，scope=platform）：
+  `POST/GET /platform/invoices`、`GET /platform/invoices/:id`、`POST :id/issue`（dueDays 默认 15）、`POST :id/void`（已付拒绝 400）、`POST :id/payments`（返回含 payments/balanceCents）；
+  配额/计量：`GET/PUT/DELETE tenants/:id/quotas[/:meter]`、`GET tenants/:id/meters`（月聚合+原始明细分页）。写操作全部落 platform_audit_logs（quota.set/remove、invoice.create/issue/void、payment.create）。
+- 自动出账：不给 items/amountCents → 按当前订阅套餐（active→trial）月费生成单行账单项；无有效套餐（如已退订）→ 400 要求显式金额；0 元账单允许（未定价不阻断）。
+- 逾期任务：启动 1min 后 + 每 24h，issued 且过 due_at → overdue。
+- 租户侧 `GET /billing/usage|usage/series|invoices|invoices/:id|quotas`（sys:billing:read）：**draft/void 对租户不可见**；详情含收款流水，「可出账、可对账」的落点。
+- `SubscriptionService.usage()` 从写死占位改为真实聚合（`printJobs/aiGenerations {used,limit}`，limit=hard 或 -1），前端订阅页零改动兼容；`GET /subscription` 的 plan 对象补 `priceCents`。
+- ⚠️ 坑：`GET /platform/plans` 命中的是 PlatformController 目录版（控制器注册顺序遮蔽 platform-admin 同名 GET），价格字段要在**目录版**（modules.service.listPlans）加，本轮已补 `priceCents`。
+
+### 10.19.5 P3 明确没做（接 P4+/V2）
+
+- 支付回调/自动扣款（D5 决议 V1 不做）；**退款无红字冲正流程**（临时方案：手工出一张负向说明账单项或另开小票，V2 再设计）。
+- 发票（税务发票开具）—— §11.11 P3 行里那一列没动，需接开票服务商，属商务基建。
+- 续费/付款提醒消息通道（站内信/邮件/飞书）：通知基建缺失，到期与逾期仍只有日志 + 看板。
+- 按量计费（usage 行项自动算钱出账）：V1 只有「套餐月费 + 手动行项」；`usage_meters` 数据已在，接量价随时能扩。
+- 账单 PDF/导出；多币种（currency 字段留了，只按 CNY 出账）。
+
+### 10.19.6 验证（全部实跑 2026-11-05）
+
+- `npx tsc` 0 error；`npm test` **142/0**（新增 billing.calc.test.ts 12 条）；
+- p0-acceptance.sh **91/0**：K.1–K.19 覆盖 设配额→打印带软告警→4033 硬拦→租户用量→订阅聚合真实值→越权写 403→自动出账→发单→部分收款→结清→已付拒作废→租户可见性→详情流水→退订租户出账保护→0 元账单→草稿隔离/作废→原始明细→运营筛选；
+- 前端：apps/platform 账单中心 + 租户配额抽屉 + 套餐价格编辑；apps/console `/billing` 页（菜单目录 /billing + 路由一致性断言 #12 绿）。

@@ -29,6 +29,8 @@ export class Plan {
   @Column({ length: 80 }) name: string;
   @Column({ length: 500, nullable: true }) description: string;
   @Column({ name: 'sort_order', default: 0 }) sortOrder: number;
+  // P3 计费：月费（分）。0 = 免费/未定价（saas_p3_billing.sql）
+  @Column({ name: 'price_cents', type: 'bigint', default: 0 }) priceCents: number;
   @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
 }
 

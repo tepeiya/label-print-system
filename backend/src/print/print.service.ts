@@ -1,5 +1,5 @@
 // 打印服务：编排模板+数据+流水号，入 BullMQ 队列（异步、不阻塞）
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Repository } from 'typeorm';
@@ -9,9 +9,12 @@ import { Template } from '../entities/template.entity';
 import { useTenant, useTenantId } from '../common/tenant.context';
 import { SerialModuleService } from '../serial/serial.service';
 import { AuditService } from '../audit/audit.module';
+import { UsageService } from '../billing/usage.service';
+import { QuotaExceededException } from '../common/business.errors';
 
 @Injectable()
 export class PrintService {
+  private logger = new Logger('PrintService');
   constructor(
     @InjectQueue('print') private queue: Queue,
     @InjectRepository(PrintJob) private jobs: Repository<PrintJob>,
@@ -20,6 +23,7 @@ export class PrintService {
     @InjectRepository(Printer) private printers: Repository<Printer>,
     private serial: SerialModuleService,
     private audit: AuditService,
+    private usage: UsageService,
   ) {}
 
   /** 任务列表（打印队列页） */
@@ -103,7 +107,7 @@ export class PrintService {
   }
 
   /** 创建批量打印任务：预分配流水号段 → 入队 → 立即返回 */
-  async createJob(dto: { templateId: number; printerId?: number; rows?: any[]; copies?: number; params?: any; templateContent?: any; serialMap?: Record<string, string[]> }) {
+  async createJob(dto: { templateId?: number; printerId?: number; rows?: any[]; copies?: number; params?: any; templateContent?: any; serialMap?: Record<string, string[]> }) {
     const tenantId = useTenantId();
     const tpl = dto.templateContent
       ? { id: dto.templateId ?? 0, content: dto.templateContent }
@@ -113,6 +117,15 @@ export class PrintService {
     const rows: any[] = Array.isArray(dto.rows) && dto.rows.length ? dto.rows : [{}];
     const copies = Math.max(1, Math.min(500, dto.copies ?? 1));
     const count = rows.length * copies;
+
+    // P3 计费：hard_limit 超限直接拒绝（4033 带升级引导）；配额查询故障不阻断打印（宁可漏检不漏印）
+    let quotaWarn = false;
+    try {
+      quotaWarn = (await this.usage.assertQuota(tenantId, 'print_labels', count)).warn;
+    } catch (e: any) {
+      if (e instanceof QuotaExceededException) throw e;
+      this.logger.warn(`print_labels 配额检查降级: ${e?.message}`);
+    }
 
     let printer: Printer | null = null;
     if (dto.printerId) {
@@ -146,7 +159,15 @@ export class PrintService {
       printerId: dto.printerId, params: { ...(dto.params ?? {}), copies },
     }, { jobId: `print-${job.id}`, removeOnComplete: 500, removeOnFail: 500 });
     await this.audit.write(tenantId, 'print.job.create', { jobId: job.id, templateId: dto.templateId, copies, rows: rows.length, printerId: dto.printerId }, undefined, 'print_job', job.id);
-    return { jobId: job.id, status: 'queued', total: count };
+    // P3 计费：按标签张数计量（rows×copies）。计量失败不影响已入队的任务（兜底重算会补聚合）
+    try {
+      await this.usage.record(tenantId, 'print_labels', count, {
+        moduleCode: 'print', userId, meta: { jobId: job.id, printerId: dto.printerId ?? null },
+      });
+    } catch (e: any) {
+      this.logger.warn(`print_labels 计量写入失败(job ${job.id}): ${e?.message}`);
+    }
+    return { jobId: job.id, status: 'queued', total: count, quotaWarn };
   }
 
   getJob(id: number) { return this.jobs.findOne({ where: { id, tenantId: useTenantId() } }); }

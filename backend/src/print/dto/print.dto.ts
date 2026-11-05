@@ -4,8 +4,11 @@ import { IsArray, IsIn, IsNumber, IsObject, IsOptional } from 'class-validator';
  * 打印 DTO。copies 的 1..500 夹取、printerId 存在性等业务规则仍在服务层。
  */
 export class CreatePrintJobDto {
+  // service 语义：传 templateContent 时 templateId 可省略（??: 0）；不传时按 id 查库。
+  // 校验层跟随这个语义，不能强制必填（历史「必填」会挡住直传模板内容的调用方）。
+  @IsOptional()
   @IsNumber({}, { message: 'templateId 必须是数字' })
-  templateId!: number;
+  templateId?: number;
 
   @IsOptional()
   @IsNumber()
