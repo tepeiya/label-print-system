@@ -831,7 +831,7 @@ Agent 调用 print.submit_job
 | **P3 计费闭环**（2026-11-05 落地，细节 docs/10 §10.19） | 用量采集 + 配额 + 账单 + 支付（先手动登记）+ 发票 | 可出账、可对账（实测：p0-acceptance.sh K 段 19 项；发票开具与自动扣款未做，见 §10.19.5） | 2–3 周 |
 | **P4 Agent / MCP**（2026-11-05 落地，细节 docs/10 §10.20） | agent 表 + `/agent/v1` + stdio MCP + 只读工具 | Claude Desktop 可查库存/齐套（实测：6 个业务只读工具 + 3 元工具 + apps/mcp-server stdio；写工具/审批流/HTTP 传输属 P5） | 4–5 天 |
 | **P5 Agent 增强**（2026-11-05 落地，细节 docs/10 §10.21） | 写工具 + 幂等 + 限流 + 审计 + 审批流 + Streamable HTTP | SaaS 客户可接入自有 Agent（实测：p0-acceptance.sh M 段 31 项 + 验收 146/0；写工具 5 个全部有执行器、Streamable HTTP 一 token 一会话；**审批的 console 前端页与 Prompts 库产品化未做**，见 §10.21.8） | 1.5–2 周 |
-| **P6 加固** | RLS、独立库租户、租户导出/删除、白标、Prompts 库 | 可对外规模化 | 1–2 周 |
+| **P6 加固**（🔶 首批 2026-11-05 落地，细节 docs/10 §10.22 / §10.23） | RLS、独立库租户、租户导出/删除、白标、Prompts 库 | **已落**：P6.1 RLS 兜底（角色 + 39 张表策略 + fail-closed GUC + 22 项冒烟）、P6.3 租户数据导出/硬删（D12 三道闸门 + 表清单从 pg_catalog 现取）、P5.5 审批 console 前端入口闭合；**未做**：P6.2 独立库租户（D2，仅 `registerDedicated()` 注册表就位）、P6.4 白标（D6）、P6.5 Prompts 库产品化、platform 前端保留期看板/导出页；**主链路尚未切到 `labelflow_app` 角色**（切换条件 docs/10 §10.22.4） | 1–2 周 |
 
 > P0+P1（约 1.5 周）即可跑通「按模块订阅 + 权限分级」的最小闭环；
 > P4（4–5 天）即可做出可演示的 Agent 能力。
@@ -850,7 +850,7 @@ Agent 调用 print.submit_job
       （后端裁剪逻辑见 `src/saas/menu.catalog.ts`；**前端已于 P1 接入**，
       `apps/console` 顶栏与路由守卫只读 `me.menus`，见 docs/10 §10.16）
 - [x] 现有 `admin/operator/sql/viewer` 映射后行为不变（回归测试 16 项 + 手工 8 项）
-      （实测：单测 180 条 + 验收脚本 146 项（A–M 段）；`sql` 登录后双码回显 `["sql","manager"]`）
+      （实测：单测 189 条 + 验收脚本 174 项（A–N 段）+ RLS 冒烟 22 项；`sql` 登录后双码回显 `["sql","manager"]`）
 
 ### 11.11.2 验收标准（P4）
 
@@ -1007,6 +1007,7 @@ SELECT COUNT(*) FROM user_roles WHERE role_id IS NULL;  -- 期望 0
 | 2026-11-05 | **P4 Agent/MCP 落地**（docs/10 §10.20）：agent_clients/agent_tokens/agent_approvals/external_mcp_servers 四表（§11.5.3 原样，后两张建表不接线）；`/agent/v1`（whoami/tools/tools/:tool/resources，AgentTokenGuard：sha256 存储 + scope/模块/配额三级检查）；`lfagent_` token 签发与租户侧 `/agents` 管理（scope ⊆ 创建者权限、默认只读）；stdio MCP server（apps/mcp-server，@modelcontextprotocol/sdk 低层 API，启动即从后端拉工具清单注册）；`agent_calls` 计量 + 4033 配额复用 P3 底座。偏差：①为满足 §11.11.2「无库存数据」验收，**新建库存最小读模型**（materials/warehouses/stock_batches/boms/bom_items，只读，无租户 REST/WMS 写路径）；②§11.7.2 模板权限点 `print:template:*` 按库内真实码 `template:read/write` 执行；③写工具（templates.create/update、inventory.adjust/transfer、print.submit_job）**只注册目录无执行器**（400 占位），approval 流、限流、Streamable HTTP、MCP resources/prompts 声明均留 P5；④approvals REST 端点为明确 400 占位 | §11.11 P4 排期；D7/D9/D10 决议如此 |
 | 2026-11-05 | 权限字典补 `bom:shortage:read`、`inventory:stock:transfer`、`alert:event:ack`；legacy `admin` 角色显式补授新码 | §11.7.2 工具矩阵需要而 P0 未种；admin 此前只种 4 个 sys 码靠 SUPER_ROLES 兜底，Agent scope 校验需要完整字典 |
 | 2026-11-05 | **P5 Agent 增强落地**（docs/10 §10.21）：5 个写/高危工具接执行器（templates.create/update、inventory.adjust/transfer、print.submit_job）+ 新增 `print.get_status`；`tool_idempotency` 表 + claim/finish/release 幂等（同键同参重放原结果、异参 409/4036）；`agent_approvals` 接线成完整审批流（pending→approved→consumed / rejected / expired，批准后 5 分钟一次性，args_hash 剔除 `approval_id` 后取指纹）；Agent 维度限流（Redis 固定窗口 + feature_flags `rollout.rpm`，Redis 故障退进程内）；`audit_logs.actor_type` 新列 + agent 调用结构化审计；租户侧 `/agents/approvals` 三件套 + 新权限码 `sys:agent:approve`；apps/mcp-server 增 **Streamable HTTP**（一 token 一会话）+ resources/prompts 声明。偏差：①`tool_idempotency` DDL 文档未给，自拟；②限流阈值复用 `feature_flags` 而非新表/环境变量；③`need_approval` 用 **HTTP 202 + 正常信封**承载（不是 4xx）；④写工具**强制** `idempotency_key`（§11.7.4 只建议）；⑤`print.estimate/wait_for_job/cancel_job`、`ai.*`、`alerts.*` 仍未注册；⑥审批只做后端 REST，console 前端「待确认」页留后续 | §11.11 P5 排期；D7/D8/D9 决议如此 |
+| 2026-11-05 | **P6 首批落地**（docs/10 §10.22 / §10.23）：`saas_p6_rls.sql` 建 `labelflow_app`（无 BYPASSRLS）/`labelflow_platform`（BYPASSRLS）两角色 + 39 张表 `tenant_isolation` 策略（`nullif(current_setting(...))` fail-closed，`bom_items` 走父表 EXISTS，DDL 内置覆盖度自检）；`withTenantScope()` 事务级 GUC + 连不上即降级并如实回报 `rlsActive=false`；租户数据导出（gzip 落 `tenant_backups kind=export`）与硬删（D12 三道闸门：confirm 逐字等于 code、90 天保留期、未退订需 force；删前自动 `purge-pre` 快照、逐表复查 `remaining`）；`apps/console` 补 Agent 客户端与「Agent 待确认」两页 + 菜单目录两条 + 审批列表补 `agentClientName`。偏差：①**RLS 目前只是第二道防线**，主链路仍以 owner 连库并默认绕过 RLS，未切换（条件 docs/10 §10.22.4）；②表清单必须走 `pg_catalog`——`information_schema` 按角色权限过滤，RLS 角色查不到 `bom_items` 外键会**静默漏一家子表**（已修，验收 N.8b 钉住）；③家生子只支持单列 FK，复合外键跳过并 warn；④删除路由必须 `@Res()` 不带 passthrough，否则 `ERR_HTTP_HEADERS_SENT` 直接崩进程；⑤`meta.permission` 仍是单串、不支持数组 OR | §11.11 P6 排期；D3/D12 决议如此 |
 | 2026-11-04 | `GET /subscription` 响应新增 `moduleDetails`（名称/图标/说明/`isCore`），原 `modules`（code 数组）保持不变 | 设计稿没定义该字段；只回 code 的话订阅页只能把英文码当模块名显示。加字段而非改形状，验收脚本 E/F 段断言不受影响 |
 | 2026-11-04 | 修 `DELETE /backups/:id`：后端 `remove()` 原来标的是 `@Post(':id')`，与 docs/10 §10.3 的约定和前端调用都不一致 | 前端「删除备份」一直 404；顺带补 `@RequirePermission('backup:write')`（原先只有 `@Roles('admin')`，缺 L1 权限点判定） |
 | 2026-11-04 | `web/`（零构建原生前端，§11.10 未覆盖）同步改为权限点优先 + 角色兜底，并按订阅模块裁剪主标签页；**`features`（D7 灰度）在该前端无处挂载**，未接入 | 现网仍有用户直接用 `web/`；它读同一个 `/auth/me`，不做裁剪就会出现「前端能点、后端 403」。`web/index.html` 的 AI 视图没有透视矫正按钮，`ai.vision` 开关没有可挂的 UI，未做猜测性映射 |

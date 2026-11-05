@@ -1,8 +1,9 @@
 # 10. 开发交接文档（面向接手的 AI / 开发者）
 
 > 本文档目标：**任何 AI 或开发者读完本文即可无缝接手继续开发**，不需要再翻历史对话。
-> 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）** → **§10.19 P3 计费闭环（动账单/配额/计量前必读）** → **§10.20 P4 Agent/MCP（动 /agent/v1、agent token、库存只读模型前必读）** → **§10.21 P5 Agent 写工具与审批流（动 Agent 写路径/限流/幂等/MCP HTTP 前必读）**。
-> 最后更新：2026-11-05（P0–P5 已落地；本轮新增 **§10.21 P5 Agent 增强**；单测 180 条 / 验收 146 项）
+> 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）** → **§10.19 P3 计费闭环（动账单/配额/计量前必读）** → **§10.20 P4 Agent/MCP（动 /agent/v1、agent token、库存只读模型前必读）** → **§10.21 P5 Agent 写工具与审批流（动 Agent 写路径/限流/幂等/MCP HTTP 前必读）** → **§10.22 P6.1 RLS 兜底（动数据库角色/连接、写任何原生 SQL 前必读）** → **§10.23 P6.3 租户数据导出与硬删 + Agent 前端入口（动 /platform/tenants/:id/export|purge、表清单口径前必读）**。
+> 最后更新：2026-11-05（P0–P5 已落地，**P6 首批（P6.1 RLS 兜底 + P6.3 导出/硬删 + P5.5 审批前端入口）已落地**；
+> 本轮新增 **§10.22 / §10.23**；单测 189 条 / 验收 174 项（A–N 段）/ RLS 冒烟 22 项）
 >
 > ⚠️ **2026-11-05 历史瘦身**：`.pnpm-store`（232 MB pnpm 包缓存，被 `95b4970` 误提交）已从
 > `feat/dev-base` 的**全部历史**中移除，`.git` 从 54 MB 降到 1.4 MB。
@@ -875,8 +876,15 @@ docs/03-database.sql → backend/scripts/seed.sql → backend/scripts/saas_p0.sq
 ### 10.15.6 测试与验收覆盖
 
 ```bash
-cd backend && npm test                       # 180 条（原 26 → P0 +89 → P1 +2 → 校验 +8 → P2 +5 → P3 +12 → P4 +18 → P5 +20）
-T_CODE=p0a1 T2_CODE=p0a2 bash backend/scripts/p0-acceptance.sh   # 146 项断言（A–M 段），期望「通过 146 / 失败 0」（重跑换新 T_CODE/T2_CODE）
+cd backend && npm test                       # 189 条（原 26 → P0 +89 → P1 +2 → 校验 +8 → P2 +5 → P3 +12 → P4 +18 → P5 +20 → P6 +9）
+DB_RLS_USER=labelflow_app T_CODE=p6s1 T2_CODE=p6s1pro bash backend/scripts/p0-acceptance.sh  # 174 项断言（A–N 段），期望「通过 174 / 失败 0」（重跑换新 T_CODE/T2_CODE）
+bash backend/scripts/p6-rls-smoke.sh         # 22 项：RLS 兜底专用冒烟（必须用 labelflow_app DSN 才有效，见 §10.22.3）
+
+# 前置 DDL（顺序敏感；saas_* 都幂等可重跑）：
+#   docs/03-database.sql → backend/scripts/seed.sql → saas_p0.sql → saas_p0_roles.sql
+#   → saas_p2_platform.sql → saas_p3_billing.sql → saas_p4_agent.sql → saas_p5_agent_tools.sql
+#   → saas_p6_rls.sql（角色 + 39 张表策略，缺它 N.1 直接判失败）
+#   → saas_p6_tenant_data.sql（放宽 tenant_backups.kind CHECK，缺它导出必 500 / 23514）
 ```
 
 - 单测分布（本轮新增）：`validate-ai-template` 23、`sql-executor` 14（含真实 PG 集成，PG 不可达自动 skip）、`saas-guards` 10、`menu.catalog` 12（P1 加了 AI 入口 + 菜单/路由一致性两条）、`data-scope` 7、`roles.guard` 7、`module-deps` 6、`permission-match` 8、`errors.filter` 4。
@@ -1325,11 +1333,13 @@ npx esbuild --format=esm --outfile=/dev/null web/js/api.js
 
 ### 10.21.8 P5 明确没做（别当成已完成）
 
-- **审批的前端页面**：后端 `/agents/approvals` 三件套已就绪，`apps/console` 还没有「Agent 待确认」列表/确认按钮 —— 目前员工只能靠 curl 或 API 直接确认。
+- ~~**审批的前端页面**：后端 `/agents/approvals` 三件套已就绪，`apps/console` 还没有「Agent 待确认」列表/确认按钮~~
+  → **2026-11-05 P5.5 已闭合**，见 §10.23.6（菜单目录 + `Agents.vue` / `AgentApprovals.vue` / `ArgsPreview.vue`）。
 - **未注册的工具**：§11.7.4 提到的 `print.estimate` / `print.wait_for_job` / `print.cancel_job`、`ai.*`、`alerts.*` **目录里根本没有条目**（调用 → 404「未知工具」，不是 400 占位）—— alert 域无数据表、ai 域要图片入参与计费联动，都留给后续阶段。dispatch 第 3 步的 `implemented` 分支目前不会命中，是留给以后「先注册后实现」的护栏。
 - 审批过期靠**读时判定**，没有定时任务批量回写 `expired`；`tool_idempotency` 没有 TTL 清理任务（长跑会一直攒行）。
 - 限流只有 **Agent 维度**（tenant+client+分钟），无 per-tool / per-token 细分，也没有下发 `X-RateLimit-*` 响应头（detail 里有 `retry_after`）。
-- 幂等只保证「同 key 同参数最多一次副作用」，**不保证跨进程崩溃窗口的 exactly-once**（占坑行残留需同键重试或人工清理）；护栏 7 的字段脱敏 / RLS 数据域仍在 P6。
+- 幂等只保证「同 key 同参数最多一次副作用」，**不保证跨进程崩溃窗口的 exactly-once**（占坑行残留需同键重试或人工清理）；
+  护栏 7 的**字段脱敏仍未做**；RLS 数据域 → P6.1 兜底已就位（§10.22），但**主链路还没切到 `labelflow_app` 角色**，切换条件见 §10.22.4。
 - D10 `external_mcp_servers`（调第三方 MCP）继续不实现。
 
 ### 10.21.9 验证（全部实跑 2026-11-05）
@@ -1340,3 +1350,183 @@ npx esbuild --format=esm --outfile=/dev/null web/js/api.js
   缺幂等键 400（库存 60 未动）→ dry_run 预演 200 零副作用 → 无 approval **202** + 单 pending + 库存 60 未动 → 未确认重试 403/4034 → 租户 pending 列表 + viewer 403/4032 → 确认 approved（5 分钟窗口）→ 重试真实出库 **60→50** + 单置 consumed → 复用旧单 403/4034 → 批准后偷改 delta=-999 **403/4034**（库存仍 50）→ 驳回 + 重试被拒 → 模板清洗（未知元素丢弃、落库 1 元素）→ 同键重放（模板仍 1 张）→ 同键换参 409/4036 → 脏 content 400 → update 到 v2 → 调拨总量守恒 320 / 目标仓批次 2 → D7 关闭 403/4035、开启 + 审批出任务（2 张、`created_by`=Agent 归属人）→ `print.get_status` success 2/2 → rpm=1 首呼 200 后 5 呼全 429/4037（`retry_after=33s`、Redis key `lf:agent:rl:<租户>:<client>:<桶>` 实存）→ 计量 26→27→27（放行才计）→ 解除阈值后恢复放行 → `actor_type='agent'` 审计 42 条 / **14 种状态** / `on_behalf_of` 全非空 → Agent 自查 5 张审批单。
 - 库里最终留痕（租户 114）：`agent_approvals` = consumed 3 / approved 1 / rejected 1，`tool_idempotency` 6 行，`agent_calls` 本月 28，M-BOX-GIFT 上海仓 50。
 - ⚠️ 重跑注意：M 段每次都要**新租户码**（A.1 唯一约束）；限流项刻意新建独立 client（桶键含 clientId）才拿得到干净的一分钟窗口；`agent.print.submit` / `agent.rate_limit` 两个 flag 在 M 段结尾被复原（D7 回 false、rollout 清空）。
+
+## 10.22 P6.1 RLS 兜底（2026-11-05 落地）
+
+### 10.22.1 先说边界：这条防线今天还**没**套在主链路上
+
+多租户隔离目前是**应用层**的：`where tenant_id = ?` + 订阅门禁（`ModuleGuard`）+ 权限点（`PermissionGuard`）。
+RLS 是**第二道防线**——防的是「某人写 SQL 忘了加 where」。它今天只对 `labelflow_app` 角色生效，原因：
+
+- PostgreSQL 里 **owner 与 superuser 默认绕过 RLS**（除非 `ALTER TABLE ... FORCE ROW LEVEL SECURITY`），
+  而 dev/主链路用的 `DB_USER=labelflow` 既是库 owner 又是超级用户 → 给它建策略等于没建。
+- 所以 §10.22.2 的策略一律 `TO labelflow_app`（精确绑角色），`p6-rls-smoke.sh` 也**必须用该角色的 DSN 连库**才有意义。
+- 结论与承诺：**不要在文档或 PR 里写「已启用 RLS 隔离」**。写的是「RLS 兜底已就位，切换条件是 X」（X 见 §10.22.4）。
+
+### 10.22.2 DDL：`backend/scripts/saas_p6_rls.sql`（可重复执行，已应用到沙盒库）
+
+- **两个角色**：`labelflow_app`（`NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION`，租户业务连接）、
+  `labelflow_platform`（`BYPASSRLS`，平台跨租户运维/统计连接）。口令与角色同名，仅 dev 用。
+- **授权**：所有带 `tenant_id` 的表 **+ `bom_items`**（家生子，见下）给两角色 CRUD；
+  元数据 `tenants / modules / plans / plan_modules / permissions / role_permissions` 两角色**只有 SELECT**；
+  `platform_users / platform_audit_logs` **只给** `labelflow_platform`（`labelflow_app` 连表都读不到，冒烟 N.19 实测）。
+  授权循环用 `to_regclass()` 判存，**不要**用 `::regclass`——表不存在时后者直接抛错。
+- **策略**：`AS PERMISSIVE FOR ALL TO labelflow_app` +
+  `USING / WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::bigint)`。
+  `nullif(...,'')` 是 **fail-closed** 的写法：没设 GUC → `current_setting` 返回空串 → `::bigint` 得 NULL → 等式恒假 → **0 行**，
+  而不是「条件被跳过、退回全表」。
+- **`bom_items` 没有 `tenant_id`**，靠父表钉范围：`EXISTS (SELECT 1 FROM boms b WHERE b.id = bom_items.bom_id AND b.tenant_id = <GUC>)`。
+  子表策略会递归校验父表策略，所以 join 也拿不到别家的行（冒烟 N.12）。
+- **覆盖度自检写进 DDL**：脚本末尾 DO 块扫「有 `tenant_id` 却没 `tenant_isolation` 策略」的表，命中就 `RAISE EXCEPTION`。
+  以后加新表忘了配策略，**建库阶段就炸**，而不是留一个静默的越权口子。当前 39 = 38 张带 `tenant_id` 的表 + `bom_items`。
+
+### 10.22.3 冒烟：`backend/scripts/p6-rls-smoke.sh`（22 项）
+
+用 `labelflow_app` / `labelflow_platform` 的 DSN 直连（不是 owner），断言：覆盖度与 `relrowsecurity`、角色属性、
+不带 GUC 读不到任何行、带 GUC 行数=owner 视角、漏写 `tenant_id` 条件仍只见本家、JOIN 不跨家、
+`bom_items` 父表策略、`WITH CHECK` 拒插别家 `tenant_id`、拒插 NULL `tenant_id`、合法插入→自查→自删、
+`platform_users` 无授权、`tenants` 只读、无 DDL 权限、平台角色跨租户可见全量。
+**2026-11-05 实跑：22 通过 / 0 失败 / 0 跳过。**
+
+- 唯一写入是一条 `materials` 探针行（`code = RLS-SMOKE-<时间戳>`），跑完即删，不污染别的验收。
+- 靶租户挑选：优先「既有模板、又有库存批次」的租户，否则 N.10（本租户批次可见性）会因数据稀疏 SKIP
+  ——默认租户 1 有 28 张模板但 0 个批次，就会踩到这个 SKIP。
+- helper 命名口径：`own()` owner 视角、`appq()` 带 GUC 只读、`appw()` 带 GUC **保留错误原文**（断言「被拒绝」类必须用它，
+  用不带 GUC 的连接测「插入被 WITH CHECK 拒绝」是假命题——它会被 fail-closed 先拦掉，报的是另一个错）。
+
+### 10.22.4 代码接入点与「什么时候真的切」
+
+`backend/src/common/tenant-data-source.manager.ts`：
+
+- `withTenantScope(tenantId, fn)` → `{ result, rlsActive }`。**固定 QueryRunner + `startTransaction`**，
+  事务里 `select set_config('app.tenant_id', $1, true)`——第三参必须 `true`（**事务级** GUC）；
+  连接池场景下 session 级 `set_local=false` 会把 GUC 留给下一个借到同一物理连接的请求，等于串租户。
+- RLS DataSource **懒建**（`entities: []`，只跑原生 query，池 `DB_RLS_POOL` 默认 5）。`tenantId` 为 0/空直接抛，不给「GUC 没设上但代码以为设上了」的机会。
+- 连不上 RLS 角色 → **warn 一次**并降级为主库事务，`rlsActive=false` 一路带到响应体和验收断言里；
+  宁可明说「这次只有应用层隔离」，也不假装已隔离。`get rlsEnabled()` 的判据就是 `!!process.env.DB_RLS_USER`。
+- `registerDedicated(key, options)` / `unregisterDedicated` / `dedicatedKeys()`（D2 独立库租户的注册表已就位，
+  `get ctx.data` 未注册时抛 `ServiceUnavailableException`，不会静默回落到共享库）——**P6.2 尚未产品化**，见 §10.23.7。
+
+**真正切主链路需要同时满足**（缺一别切）：① 请求级 ALS/中间件里为每个租户作用域打事务级 GUC（40+ 处原生 `query()` 要逐个核）；
+② DDL/迁移走独立 owner 通道（`synchronize` 与 `saas_p0*.sql` 不能用 `labelflow_app`）；
+③ 跨租户运营查询全部改走 `labelflow_platform`。当前只做了「谁需要强隔离谁先用」：租户导出与硬删（§10.23）。
+
+**带 RLS 角色的启动命令**（少 `DB_RLS_USER` 就是降级路径，`rlsActive` 会返回 false）：
+
+```bash
+cd backend && setsid env PORT=3200 DB_HOST=127.0.0.1 DB_PORT=5433 \
+  DB_USER=labelflow DB_PASS=labelflow DB_NAME=labelflow \
+  DB_RLS_USER=labelflow_app DB_RLS_PASSWORD=labelflow_app \
+  REDIS_PORT=6380 JWT_SECRET=devsecret-devsecret-devsecret-devsecret-devsecret \
+  SQL_SECRET_KEY=<60hex> node -r reflect-metadata dist/src/main.js </dev/null >/tmp/api.log 2>&1 &
+```
+
+## 10.23 P6.3 租户数据导出与硬删（D12）+ P5.5 审批前端入口（2026-11-05 落地）
+
+### 10.23.1 五条平台路由（`@Controller('platform')` + `PlatformJwtGuard`，scope=platform）
+
+| 路由 | 作用 |
+| --- | --- |
+| `GET platform/tenants/retention` | D12 保留期看板：已退订租户 `daysLeft` / `due` / `hardDeleteAt` / `warn`（进入 7 天内提醒） |
+| `POST platform/tenants/:id/export` | 全量导出 → gzip JSON 落 `tenant_backups(kind='export')`，返回 `{backupId,sizeBytes,tableCount,rowCount,truncated,rlsActive}` |
+| `GET platform/tenants/:id/exports` | 该租户的导出件 + 租户自己手工/定时备份的清单 |
+| `GET platform/tenants/:id/exports/:exportId/download` | 下载 gzip 原文件（**必须 `@Res()` 不带 passthrough**，见 §10.23.4） |
+| `POST platform/tenants/:id/purge` | 硬删该租户全部业务数据（不可逆），闸门见 §10.23.5 |
+
+实现：`tenant-data.service.ts`（IO）+ `tenant-data.calc.ts`（纯函数，单测覆盖）。
+新增前置 DDL：**必须先跑 `backend/scripts/saas_p6_tenant_data.sql`**，否则导出直接 500（`tenant_backups_kind_check` 23514）——
+`kind` 白名单从 `manual/scheduled` 放宽为 `manual/scheduled/export/purge-pre`，并补 `ix_tenant_backups_tid_kind`。
+
+### 10.23.2 表清单**不再手写**，而且**不能用 `information_schema`**（本轮最贵的一条）
+
+`plan()` 取的是结构元数据，进程内缓存一次，口径：
+① 所有带 `tenant_id` 的 public 表；② 没有 `tenant_id`、但有**单列外键**指向「带 `tenant_id` 的表」的子表（家生子），
+靠 `join parent on parent.id = child.fk where parent.tenant_id = $1` 钉范围。当前库里家生子只有 `bom_items`，
+真实清单 = **38 张带 `tenant_id` + 1 张家生子（+ `tenants` 本身）= 导出包 40 张表**。
+
+两个已被实测打过的点：
+
+- **`information_schema` 系列视图按「当前角色的权限」过滤**。`withTenantScope` 用 `labelflow_app` 连库时，
+  `information_schema.table_constraints / key_column_usage / constraint_column_usage` 对 `bom_items` 的外键**返回 0 行**
+  （owner 连接返回 2 行）→ 家生子被**静默漏掉**：导出少一张表、硬删留下孤儿行且不报错。
+  第一版就是这么写的，是验收 N.8b 加了「导出包必须含 `bom_items` 那条真实行」的断言才暴露出来
+  （靶租户原来没有 BOM 数据，所以此前一路绿灯）。改成 `pg_catalog`（`pg_class`/`pg_attribute`/`pg_constraint`）后，
+  只要对该表有任意权限就完整可见。结构元数据本就该走平台侧主连接，不该带 `app.tenant_id` GUC，也已一并改掉。
+- **`BackupService` 那份手写 16 张表**的清单，SaaS/P3/P4/P5 的新表一个都没进去——老备份件其实一直在漏数据，
+  只是没人核对过。新代码不再走这条路，加表不用改代码。
+
+副作用（是想要的）：如果某张表忘了授权给运行角色，数据读取会**直接 permission denied 炸出来**，而不是被静默跳过。
+复合外键（多列 FK）的家生子目前**跳过并 warn**，只支持单列 FK——以后出现孙表（A→B→`tenant_id`）需要扩 `plan()`。
+
+### 10.23.3 导出
+
+- 逐表 `select * ... limit EXPORT_ROW_CAP + 1`（`EXPORT_ROW_CAP = 50_000`），超了截断并把表名记进 `truncated[]`，**不静默截断**。
+- 落库前 `zlib.gzipSync`，`tenant_backups.data` 存 gzip `bytea`；审计 `platform.tenant.export`（带 `rlsActive`、行数、大小）。
+- `exportTenantInternal()` 给硬删复用（同一份取数逻辑，保证「快照」和「导出件」内容口径一致）。
+
+### 10.23.4 踩过的坑：下载路由把**进程**打挂了
+
+`ResponseInterceptor` 会把返回值包成信封**再发一次**。二进制下载若用 `@Res({ passthrough: true })` 自己 `res.send(buffer)`，
+Nest 随后仍会写 JSON → `ERR_HTTP_HEADERS_SENT: Cannot set headers after they are sent`，
+而且它不是 500，是**未捕获异常直接崩进程**。正确写法：`@Res() res: Response`（**不带** passthrough），
+Nest 就不接管响应了——代价是这条路不再走拦截器，`Content-Type` / `Content-Disposition` 要自己设。
+`Buffer` 传参还有 TS2769 重载坑，按 `Buffer.isBuffer` / `instanceof Uint8Array` / base64 三分支窄化。
+
+### 10.23.5 硬删的三道闸门（`assertPurgeAllowed`）
+
+1. **`confirm` 必须逐字等于租户 `code`**（不是 id，防止对着列表页手滑点错行）。
+2. **D12 保留期**：`hardDeleteAt = canceled_at + RETENTION_DAYS(90)`，未到 `due` 一律 400，除非 `force=true`。
+3. **未退订租户必须显式 `force=true`**（`canceled_at is null` 时 `due` 永假）——给运营留逃生口，但必须是「明知未退订还强删」。
+
+删的动作本身：
+
+- **同一个事务里**先落 `purge-pre` 快照（复用 §10.23.2 的取数），再逐表删；事务保证「快照」与「删」不半途中断。
+- `deleteOrder()` 拓扑方向 = **子表先删**（Kahn，入度记「还有多少张表必须先于它删」）。
+  ⚠️ 这里最初写反成父表先删，直接撞外键；单测 `先删子表再删父表，顺序确定` 就是为了钉住方向。
+  有环时保留原序并把表名单列进 `cyclic[]` 回报，不静默丢表。
+- `NEVER_TOUCHED`：`tenants / modules / plans / plan_modules / permissions / role_permissions / platform_*` 永远不碰；
+  `KEEP_ON_PURGE = ['tenant_backups']` —— **快照表本身不被删**，删完还留着证据（验收 N.18 断言靶租户恰好 2 条：export + purge-pre）。
+- 每张表删完**复查 `remaining`**，非空就整体回滚（`ON DELETE CASCADE` 帮不上家生子那种没有 FK 到 tenants 的情况）。
+- 审计 `platform.tenant.purge`（逐表明细 + `rlsActive`）。
+
+### 10.23.6 P5.5：把 Agent 审批接进产品（上一版 §10.21.8 的第一条已闭合）
+
+- `backend/src/saas/menu.catalog.ts` 新增「Agent 接入」分组两条：`/agents`（`sys:agent:manage`）、`/agent-approvals`（`sys:agent:approve`）。
+  **菜单目录是后端下发的**，光加前端路由不算「可达」——这条以前漏过两次。
+- `apps/console` 新增 `views/Agents.vue`（客户端 + token 签发/吊销）、`views/AgentApprovals.vue`（待确认列表 + 确认/驳回）、
+  `components/ArgsPreview.vue`（递归渲染 `compactPreview` 的三种折叠形态：`__array`/`sample`、`__json`/`keys`、`…（共 N 字符）`，深度封顶 8）。
+  `src/api/index.ts` 补 Agent/Token/Approval 封装与类型，`src/router/index.ts` 补两条路由（`meta.permission` 对齐后端权限点）。
+  `npm run build` exit 0、`npm run lint` 0 error（复核过）。
+- `backend/src/agent/approval.service.ts` 的 `listForTenant` 批量补 `agentClientName`（一条 `in (...)` 拿名字，不 N+1）。
+  以前这列恒空，前端「谁要做什么」等于瞎判。验收 N.22 断言「列表里每条都带非空 agentClientName」。
+- 已知限制（**没改**，记在这）：`meta.permission` 只支持单个权限串，不支持数组 OR。
+  当前角色组合不会误锁（`tenant_admin` 同时有 `sys:agent:manage` 与 `sys:agent:approve`），
+  但若以后给「只批不看」的角色配路由，需要先把守卫改成支持多权限任一命中。
+
+### 10.23.7 验证（全部实跑 2026-11-05）
+
+- `npm test` **189/0**（180 → +9：`tenant-data.calc.test.ts`，含保留期边界、三道闸门顺序、`deleteOrder` 方向与环、截断、表名白名单）。
+- `npx tsc --noEmit` / `npx tsc -p tsconfig.json` **0 error**；`npm run lint` **0 error / 11 warning**（全是 P0~P3 存量）。
+- `bash backend/scripts/p6-rls-smoke.sh` → **22 / 0 / 0**。
+- `DB_RLS_USER=labelflow_app T_CODE=p6s1..p6s2 bash backend/scripts/p0-acceptance.sh` → **通过 174 / 失败 0**，连跑 2 轮（原 146 → N 段 +28）。
+  N 段实测：RLS 覆盖 39 张表 → kind CHECK 已放宽 → 建靶租户写模板 + **造家生子数据（boms/bom_items）** →
+  导出 `rlsActive=true` / **40 张表 / 27 行** → 落 `kind=export` → 下载解包后 **包内只有靶租户、含刚写的模板、含那条 `bom_items`、0 行别家** →
+  平台审计 → 确认串不对 400 → 未退订无 force 400 → 刚退订仍在保留期 400 → `canceled_at` 推 91 天后看板 `due=true` →
+  confirm 即硬删（明细 38 张表 / 27 行、`remaining=[]`、靶租户 `templates+users` 清零、
+  **按 id 复查那条 `bom_items` 已不存在**、`boms+materials` 清零）→
+  **旁证租户（M 段 PRO 租户）模板数删前删后一致** → 自动落 `purge-pre` 且快照表不被删（靶租户恰好 2 条：export + purge-pre）→
+  平台审计 → 未退订 + force 放行 → 菜单两条 → 审批 5 条全带 `agentClientName`。靶租户与快照在段尾自清理。
+- **降级路径单独实测**：另起一个**不带** `DB_RLS_USER` 的实例（:3210）跑导出 → `rlsActive=false` + 一次性 WARN，
+  导出仍成功。也就是说「没配 RLS 角色」时功能可用、但不假装隔离。
+  ⚠️ 这条实测还顺手暴露了 §10.23.2 的 bug：owner 连接下 `tableCount=40`、RLS 连接下只有 39，差的正是家生子。
+- ⚠️ 重跑注意：N 段的 `ps "insert into materials(...)"` 用的是 owner 连接（`$PSQL`，`labelflow`），
+  不依赖 `labelflow_app` 的写权限；靶租户 code 固定是 `${T_CODE}p6` / `${T_CODE}p7`，换 `T_CODE` 就自动不撞唯一约束。
+
+### 10.23.8 P6 明确没做（别当成已完成）
+
+- **P6.4 白标（D6）**：`tenant_domains` + `branding` 表、域名解析与主题注入，一行没动。
+- **P6.2 独立库租户（D2）**：只有 `registerDedicated()` 注册表 + 未注册即 503 的兜底；
+  缺 `tenants.data_source_key` DDL、缺按租户开通独立库的编排、缺迁移/备份的独立库版本。
+- **P6.5 Prompts 库产品化**：MCP 侧 3 个开箱 prompt 已有（§10.21.7），租户侧「Prompt 库」CRUD/编辑/下发没有。
+- **platform 前端**：保留期看板、导出按钮、下载链接、purge 二次确认都**只有 API**，`apps/platform` 没有对应页面。
+- 家生子目前只处理「单层 FK 指向带 `tenant_id` 的表」；若以后出现孙表（A→B→`tenant_id`）需要扩 `plan()` 的递归。
