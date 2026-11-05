@@ -41,6 +41,11 @@ export class ModulesService {
     this.cache.delete(tenantId);
   }
 
+  /** 套餐内容变化影响所有租户（plan 展开结果变了），P2 套餐配置保存时用 */
+  invalidateAll() {
+    this.cache.clear();
+  }
+
   /** 列出租户已开通模块的详细信息（含图标、是否 core） */
   async listTenantModules(tenantId: number) {
     const codes = await this.listTenantActive(tenantId);

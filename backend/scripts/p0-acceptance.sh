@@ -61,13 +61,18 @@ code=$(api POST /auth/login '' "{\"username\":\"admin\",\"password\":\"admin123\
 check "0.1 平台 admin 登录" "$code" "201"
 AT=$(body | python3 -c 'import sys,json;print(json.load(sys.stdin).get("data",{}).get("accessToken",""))' 2>/dev/null)
 if [[ -z "$AT" ]]; then echo "拿不到平台 token，中止"; body | head -c 300; exit 1; fi
+# P2：运营接口改认 platform_users 的独立身份（docs/11 §11.6.2），AT 只剩目录查询还能用
+api POST /platform/auth/login '' '{"username":"platform","password":"platform#2026"}' >/dev/null
+PT=$(body | python3 -c 'import sys,json;print(json.load(sys.stdin).get("data",{}).get("accessToken",""))' 2>/dev/null)
+if [[ -z "$PT" ]]; then no "0.2 平台运营登录 /platform/auth/login" "$(body | head -c 200)";
+else ok "0.2 平台运营登录（scope=platform，种子账号 platform）"; fi
 
 # ------------------------------------------------- A. 开通租户（D4 单事务）
-api POST /platform/tenants "$AT" "{\"code\":\"$T_CODE\",\"name\":\"P0 验收 BASIC\",\"planCode\":\"BASIC\",\"adminUsername\":\"${T_CODE}_admin\",\"adminPassword\":\"$T_PASS\"}" >/dev/null
+api POST /platform/tenants "$PT" "{\"code\":\"$T_CODE\",\"name\":\"P0 验收 BASIC\",\"planCode\":\"BASIC\",\"adminUsername\":\"${T_CODE}_admin\",\"adminPassword\":\"$T_PASS\"}" >/dev/null
 ID=$(jget data tenantId)
 if [[ -n "$ID" ]]; then ok "A.1 POST /platform/tenants 开通成功（tenant_id=$ID / 模块 $(jget data modules)）"; else
   no "A.1 开通 BASIC 租户" "$(body | head -c 300)"; echo "重跑请换 T_CODE，或手工清理 tenants.code='$T_CODE'"; exit 1; fi
-api POST /platform/tenants "$AT" "{\"code\":\"$T2_CODE\",\"name\":\"P0 验收 PRO\",\"planCode\":\"PRO\",\"seats\":20,\"adminUsername\":\"${T2_CODE}_admin\",\"adminPassword\":\"$T_PASS\"}" >/dev/null
+api POST /platform/tenants "$PT" "{\"code\":\"$T2_CODE\",\"name\":\"P0 验收 PRO\",\"planCode\":\"PRO\",\"seats\":20,\"adminUsername\":\"${T2_CODE}_admin\",\"adminPassword\":\"$T_PASS\"}" >/dev/null
 ID2=$(jget data tenantId)
 if [[ -n "$ID2" ]]; then ok "A.2 开通 PRO 租户成功（tenant_id=$ID2）"; else no "A.2 开通 PRO 租户" "$(body | head -c 200)"; fi
 
@@ -139,26 +144,26 @@ MENUS=$(jget data menus)
 [[ "$MENUS" == *print-jobs* && "$MENUS" != *designer* && "$MENUS" == *subscription* ]] && ok "E.8 viewer 菜单已裁剪（无设计器）" || no "E.8 viewer 菜单" "$MENUS"
 
 # ----------------------------------------- D1 加购 / 依赖补齐 / 停用保护
-api POST "/platform/tenants/$ID/modules" "$AT" '{"moduleCode":"bom"}' >/dev/null
+api POST "/platform/tenants/$ID/modules" "$PT" '{"moduleCode":"bom"}' >/dev/null
 ADDED=$(ps "select string_agg(module_code,',' order by module_code) from tenant_modules where tenant_id=$ID and status in ('active','trial')")
 case "$ADDED" in *bom*)       ok "F.1 加购 bom 成功（$ADDED）";;              *) no "F.1 加购 bom" "$(body | head -c 200)";; esac
 case "$ADDED" in *inventory*) ok "F.2 依赖自动补齐 inventory";;               *) no "F.2 依赖补齐" "$ADDED";; esac
 case "$ADDED" in *masterdata*) ok "F.3 二级依赖补齐 masterdata";;             *) no "F.3 二级依赖" "$ADDED";; esac
 check "F.4 tenant_modules.source='addon'（D1）" "$(ps "select source from tenant_modules where tenant_id=$ID and module_code='bom'")" "addon"
-c=$(api DELETE "/platform/tenants/$ID/modules/inventory" "$AT")
+c=$(api DELETE "/platform/tenants/$ID/modules/inventory" "$PT")
 [[ "$c" == 4* ]] && ok "F.5 停用被依赖的 inventory 被拒（HTTP $c / $(jget code)）" || no "F.5 停用依赖保护" "HTTP $c $(body | head -c 200)"
-api DELETE "/platform/tenants/$ID/modules/bom" "$AT" >/dev/null
-check "F.6 先停 bom 再停 inventory 就放行" "$(api DELETE "/platform/tenants/$ID/modules/inventory" "$AT")" "200"
+api DELETE "/platform/tenants/$ID/modules/bom" "$PT" >/dev/null
+check "F.6 先停 bom 再停 inventory 就放行" "$(api DELETE "/platform/tenants/$ID/modules/inventory" "$PT")" "200"
 
 # ------------------------------------------------ D7 灰度开关 / D12 退订
-api PUT "/platform/tenants/$ID/flags" "$AT" '{"key":"agent.print.submit","enabled":true}' >/dev/null
-c=$(api GET "/platform/tenants/$ID/flags" "$AT"); check "G.1 开关置为 true" "$c/$(jget data agent.print.submit)" "200/True"
+api PUT "/platform/tenants/$ID/flags" "$PT" '{"key":"agent.print.submit","enabled":true}' >/dev/null
+c=$(api GET "/platform/tenants/$ID/flags" "$PT"); check "G.1 开关置为 true" "$c/$(jget data agent.print.submit)" "200/True"
 api GET /auth/me "$BAT" >/dev/null
 check "G.2 /auth/me.features 反映新值" "$(jget data features agent.print.submit)" "True"
-api POST "/platform/tenants/$ID/cancel" "$AT" >/dev/null
+api POST "/platform/tenants/$ID/cancel" "$PT" >/dev/null
 check "G.4 tenants.canceled_at 已写入" "$(ps "select (canceled_at is not null)::int from tenants where id=$ID")" "1"
 grep -q 'hardDeleteAfter' "$TMP" && ok "G.5 退订响应给出 90 天硬删时间（$(jget data hardDeleteAfter)）" || no "G.5 hardDeleteAfter" "$(body | head -c 200)"
-check "G.6 重复退订幂等" "$(api POST "/platform/tenants/$ID/cancel" "$AT")" "201"
+check "G.6 重复退订幂等" "$(api POST "/platform/tenants/$ID/cancel" "$PT")" "201"
 
 # ------------------------------------------- H. 旧角色回归（§11.12.1）
 # 干净库里只有 admin/operator，sql / viewer 账号由脚本按旧角色补建（密码同 admin123）
@@ -209,10 +214,27 @@ c=$(api POST /auth/login '' '{"username":"admin"}'); cc=$(jget code)
 [[ "$cc" == 400 && "$(jget message)" == *"参数校验失败"* ]] \
   && ok "I.2 登录缺 password → 400" \
   || no "I.2 登录缺 password" "HTTP $c code=$cc $(body | head -c 160)"
-c=$(api POST /platform/tenants "$AT" '{"name":"缺管理员的租户","code":"p0val1"}'); cc=$(jget code)
+c=$(api POST /platform/tenants "$PT" '{"name":"缺管理员的租户","code":"p0val1"}'); cc=$(jget code)
 [[ "$cc" == 400 && "$(jget message)" == *"参数校验失败"* ]] \
   && ok "I.3 开通租户缺 adminUsername → 400" \
   || no "I.3 开通租户缺 adminUsername" "HTTP $c code=$cc $(body | head -c 160)"
+
+
+# ---------------------------------------------------------------------------
+# J. P2 平台身份与看板（docs/11 §11.6.2 / docs/10 §10.18）
+# ---------------------------------------------------------------------------
+c=$(api POST /platform/tenants "$AT" '{}'); cc=$(jget code)
+check "J.1 租户 admin JWT 调运营接口被拒 → 403 scope" "$c/$cc" "403/403"
+c=$(api GET /platform/usage "$PT"); cc=$(jget code)
+[[ "$cc" == 0 ]] && ok "J.2 GET /platform/usage 全局看板（tenants_total=$(jget data totals.tenants_total)）" || no "J.2 用量看板" "HTTP $c $(body | head -c 160)"
+c=$(api GET /platform/tenants "$PT"); cc=$(jget code)
+[[ "$cc" == 0 ]] && ok "J.3 GET /platform/tenants 运营侧租户列表" || no "J.3 租户列表" "HTTP $c $(body | head -c 160)"
+c=$(api POST "/platform/tenants/$ID/suspend" "$PT"); cc=$(jget code)
+[[ "$cc" == 0 && "$(jget data enabled)" == "False" ]] && ok "J.4 停用租户 suspend" || no "J.4 suspend" "HTTP $c $(body | head -c 160)"
+c=$(api POST "/platform/tenants/$ID/resume" "$PT"); cc=$(jget code)
+[[ "$cc" == 0 && "$(jget data enabled)" == "True" ]] && ok "J.5 恢复租户 resume" || no "J.5 resume" "HTTP $c $(body | head -c 160)"
+c=$(api GET /platform/audit "$PT"); cc=$(jget code)
+[[ "$cc" == 0 ]] && ok "J.6 GET /platform/audit 平台审计" || no "J.6 平台审计" "HTTP $c $(body | head -c 160)"
 
 echo
 echo "== 通过 $pass / 失败 $fail"

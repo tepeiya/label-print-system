@@ -5,3 +5,5 @@ export * from './serial.entity';
 export * from './print.entity';
 export * from './ai-template.entity';
 export * from './saas.entity';
+export { PlatformUser } from '../saas/platform-admin/platform-user.entity';
+export { PlatformAuditLog } from '../saas/platform-admin/platform-audit.service';

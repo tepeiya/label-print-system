@@ -1,4 +1,4 @@
-import { IsBoolean, IsIn, IsNumber, IsObject, IsOptional, IsString, Length, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsNumber, IsObject, IsOptional, IsString, Length, Min } from 'class-validator';
 
 /**
  * 平台运营 DTO（P2 前置）。原来 ProvisionTenantDto 只是 interface 没有任何校验，
@@ -71,4 +71,36 @@ export class FeatureFlagDto {
   @IsOptional()
   @IsObject()
   rollout?: Record<string, any>;
+}
+
+/** 平台运营登录（P2）：platform_users 表，独立于租户身份 */
+export class PlatformLoginDto {
+  @IsString()
+  @Length(1, 60, { message: 'username 必填' })
+  username!: string;
+
+  @IsString()
+  @Length(1, 200, { message: 'password 必填' })
+  password!: string;
+}
+
+/** 套餐更新：name/description/sortOrder 可选；moduleCodes 传了就全量替换 plan_modules */
+export class UpsertPlanDto {
+  @IsOptional()
+  @IsString()
+  @Length(1, 80)
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 500)
+  description?: string;
+
+  @IsOptional()
+  @IsNumber()
+  sortOrder?: number;
+
+  @IsOptional()
+  @IsArray()
+  moduleCodes?: string[];
 }

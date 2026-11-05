@@ -6,6 +6,8 @@ import {
   TenantModule, Permission, RolePermission,
   Role, DataScopeRecord, FeatureFlag,
 } from '../entities/saas.entity';
+import { PlatformUser } from './platform-admin/platform-user.entity';
+import { PlatformAuditLog } from './platform-admin/platform-audit.service';
 import { Tenant, User, UserRole } from '../entities/tenant.entity';
 import { ModulesService } from './modules.service';
 import { SubscriptionService } from './subscription.service';
@@ -14,22 +16,28 @@ import { TenantConfigService } from './tenant-config.service';
 import { ProvisionService } from './provision.service';
 import { SubscriptionController } from './subscription.controller';
 import { PlatformController } from './platform.controller';
+import { PlatformAdminController, PlatformAuthController } from './platform-admin/platform-admin.controller';
+import { PlatformAdminService } from './platform-admin/platform-admin.service';
+import { PlatformAuditService } from './platform-admin/platform-audit.service';
 import { TenantDataSourceManager } from '../common/tenant-data-source.manager';
+import { AuditModule } from '../audit/audit.module';
 
 @NestModule({
   imports: [
+    AuditModule, // PlatformAdminService 写平台侧审计（platform.login / suspend 等）
     TypeOrmModule.forFeature([
       ModuleRecord, Plan, PlanModule, Subscription,
       TenantModule, Permission, RolePermission,
       Role, DataScopeRecord, FeatureFlag,
-      Tenant, User, UserRole,
+      Tenant, User, UserRole, PlatformUser, PlatformAuditLog,
     ]),
   ],
   providers: [
     ModulesService, SubscriptionService, PermissionsService,
     TenantConfigService, ProvisionService, TenantDataSourceManager,
+    PlatformAdminService, PlatformAuditService,
   ],
-  controllers: [SubscriptionController, PlatformController],
+  controllers: [SubscriptionController, PlatformController, PlatformAdminController, PlatformAuthController],
   // AuthModule（/auth/me）与全局拦截器都要用，必须导出
   exports: [
     ModulesService, SubscriptionService, PermissionsService,
