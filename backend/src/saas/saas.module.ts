@@ -19,6 +19,7 @@ import { PlatformController } from './platform.controller';
 import { PlatformAdminController, PlatformAuthController } from './platform-admin/platform-admin.controller';
 import { PlatformAdminService } from './platform-admin/platform-admin.service';
 import { PlatformAuditService } from './platform-admin/platform-audit.service';
+import { TenantDataService } from './platform-admin/tenant-data.service';
 import { TenantDataSourceManager } from '../common/tenant-data-source.manager';
 import { AuditModule } from '../audit/audit.module';
 import { BillingModule } from '../billing/billing.module';
@@ -37,7 +38,7 @@ import { BillingModule } from '../billing/billing.module';
   providers: [
     ModulesService, SubscriptionService, PermissionsService,
     TenantConfigService, ProvisionService, TenantDataSourceManager,
-    PlatformAdminService, PlatformAuditService,
+    PlatformAdminService, PlatformAuditService, TenantDataService,
   ],
   controllers: [SubscriptionController, PlatformController, PlatformAdminController, PlatformAuthController],
   // AuthModule（/auth/me）与全局拦截器都要用，必须导出

@@ -3,10 +3,15 @@
 # p0-acceptance.sh —— SaaS 端到端验收（docs/11 §11.11.1 P0 底座 + §11.11.2 P1~P5）
 # 段次：A–G 权限/订阅底座（P0/P1） · H 旧端点回归 · I J 平台运营（P2） · K 账单配额（P3）
 #       L Agent 只读（P4） · M Agent 写工具/幂等/审批/限流/审计/HTTP（P5）
+#       N RLS 兜底 + 租户数据导出/硬删（P6.1/P6.3）+ Agent 前端入口（P5.5）
+# P6 段要真删数据，用的是自建的靶租户（${T_CODE}p6 / ${T_CODE}p7），段尾自清理，不碰 A/B/M 的租户。
 #
 # 前提：
-#   1) PG 已按顺序建表：03-database.sql → seed.sql → saas_p0.sql → saas_p0_roles.sql
+#   1) PG 已按顺序建表：docs/03-database.sql → seed.sql → saas_p0.sql → saas_p0_roles.sql
+#      → saas_p2_platform.sql → saas_p3_billing.sql → saas_p4_agent.sql → saas_p5_agent_tools.sql
+#      → saas_p6_rls.sql → saas_p6_tenant_data.sql   （N 段两条都必需，缺前者 N.1 判失败，缺后者 N.4 直接 500）
 #   2) 后端在跑：npx tsc -p tsconfig.json && node -r reflect-metadata dist/src/main.js
+#      想要 N.6 断言 rlsActive=true，后端必须带 DB_RLS_USER/DB_RLS_PASSWORD 启动（见 docs/10 §10.22.4）
 #   3) 默认租户 admin/admin123 可登录（首次启动由 main.ts 种子写入）
 #
 # 用法：
@@ -576,6 +581,161 @@ if [[ -n "$MCP_DIR2" && -f "$MCP_DIR2/dist/http.js" && -f "$MCP_DIR2/dist/selfte
 else
   ok "M.22 Streamable HTTP 自测跳过（apps/mcp-server 未构建 http 入口；P5 交付后跑 npm run selftest:http）"
 fi
+
+echo
+echo "-- N. P6 RLS 兜底 / 租户数据导出与硬删 / Agent 前端入口"
+
+# N.0 P6 DDL 是否已应用（没应用就把相关项明确记失败，而不是静默跳过）
+APP_ROLE=$(ps "select count(*) from pg_roles where rolname='labelflow_app'")
+NPOL=$(ps "select count(distinct tablename) from pg_policies where schemaname='public' and policyname='tenant_isolation'")
+NTID=$(ps "select count(distinct table_name) from information_schema.columns where table_schema='public' and column_name='tenant_id'")
+# 注意：psql 里 boolean 裸输出是 t/f，但 ::text 强转是 true/false，这里统一取 ::int
+BYP=$(ps "select coalesce((select rolbypassrls::int from pg_roles where rolname='labelflow_app')::text,'-1')")
+if [[ "$APP_ROLE" != "1" ]]; then
+  no "N.1 saas_p6_rls.sql 未执行（缺 labelflow_app 角色）" "跑 psql -f backend/scripts/saas_p6_rls.sql 后重试"
+else
+  [[ "$NPOL" -ge $((NTID + 1)) && "$BYP" == "0" ]] \
+    && ok "N.1 RLS 覆盖 $NPOL 张表（带 tenant_id 的 $NTID 张 + 家生子），labelflow_app 无 BYPASSRLS" \
+    || no "N.1 RLS 覆盖/角色属性" "policies=$NPOL 期望>=$((NTID)) tid=$NTID bypass=$BYP"
+fi
+
+# N.2 导出件 kind CHECK 是否已放宽（saas_p6_tenant_data.sql）
+KC=$(ps "select count(*) from pg_constraint where conname='tenant_backups_kind_check' and pg_get_constraintdef(oid) like '%purge-pre%'")
+check "N.2 tenant_backups.kind 允许 export / purge-pre" "$KC" "1"
+
+# 靶租户：P6 要真删数据，必须用独立租户，不碰 A/B 两段
+P6_CODE="${T_CODE}p6"
+api POST /platform/tenants "$PT" "{\"code\":\"$P6_CODE\",\"name\":\"P6 导出删除靶\",\"planCode\":\"PRO\",\"seats\":3,\"adminUsername\":\"${P6_CODE}_admin\",\"adminPassword\":\"$T_PASS\"}" >/dev/null
+ID6=$(jget data tenantId)
+api POST /auth/login '' "{\"username\":\"${P6_CODE}_admin\",\"password\":\"$T_PASS\",\"tenantCode\":\"$P6_CODE\"}" >/dev/null
+A6T=$(jget data accessToken)
+api POST /templates "$A6T" '{"name":"p6-靶模板","content":{"page":{"width":100,"height":60},"elements":[]}}' >/dev/null
+TPL6=$(jget data id)
+[[ -n "$ID6" && -n "$TPL6" ]] && ok "N.3 靶租户 $P6_CODE（id=$ID6）写入 1 张模板" || no "N.3 建靶租户/写模板" "id=$ID6 tpl=$TPL6"
+# N.3b 家生子必须有真数据。之前 plan() 从 information_schema 取外键，用 RLS 角色（labelflow_app）连库时
+# 那些视图按**当前角色权限**过滤，查不到 bom_items 的 FK → 家生子被静默漏掉（导出少一张表、硬删留孤儿行）。
+# 靶租户原本没有 BOM 数据，这条一路绿灯，所以这里刻意造一条 bom + bom_item 把它钉住。
+# 顺带让删除顺序变成活题：bom_items→materials 是 NO ACTION，父表先删会直接撞外键。
+ps "insert into materials(tenant_id, code, name) values ($ID6, 'P6-PROD', 'P6 礼盒成品')" >/dev/null
+MAT6=$(ps "select id from materials where tenant_id=$ID6 and code='P6-PROD'")
+ps "insert into boms(tenant_id, product_material_id) values ($ID6, $MAT6)" >/dev/null
+BOM6=$(ps "select id from boms where tenant_id=$ID6 and product_material_id=$MAT6")
+ps "insert into bom_items(bom_id, material_id, qty_per) values ($BOM6, $MAT6, 1)" >/dev/null
+BI6=$(ps "select id from bom_items where bom_id=$BOM6")
+[[ -n "$BI6" ]] && ok "N.3b 靶租户造出家生子数据（boms=$BOM6 / bom_items=$BI6，无 tenant_id）" || no "N.3b 造家生子数据" "mat=$MAT6 bom=$BOM6 item=$BI6"
+# 旁证租户用 M 段的 PRO 租户（有模板/库存/审批），删完必须原样
+OTHER_N=$(ps "select count(*) from templates where tenant_id=$ID2")
+
+# N.4 导出
+c=$(api POST "/platform/tenants/$ID6/export" "$PT")
+BID6=$(jget data backupId); RLS6=$(jget data rlsActive); TC6=$(jget data tableCount); RC6=$(jget data rowCount)
+[[ ( "$c" == 200 || "$c" == 201 ) && -n "$BID6" ]] && ok "N.4 POST /platform/tenants/:id/export → $c（backupId=$BID6）" || no "N.4 导出失败" "HTTP $c $(body | head -c 240)"
+[[ "$TC6" -ge 20 && "$RC6" -ge 1 ]] && ok "N.5 导出摘要：$TC6 张表 / $RC6 行（表清单从 pg_catalog 现取，含家生子）" || no "N.5 摘要异常" "tables=$TC6 rows=$RC6"
+# rlsActive 口径：脚本侧带 DB_RLS_USER 时断言 True（与后端 env 一致），否则只要求是个布尔
+if [[ -n "${DB_RLS_USER:-}" ]]; then
+  [[ "$RLS6" == "True" ]] \
+    && ok "N.6 导出跑在 RLS 角色连接上（rlsActive=true，env DB_RLS_USER=$DB_RLS_USER）" \
+    || no "N.6 rlsActive 期望 True 实际 $RLS6" "脚本带 DB_RLS_USER 但后端没配 → 后端仍在用主库降级路径。重启 API 时补 DB_RLS_USER/DB_RLS_PASSWORD（见 §10.22 启动命令）"
+else
+  [[ "$RLS6" == "True" || "$RLS6" == "False" ]] && ok "N.6 rlsActive 如实回报（$RLS6；脚本侧未设 DB_RLS_USER，两种值都算通过）" || no "N.6 rlsActive 缺失" "$RLS6"
+fi
+check "N.7 tenant_backups 落了 kind=export" "$(ps "select kind from tenant_backups where id=$BID6")" "export"
+
+# N.8 下载 + 解包 + 「包内只有本租户」
+GZ=/tmp/p6_export_$$.json.gz
+api GET /platform/tenants/retention "$PT" >/dev/null   # 顺带确认导出接口没把响应流弄坏（下一个请求仍正常）
+curl -s --max-time 60 -o "$GZ" -w '%{http_code}' -H "Authorization: Bearer $PT" \
+  "$BASE/platform/tenants/$ID6/exports/$BID6/download" > /tmp/p6_dl_$$.code
+DLC=$(cat /tmp/p6_dl_$$.code)
+[[ "$DLC" == 200 && -s "$GZ" ]] && ok "N.8a 下载导出件（$(stat -c%s "$GZ") 字节，注意这里必须用 @Res 直发，passthrough 会撞 ERR_HTTP_HEADERS_SENT）" || no "N.8a 下载失败" "HTTP $DLC"
+if gzip -dc "$GZ" > /tmp/p6_export_$$.json 2>/dev/null; then
+  LEAK=$(python3 -c "
+import json
+d=json.load(open('/tmp/p6_export_$$.json')); tid=str(d['tenantId'])
+bad=[(t,r.get('id')) for t,rows in d['tables'].items() if t!='tenants' for r in rows if 'tenant_id' in r and str(r['tenant_id'])!=tid]
+print(len(bad))" 2>/dev/null || echo -1)
+  HAS_TPL=$(python3 -c "
+import json
+d=json.load(open('/tmp/p6_export_$$.json'))
+print(1 if any(str(x.get('id'))=='$TPL6' for x in d['tables'].get('templates',[])) else 0)" 2>/dev/null || echo 0)
+  HAS_KID=$(python3 -c "
+import json
+d=json.load(open('/tmp/p6_export_$$.json'))
+bi=d['tables'].get('bom_items') or []
+print(1 if any(str(x.get('id'))=='$BI6' for x in bi) else 0)" 2>/dev/null || echo 0)
+  [[ "$LEAK" == "0" && "$HAS_TPL" == "1" && "$HAS_KID" == "1" ]] \
+    && ok "N.8b 导出包内只有靶租户数据（含刚写的模板 + 家生子 bom_items，0 行别家）" \
+    || no "N.8b 导出包内容" "leak=$LEAK 含靶模板=$HAS_TPL 含家生子=$HAS_KID（家生子漏掉多半是表清单又退回 information_schema：它按角色权限过滤，RLS 角色查不到 FK）"
+else
+  no "N.8b gunzip 解包失败" ""; fi
+check "N.9 平台审计有 export" "$(ps "select count(*)>=1 from platform_audit_logs where action='platform.tenant.export' and target_id=$ID6")" "t"
+
+# N.10 硬删闸门三连
+c=$(api POST "/platform/tenants/$ID6/purge" "$PT" '{"confirm":"不对的确认串"}'); cc=$(jget code)
+[[ "$c" == 400 && "$cc" == 400 ]] && ok "N.10a 确认串不对 → 400" || no "N.10a 应拒确认串" "HTTP $c code=$cc"
+c=$(api POST "/platform/tenants/$ID6/purge" "$PT" "{\"confirm\":\"$P6_CODE\"}"); cc=$(jget code)
+[[ "$c" == 400 && "$cc" == 400 ]] && ok "N.10b 未退订 + 无 force → 400（message：$(jget message | head -c 40)…）" || no "N.10b 应拒未退订" "HTTP $c code=$cc"
+api POST "/platform/tenants/$ID6/cancel" "$PT" >/dev/null
+c=$(api POST "/platform/tenants/$ID6/purge" "$PT" "{\"confirm\":\"$P6_CODE\"}")
+[[ "$c" == 400 ]] && ok "N.10c 刚退订仍在 90 天保留期内 → 400（D12）" || no "N.10c 应拒保留期内删除" "HTTP $c"
+
+# N.11 保留期看板（把 canceled_at 推到 91 天前，due 必须翻成 True）
+ps "update tenants set canceled_at = now() - interval '91 days' where id=$ID6" >/dev/null
+api GET /platform/tenants/retention "$PT" >/dev/null
+DUE=$(python3 -c "
+import json;d=json.load(open('$TMP'))
+m=[i for i in d.get('data',{}).get('items',[]) if str(i.get('tenantId'))=='$ID6']
+print(m[0]['due'] if m else 'missing')" 2>/dev/null || echo err)
+check "N.11 看板 retentionDays=$(jget data retentionDays)，超期租户 due" "$DUE" "True"
+
+# N.12 真删
+c=$(api POST "/platform/tenants/$ID6/purge" "$PT" "{\"confirm\":\"$P6_CODE\"}")
+[[ ( "$c" == 200 || "$c" == 201 ) ]] && ok "N.12 到期后 confirm 即硬删 → $c" || no "N.12 硬删失败" "HTTP $c $(body | head -c 240)"
+DEL6=$(jget data deletedRows); TAB6=$(jget data tables); REM6=$(jget data remaining)
+[[ "$DEL6" -ge 1 && "$TAB6" -ge 20 ]] && ok "N.13 明细：$TAB6 张表 / $DEL6 行，remaining=$REM6（家生子 bom_items 走父表钉范围）" || no "N.13 明细异常" "tables=$TAB6 rows=$DEL6"
+[[ "$REM6" == "[]" ]] && ok "N.14 逐表复查无残留（remaining 空数组）" || no "N.14 有残留表" "remaining=$REM6"
+LEFT=$(ps "select (select count(*) from templates where tenant_id=$ID6)+(select count(*) from users where tenant_id=$ID6)")
+check "N.15 靶租户 templates+users 清零" "$LEFT" "0"
+check "N.15b 家生子按 id 复查已删（bom_items $BI6 不存在，不是靠 join 蒙对）" "$(ps "select count(*) from bom_items where id=$BI6")" "0"
+check "N.15c 靶租户 boms/materials 清零" "$(ps "select (select count(*) from boms where tenant_id=$ID6)+(select count(*) from materials where tenant_id=$ID6)")" "0"
+check "N.16 旁证租户 $ID2 的数据未受波及" "$(ps "select count(*) from templates where tenant_id=$ID2")" "$OTHER_N"
+check "N.17 删除前自动落 purge-pre 快照" "$(ps "select count(*)>=1 from tenant_backups where tenant_id=$ID6 and kind='purge-pre'")" "t"
+check "N.18 快照表本身不被删（保留证据）" "$(ps "select count(*) from tenant_backups where tenant_id=$ID6")" "2"
+check "N.19 平台审计有 purge" "$(ps "select count(*)>=1 from platform_audit_logs where action='platform.tenant.purge' and target_id=$ID6")" "t"
+# force 通道（未退订租户也必须能强删，但要 confirm+force 双条件）
+P6B_CODE="${T_CODE}p7"
+api POST /platform/tenants "$PT" "{\"code\":\"$P6B_CODE\",\"name\":\"P6 force 靶\",\"planCode\":\"BASIC\",\"adminUsername\":\"${P6B_CODE}_admin\",\"adminPassword\":\"$T_PASS\"}" >/dev/null
+ID7=$(jget data tenantId)
+c=$(api POST "/platform/tenants/$ID7/purge" "$PT" "{\"confirm\":\"$P6B_CODE\",\"force\":true}")
+[[ ( "$c" == 200 || "$c" == 201 ) && "$(jget data deletedRows)" -ge 1 ]] \
+  && ok "N.20 未退订 + confirm + force=true → 放行（明确运营逃生口）" || no "N.20 force 通道" "HTTP $c $(body | head -c 200)"
+
+# N.21 P5.5 前端入口：菜单目录必须带 Agent 两条（否则 console 页面在产品里不可达）
+api GET /auth/me "$PAT" >/dev/null
+MEN=$(python3 -c "
+import json;d=json.load(open('$TMP'))
+def walk(ns):
+    for n in ns or []:
+        yield n
+        yield from walk(n.get('children'))
+paths=[n.get('path') for n in walk(d.get('data',{}).get('menus'))]
+print(all(p in paths for p in ('/agents','/agent-approvals')))" 2>/dev/null || echo False)
+check "N.21 tenant_admin 的菜单里有 /agents 与 /agent-approvals" "$MEN" "True"
+
+# N.22 审批列表补齐 agentClientName（前端「谁要做什么」这列不能恒空）
+api GET "/agents/approvals?status=all&pageSize=50" "$PAT" >/dev/null
+NAMEN=$(python3 -c "
+import json;d=json.load(open('$TMP'));it=d.get('data',{}).get('items',[])
+print(sum(1 for i in it if i.get('agentClientName')))" 2>/dev/null || echo 0)
+NAMEALL=$(python3 -c "
+import json;d=json.load(open('$TMP'));print(len(d.get('data',{}).get('items',[])))" 2>/dev/null || echo 0)
+[[ "$NAMEALL" -ge 1 && "$NAMEN" == "$NAMEALL" ]] && ok "N.22 审批列表 $NAMEALL 条全部带 agentClientName" || no "N.22 agentClientName 缺失" "$NAMEN/$NAMEALL"
+
+# 清理靶租户残留（tenants 行 + 快照），避免重跑撞 code 唯一约束之外还攒垃圾
+ps "delete from tenant_backups where tenant_id in ($ID6, $ID7)" >/dev/null
+ps "delete from tenants where id in ($ID6, $ID7)" >/dev/null
+rm -f "$GZ" /tmp/p6_export_$$.json /tmp/p6_dl_$$.code
+echo "  （P6 靶租户 $ID6/$ID7 及其快照已清理）"
 
 echo
 echo "== 通过 $pass / 失败 $fail"

@@ -1,7 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, Query, UseGuards, Request } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Put, Query, UseGuards, Request, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { Public } from '../../common/public.decorator';
 import { PlatformJwtGuard } from './platform-jwt.guard';
 import { PlatformAdminService } from './platform-admin.service';
+import { TenantDataService } from './tenant-data.service';
 import { AddModuleDto, CreateInvoiceDto, CreatePaymentDto, FeatureFlagDto, IssueInvoiceDto, PlatformLoginDto, ProvisionTenantDto, UpsertPlanDto, UpsertQuotaDto } from '../dto/platform.dto';
 import { TenantConfigService } from '../tenant-config.service';
 import { SubscriptionService } from '../subscription.service';
@@ -22,6 +24,7 @@ export class PlatformAdminController {
     private configSvc: TenantConfigService,
     private subSvc: SubscriptionService,
     private modSvc: ModulesService,
+    private dataSvc: TenantDataService,
   ) {}
 
   // ---------- 租户 ----------
@@ -160,6 +163,53 @@ export class PlatformAdminController {
   @Post('invoices/:id/payments')
   registerPayment(@Param('id') id: string, @Body() dto: CreatePaymentDto, @Request() req: any) {
     return this.svc.registerPayment(req.platformUser, +id, dto);
+  }
+
+  // ---------- 租户数据导出 / 硬删（P6，docs/11 D12 保留期 + §11.2 RLS 兜底）----------
+
+  /** D12 看板：已退订租户的保留期剩余天数（daysLeft<=0 才算可硬删，warn=进入 7 天提醒） */
+  @Get('tenants/retention')
+  retention() { return this.dataSvc.retention(); }
+
+  /** 全量导出该租户业务数据 → gzip 落 tenant_backups(kind=export)，返回摘要 */
+  @Post('tenants/:id/export')
+  exportTenant(@Param('id') id: string, @Request() req: any) {
+    if (!/^\d+$/.test(String(id))) throw new BadRequestException('tenant id 必须是数字');
+    return this.dataSvc.exportTenant(+id, req.platformUser);
+  }
+
+  /** 该租户的导出件/备份清单（含租户自己手工备份的） */
+  @Get('tenants/:id/exports')
+  listExports(@Param('id') id: string) {
+    if (!/^\d+$/.test(String(id))) throw new BadRequestException('tenant id 必须是数字');
+    return this.dataSvc.listBackups(+id);
+  }
+
+  /**
+   * 下载导出件（gzip 原文件）。
+   * 注意这里用 **@Res() 不带 passthrough**：passthrough 下 Nest 仍会走 ResponseInterceptor
+   * 再发一次 JSON 信封 → ERR_HTTP_HEADERS_SENT 直接把进程打挂（实跑踩过）。
+   */
+  @Get('tenants/:id/exports/:exportId/download')
+  async downloadExport(
+    @Param('id') id: string, @Param('exportId') exportId: string,
+    @Request() req: any, @Res() res: Response,
+  ) {
+    if (!/^\d+$/.test(String(id)) || !/^\d+$/.test(String(exportId))) throw new BadRequestException('id 必须是数字');
+    const file = await this.dataSvc.downloadBackup(+id, +exportId, req.platformUser);
+    res.setHeader('Content-Type', 'application/gzip');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(file.filename)}"`);
+    res.send(file.buffer);
+  }
+
+  /**
+   * 硬删该租户全部业务数据（不可逆）。闸门在 TenantDataService 里：
+   * confirm 必须逐字等于租户 code，且要么已过 D12 保留期、要么显式 force=true。
+   */
+  @Post('tenants/:id/purge')
+  purgeTenant(@Param('id') id: string, @Request() req: any, @Body() body: { confirm?: string; force?: boolean }) {
+    if (!/^\d+$/.test(String(id))) throw new BadRequestException('tenant id 必须是数字');
+    return this.dataSvc.purgeTenant(+id, req.platformUser, body ?? {});
   }
 }
 

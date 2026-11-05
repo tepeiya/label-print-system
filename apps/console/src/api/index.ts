@@ -285,4 +285,82 @@ export const apiPlatformModules = () => http.get('/platform/modules');
 export const apiPlatformPlans = () => http.get('/platform/plans');
 export const apiPlatformPermissions = () => http.get('/platform/permissions');
 
+// ========== SaaS P5: Agent 接入 + 高危操作待确认 ==========
+// 契约见 backend/src/agent/agents.controller.ts + approval.service.ts。
+// 注意几处与「直觉」不同的地方（都已对着跑着的后端实测确认）：
+//   - GET /agents 只回 { items, total }，没有 page/pageSize；
+//   - GET /agents/:id/tokens 直接回数组，不是 { items }；
+//   - POST /agents/:id/tokens 的明文 token 只在这一次响应里（服务端只存 sha256），
+//     且不返回 token id，要展示列表必须重新拉一次；
+//   - 审批单 DTO 没有 onBehalfOf，租户列表里 agentClientName 恒为 null
+//     （listForTenant 调 toDto 时没传 clientName）→ 名称只能前端按 agentClientId 自己补。
+
+export type AgentClientKind = 'mcp_stdio' | 'mcp_http' | 'internal';
+export type AgentClientStatus = 'active' | 'disabled';
+
+export interface AgentClient {
+  id: number;
+  name: string;
+  description: string | null;
+  kind: AgentClientKind;
+  status: AgentClientStatus;
+  createdAt: string;
+  tokenCount: number;
+  lastUsedAt: string | null;
+}
+
+export interface AgentToken {
+  id: number;
+  /** sha256 指纹尾 8 位，反推不了 token */
+  hashTail: string;
+  scopes: string[];
+  revoked: boolean;
+  expiresAt: string;
+  lastUsedAt: string | null;
+  createdAt: string;
+}
+
+/** 一次性明文：关掉就没有第二次 */
+export interface AgentTokenIssued {
+  token: string;
+  tokenMasked: string;
+  scopes: string[];
+  expiresAt: string;
+  clientId: number;
+}
+
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired' | 'consumed';
+
+export interface AgentApproval {
+  id: number;
+  tool: string;
+  status: string;
+  agentClientId: number;
+  agentClientName: string | null;
+  argsPreview: Record<string, any>;
+  argsHash: string;
+  createdAt: string;
+  expiresAt: string;
+  approvedBy: number | null;
+  approvedAt: string | null;
+  consumedAt: string | null;
+  message?: string;
+}
+
+export const apiListAgents = (params?: any) => http.get('/agents', { params });
+export const apiCreateAgent = (data: { name: string; description?: string; kind?: AgentClientKind }) =>
+  http.post('/agents', data);
+export const apiSetAgentStatus = (id: number, status: AgentClientStatus) =>
+  http.post(`/agents/${id}/status`, { status });
+export const apiListAgentTokens = (id: number): Promise<AgentToken[]> => http.get(`/agents/${id}/tokens`);
+export const apiCreateAgentToken = (id: number, data: { scopes?: string[]; expiresInDays?: number }) =>
+  http.post(`/agents/${id}/tokens`, data);
+export const apiRevokeAgentToken = (id: number, tokenId: number) =>
+  http.post(`/agents/${id}/tokens/${tokenId}/revoke`);
+
+export const apiListApprovals = (params?: any) => http.get('/agents/approvals', { params });
+export const apiApproveApproval = (id: number) => http.post(`/agents/approvals/${id}/approve`);
+export const apiRejectApproval = (id: number, reason?: string) =>
+  http.post(`/agents/approvals/${id}/reject`, reason ? { reason } : {});
+
 export default http;

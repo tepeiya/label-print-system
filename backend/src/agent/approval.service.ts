@@ -137,7 +137,20 @@ export class ApprovalService {
       .orderBy('a.id', 'DESC')
       .skip((Math.max(1, page) - 1) * take).take(take)
       .getManyAndCount();
-    return { items: rows.map((r) => this.toDto(r)), total, page: Math.max(1, page), pageSize: take };
+    // 客户端名批量补齐（前端「谁要做什么」这列不能是 null；一次查询而不是 N 次，页大小封顶 100）
+    const names = new Map<number, string>();
+    const ids = [...new Set(rows.map((r) => Number(r.agentClientId)))].filter((n) => Number.isFinite(n) && n > 0);
+    if (ids.length) {
+      const ph = ids.map((_, i) => `$${i + 2}`).join(', ');
+      const cs: any[] = await this.repo.manager.query(
+        `select id, name from agent_clients where tenant_id = $1 and id in (${ph})`, [tenantId, ...ids],
+      );
+      cs.forEach((c) => names.set(Number(c.id), c.name));
+    }
+    return {
+      items: rows.map((r) => this.toDto(r, names.get(Number(r.agentClientId)) ?? null)),
+      total, page: Math.max(1, page), pageSize: take,
+    };
   }
 
   /** Agent 侧列表（§11.6.3 之外的补充：模型轮询自己挂过的单） */

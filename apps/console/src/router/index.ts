@@ -53,6 +53,24 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/Billing.vue'),
         meta: { title: '账单与用量', icon: 'Wallet', module: 'users', permission: 'sys:billing:read' },
       },
+      // P5 Agent 接入（后端 AgentsController 类上 @RequireModule('agent')，写操作 sys:agent:manage）。
+      // ⚠️ backend/src/saas/menu.catalog.ts 里还没有这两条菜单，而下面的守卫要求
+      // path 出现在 /auth/me.menus 里才放行 —— 后端补目录前，这两页只能靠直接敲 URL 进来，
+      // 且会被守卫跳 /blocked。前端不改后端，先按现有约定把路由声明好。
+      {
+        path: 'agents',
+        component: () => import('@/views/Agents.vue'),
+        meta: { title: 'Agent 接入', icon: 'Connection', module: 'agent', permission: 'sys:agent:manage' },
+      },
+      // Agent 高危操作待确认。后端列表/确认/驳回是 manage OR approve，
+      // 但 meta.permission 只能写一个：这里写 approve（主管/仓管的业务确认入口，
+      // 见 backend/scripts/saas_p5_agent_tools.sql 的角色授权），
+      // 只有 sys:agent:manage 的人会被这条 meta 挡在外面，属于单值 meta 的既有限制。
+      {
+        path: 'agent-approvals',
+        component: () => import('@/views/AgentApprovals.vue'),
+        meta: { title: 'Agent 待确认', icon: 'CircleCheck', module: 'agent', permission: 'sys:agent:approve' },
+      },
       // 未订阅 / 权限不足的统一落地页（§11.10「模块未订阅」）
       {
         path: 'blocked',

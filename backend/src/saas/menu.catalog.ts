@@ -51,6 +51,20 @@ export const MENU_CATALOG: MenuNode[] = [
       { key: 'backups', name: '备份中心', icon: 'Folder', path: '/backups', module: 'backup', permission: 'backup:read' },
     ],
   },
+  // Agent 接入（P4/P5 后端已有，P6 补前端入口）：分组自身不参与可见性判断，
+  // 两条叶子分别要 sys:agent:manage / sys:agent:approve —— 后者是 P5 发给
+  // admin/tenant_admin/manager/warehouse_keeper 的「高危确认」业务权限，
+  // 所以仓管能进「待确认」页但进不了「客户端/Token」页。
+  {
+    key: 'agent',
+    name: 'Agent 接入',
+    icon: 'Connection',
+    module: 'agent',
+    children: [
+      { key: 'agents', name: 'Agent 客户端', icon: 'Connection', path: '/agents', module: 'agent', permission: 'sys:agent:manage' },
+      { key: 'agent-approvals', name: 'Agent 待确认', icon: 'CircleCheck', path: '/agent-approvals', module: 'agent', permission: 'sys:agent:approve' },
+    ],
+  },
   // 订阅页永远可见：租户被降级/停用时要能看到自己买了什么、怎么续费
   { key: 'subscription', name: '我的订阅', icon: 'Tickets', path: '/subscription' },
 ];
