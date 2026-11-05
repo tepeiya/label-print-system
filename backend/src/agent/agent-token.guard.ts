@@ -44,6 +44,8 @@ export class AgentTokenGuard implements CanActivate {
       clientName: rec.client.name,
       scopes: rec.token.scopes ?? [],
       tokenId: Number(rec.token.id),
+      onBehalfOf: rec.client.createdBy === null || rec.client.createdBy === undefined
+        ? null : Number(rec.client.createdBy),
     };
     // last_used_at 打点失败不影响本次调用
     void this.agent.touch(Number(rec.token.id));

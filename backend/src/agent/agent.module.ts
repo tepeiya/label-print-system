@@ -1,26 +1,40 @@
-// Agent/MCP 模块（P4）：agent 表 + /agent/v1 + 租户管理面
-// 依赖方向：Agent → Inventory（只读工具数据面）、Saas（模块/scope 字典）、Billing（agent_calls 计量）、Audit。
+// Agent/MCP 模块（P4 只读 + P5 写/审批/限流/幂等）
+// 依赖方向：Agent → Inventory（库存读写）、Template/Print（写执行器复用领域服务）、
+// Saas（模块/scope 字典、feature_flags 含 D7 与限流阈值）、Billing（agent_calls 计量）、Audit。
+// ⚠️ 写执行器通过 tenantStorage.run 补齐 ALS 上下文（Agent 只有 token、没有租户 JWT）。
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { AgentClient, AgentToken } from './agent.entity';
+import {
+  AgentApproval, AgentClient, AgentToken, ToolIdempotency,
+} from './agent.entity';
 import { Tenant } from '../entities/tenant.entity';
 import { Template } from '../entities/template.entity';
 import { AgentService } from './agent.service';
 import { AgentTokenGuard } from './agent-token.guard';
 import { ToolsService } from './tools.service';
+import { ApprovalService } from './approval.service';
+import { IdempotencyService } from './idempotency.service';
+import { AgentRateService } from './agent-rate.service';
 import { AgentsController } from './agents.controller';
 import { AgentV1Controller } from './agent-v1.controller';
 import { InventoryModule } from '../inventory/inventory.module';
 import { SaasModule } from '../saas/saas.module';
 import { BillingModule } from '../billing/billing.module';
 import { AuditModule } from '../audit/audit.module';
+import { TemplateModule } from '../template/template.module';
+import { PrintModule } from '../print/print.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([AgentClient, AgentToken, Tenant, Template]),
-    InventoryModule, SaasModule, BillingModule, AuditModule,
+    TypeOrmModule.forFeature([
+      AgentClient, AgentToken, AgentApproval, ToolIdempotency, Tenant, Template,
+    ]),
+    InventoryModule, SaasModule, BillingModule, AuditModule, TemplateModule, PrintModule,
   ],
-  providers: [AgentService, AgentTokenGuard, ToolsService],
+  providers: [
+    AgentService, AgentTokenGuard, ToolsService,
+    ApprovalService, IdempotencyService, AgentRateService,
+  ],
   controllers: [AgentsController, AgentV1Controller],
   exports: [AgentService],
 })

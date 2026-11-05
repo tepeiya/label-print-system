@@ -1,6 +1,7 @@
 // Agent 层实体（docs/11 §11.5.3；DDL 见 backend/scripts/saas_p4_agent.sql）
-// agent_approvals / external_mcp_servers 建表但 P4 不接实体：审批流在 P5（§11.7.6），
-// 反向 MCP 预留不实现（D10）。
+// agent_clients / agent_tokens / agent_approvals（P5 审批流接线，§11.7.6）
+// ToolIdempotency 在 P5 新增（§11.7.4 写操作幂等），DDL 见 scripts/saas_p5_agent_tools.sql。
+// external_mcp_servers 仍不接实体（D10 预留不实现）。
 import {
   Entity, PrimaryGeneratedColumn, Column, Index, ManyToOne, JoinColumn, CreateDateColumn,
 } from 'typeorm';
@@ -32,5 +33,46 @@ export class AgentToken {
   @Column({ name: 'expires_at', type: 'timestamptz', nullable: true }) expiresAt: Date | null;
   @Column({ default: false }) revoked: boolean;
   @Column({ name: 'last_used_at', type: 'timestamptz', nullable: true }) lastUsedAt: Date | null;
+  @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
+}
+
+/** 高危操作审批单（§11.7.6：pending → approved(5 分钟一次性) → consumed / rejected / expired） */
+@Entity('agent_approvals')
+@Index('ix_agentappr_tenant_status', ['tenantId', 'status'])
+export class AgentApproval {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ name: 'tenant_id', type: 'bigint' }) tenantId: number;
+  @Column({ name: 'agent_client_id', type: 'bigint' }) agentClientId: number;
+  @ManyToOne(() => AgentClient, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'agent_client_id' }) client: AgentClient;
+  @Column({ length: 60 }) tool: string;
+  /** 参数指纹（去掉 approval_id 的稳定 JSON sha256）——批准的就是这份参数 */
+  @Column({ name: 'args_hash', length: 64 }) argsHash: string;
+  /** 折叠后的参数预览（给员工看的「谁要做什么」，长文本已截断） */
+  @Column({ name: 'args_preview', type: 'jsonb', default: () => "'{}'" }) argsPreview: Record<string, any>;
+  @Column({ type: 'varchar', length: 20, default: 'pending' })
+  status: 'pending' | 'approved' | 'rejected' | 'expired' | 'consumed';
+  @Column({ name: 'expires_at', type: 'timestamptz' }) expiresAt: Date;
+  @Column({ name: 'approved_by', type: 'bigint', nullable: true }) approvedBy: number | null;
+  @Column({ name: 'approved_at', type: 'timestamptz', nullable: true }) approvedAt: Date | null;
+  @Column({ name: 'consumed_at', type: 'timestamptz', nullable: true }) consumedAt: Date | null;
+  @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
+}
+
+/**
+ * 写工具幂等表（§11.7.4「写操作幂等」/ §11.7.7 护栏 4）。
+ * 唯一键 (tenantId, tool, idemKey)：命中即重放首次结果，不再执行执行器。
+ */
+@Entity('tool_idempotency')
+@Index('ix_tool_idem_tenant_created', ['tenantId', 'createdAt'])
+export class ToolIdempotency {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ name: 'tenant_id', type: 'bigint' }) tenantId: number;
+  @Column({ name: 'agent_client_id', type: 'bigint' }) agentClientId: number;
+  @Column({ length: 60 }) tool: string;
+  @Column({ name: 'idem_key', length: 80 }) idemKey: string;
+  @Column({ name: 'args_hash', length: 64 }) argsHash: string;
+  @Column({ type: 'jsonb', nullable: true }) result: Record<string, any> | null;
+  @Column({ name: 'approval_id', type: 'bigint', nullable: true }) approvalId: number | null;
   @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
 }

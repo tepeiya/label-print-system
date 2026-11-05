@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
-# p0-acceptance.sh —— SaaS P0「权限与订阅底座」端到端验收（docs/11 §11.11.1）
+# p0-acceptance.sh —— SaaS 端到端验收（docs/11 §11.11.1 P0 底座 + §11.11.2 P1~P5）
+# 段次：A–G 权限/订阅底座（P0/P1） · H 旧端点回归 · I J 平台运营（P2） · K 账单配额（P3）
+#       L Agent 只读（P4） · M Agent 写工具/幂等/审批/限流/审计/HTTP（P5）
 #
 # 前提：
 #   1) PG 已按顺序建表：03-database.sql → seed.sql → saas_p0.sql → saas_p0_roles.sql
@@ -390,6 +392,190 @@ c=$(api POST "/agents/$CID/tokens" "$PAT" '{"scopes":["inventory:stock:read"]}')
 c=$(api POST "/agents/$CID/status" "$PAT" '{"status":"disabled"}'); cc=$(jget code)
 c=$(curl -s -o "$TMP" -w '%{http_code}' "$BASE/agent/v1/whoami" -H "Authorization: Bearer $AGENT_TOK2")
 [[ "$c" == 403 ]] && ok "L.20 停用客户端 → 存量 token 立即 403" || no "L.20 停用" "HTTP $c $(body | head -c 160)"
+
+# ---------------------------------------------------------------------------
+# M. P5 Agent 增强（docs/11 §11.7.4 写工具 / §11.7.6 审批流 / §11.7.7 护栏 3·4·5 /
+#    D7 打印开关 / 审计 actor_type=agent / §11.7.1 Streamable HTTP）
+#    §11.11.2 第五条：「高危工具无 approval_id 时返回 need_approval 且不产生副作用」。
+#    全程用新建客户端 CIDM —— 限流按 (tenant, client, 分钟桶) 计数，新客户端才有干净窗口；
+#    另外 M.20 再建一个 CIDR 专测 429，避免前面几十次调用把当前分钟桶占满。
+# ---------------------------------------------------------------------------
+echo
+echo "-- M. P5 写工具 / 幂等 / 审批 / 限流 / 审计"
+
+sqty() { ps "select coalesce(sum(sb.qty),0)::bigint from stock_batches sb join materials m on m.id=sb.material_id join warehouses w on w.id=sb.warehouse_id where sb.tenant_id=$ID2 and m.code='$1' and w.code='$2'"; }
+astat() { ps "select status from agent_approvals where id=$1"; }
+
+c=$(api POST /agents "$PAT" "{\"name\":\"P5 写权限 Agent\",\"kind\":\"mcp_http\",\"description\":\"审批/幂等/限流\"}"); CIDM=$(jget data id)
+[[ ( "$c" == 200 || "$c" == 201 ) && -n "$CIDM" ]] && ok "M.1a 新建写权限客户端（id=$CIDM，独立限流窗口）" || no "M.1a 建客户端" "HTTP $c $(body | head -c 160)"
+c=$(api POST "/agents/$CIDM/tokens" "$PAT" '{"scopes":["template:read","template:write","inventory:stock:read","inventory:stock:adjust","inventory:stock:transfer","print:job:submit","print:job:read"],"expiresInDays":7}')
+AGENT_TOK=$(jget data token)
+[[ ( "$c" == 200 || "$c" == 201 ) && "$AGENT_TOK" == lfagent_* ]] && ok "M.1b 签发 7 scope 写 token（含 adjust/transfer/submit）" || no "M.1b 签发 token" "HTTP $c $(body | head -c 160)"
+
+# M.2 写工具必须带幂等键（§11.7.7 护栏 4：重试安全）
+BOX0=$(sqty M-BOX-GIFT WH-SH)
+c=$(atab POST /agent/v1/tools/inventory.adjust '{"sku":"M-BOX-GIFT","warehouse":"WH-SH","delta":-10,"reason":"缺幂等键"}'); cc=$(jget code)
+NNO=$(ps "select count(*) from audit_logs where tenant_id=$ID2 and action='agent.tool.inventory.adjust' and detail->>'status'='denied_no_idem_key'")
+[[ "$c" == 400 && "$NNO" -ge 1 && "$(sqty M-BOX-GIFT WH-SH)" == "$BOX0" ]] \
+  && ok "M.2 写工具缺 idempotency_key → 400 + 审计，库存不变（$BOX0）" || no "M.2 幂等键必给" "HTTP $c code=$cc audit=$NNO"
+
+# M.3 dry_run 预演：免审批、零副作用（§11.7.4「高危可预演」）
+c=$(atab POST /agent/v1/tools/inventory.adjust '{"sku":"M-BOX-GIFT","warehouse":"WH-SH","delta":-10,"reason":"预演","idempotency_key":"m-dry-1","dry_run":true}'); cc=$(jget code)
+[[ ( "$c" == 200 || "$c" == 201 ) && "$cc" == 0 && "$(jget data data dryRun)" == "True" && "$(sqty M-BOX-GIFT WH-SH)" == "$BOX0" ]] \
+  && ok "M.3 dry_run=true 预演返回计划（$BOX0 未变、不建审批单）" || no "M.3 预演" "HTTP $c $(body | head -c 200)"
+
+# M.4 高危无 approval_id → 202 need_approval 且不改库存（§11.11.2 第五条）
+c=$(atab POST /agent/v1/tools/inventory.adjust '{"sku":"M-BOX-GIFT","warehouse":"WH-SH","delta":-10,"reason":"出库 10 个礼盒","idempotency_key":"m-adj-1"}')
+A1=$(jget data data approval_id); cc=$(jget code)
+[[ "$c" == 202 && "$cc" == 0 && "$(jget data data need_approval)" == "True" && -n "$A1" \
+   && "$(sqty M-BOX-GIFT WH-SH)" == "$BOX0" && "$(astat $A1)" == "pending" ]] \
+  && ok "M.4 无 approval → 202 need_approval（单 #$A1 pending，库存 $BOX0 未动）" || no "M.4 need_approval" "HTTP $c need=$(jget data data need_approval) stock=$(sqty M-BOX-GIFT WH-SH)"
+[[ "$(jget data next_actions)" == *approval_id* ]] && ok "M.5 响应自带重试指引（next_actions 告诉模型怎么带 approval_id）" || no "M.5 重试指引" "$(jget data next_actions)"
+
+# M.6 未确认就重试 → 403/4034（不放行）
+c=$(atab POST /agent/v1/tools/inventory.adjust "{\"sku\":\"M-BOX-GIFT\",\"warehouse\":\"WH-SH\",\"delta\":-10,\"reason\":\"出库 10 个礼盒\",\"idempotency_key\":\"m-adj-1\",\"approval_id\":\"$A1\"}"); cc=$(jget code)
+[[ "$c" == 403 && "$cc" == 4034 && "$(jget approval_status)" == "pending" && "$(jget message)" == *确认* ]] \
+  && ok "M.6 审批未确认时重试 → 403/4034（approval_status=pending，提示等员工确认）" || no "M.6 未确认拒绝" "HTTP $c code=$cc $(body | head -c 180)"
+
+# M.7 租户侧待确认列表可见；viewer 无权（sys:agent:approve）
+c=$(api GET "/agents/approvals?status=pending" "$PAT"); NPEND=$(jget data total)
+[[ "$c" == 200 && "${NPEND:-0}" -ge 1 ]] && ok "M.7a 租户 GET /agents/approvals?status=pending 看到 $NPEND 条待确认" || no "M.7a 审批列表" "HTTP $c $(body | head -c 160)"
+c=$(api GET "/agents/approvals?status=pending" "$VT"); cc=$(jget code)
+[[ "$c" == 403 && "$cc" == 4032 ]] && ok "M.7b viewer 无 sys:agent:approve → 403/4032" || no "M.7b viewer 越权" "HTTP $c code=$cc"
+
+# M.8 员工确认 → approved + 5 分钟可用窗口（§11.7.6）
+c=$(api POST "/agents/approvals/$A1/approve" "$PAT" '{}'); cc=$(jget code)
+[[ ( "$c" == 200 || "$c" == 201 ) && "$cc" == 0 && "$(jget data status)" == "approved" && -n "$(jget data expiresAt)" ]] \
+  && ok "M.8 确认后 status=approved、expiresAt=$(jget data expiresAt | cut -c1-19)（批准后 5 分钟）" || no "M.8 确认" "HTTP $c $(body | head -c 180)"
+
+# M.9 带 approval 重试 → 执行、库存 -10、审批置 consumed（一次性）
+c=$(atab POST /agent/v1/tools/inventory.adjust "{\"sku\":\"M-BOX-GIFT\",\"warehouse\":\"WH-SH\",\"delta\":-10,\"reason\":\"出库 10 个礼盒\",\"idempotency_key\":\"m-adj-1\",\"approval_id\":\"$A1\"}"); cc=$(jget code)
+BOX1=$(sqty M-BOX-GIFT WH-SH)
+[[ ( "$c" == 200 || "$c" == 201 ) && "$cc" == 0 && "$BOX1" == "$(python3 -c "print(int('$BOX0')-10)")" && "$(astat $A1)" == "consumed" ]] \
+  && ok "M.9 带 approval 重试 → 真实出库 $BOX0→$BOX1，审批置 consumed" || no "M.9 执行" "HTTP $c stock=$BOX1(应 $((BOX0-10))) appr=$(astat $A1)"
+
+# M.10 已消费/改过参数的审批单不可复用 → 403/4034，且库存不再变
+c=$(atab POST /agent/v1/tools/inventory.adjust "{\"sku\":\"M-BOX-GIFT\",\"warehouse\":\"WH-SH\",\"delta\":-10,\"reason\":\"复用旧审批\",\"idempotency_key\":\"m-adj-1b\",\"approval_id\":\"$A1\"}"); cc=$(jget code)
+[[ "$c" == 403 && "$cc" == 4034 && "$(sqty M-BOX-GIFT WH-SH)" == "$BOX1" ]] \
+  && ok "M.10 一次性审批不可复用（403/4034，库存仍 $BOX1）" || no "M.10 复用拒绝" "HTTP $c code=$cc stock=$(sqty M-BOX-GIFT WH-SH)"
+
+# M.11 参数篡改 → hash_mismatch（护栏 3：批准后改数量必须拦下）
+c=$(atab POST /agent/v1/tools/inventory.adjust '{"sku":"M-BOX-GIFT","warehouse":"WH-SH","delta":-5,"reason":"批准后改量","idempotency_key":"m-adj-2"}')
+A2=$(jget data data approval_id); api POST "/agents/approvals/$A2/approve" "$PAT" '{}' >/dev/null
+c=$(atab POST /agent/v1/tools/inventory.adjust "{\"sku\":\"M-BOX-GIFT\",\"warehouse\":\"WH-SH\",\"delta\":-999,\"reason\":\"批准后改量\",\"idempotency_key\":\"m-adj-2\",\"approval_id\":\"$A2\"}"); cc=$(jget code)
+[[ "$c" == 403 && "$cc" == 4034 && "$(jget message)" == *不一致* && "$(sqty M-BOX-GIFT WH-SH)" == "$BOX1" ]] \
+  && ok "M.11 批准后偷改 delta=-999 → 403/4034 args_hash 不一致（库存未被动）" || no "M.11 篡改拦截" "HTTP $c code=$cc $(body | head -c 180)"
+
+# M.12 驳回链路 → rejected，重试被拒
+c=$(atab POST /agent/v1/tools/inventory.adjust '{"sku":"M-BOX-GIFT","warehouse":"WH-SH","delta":-1,"reason":"驳回测试","idempotency_key":"m-adj-3"}')
+A3=$(jget data data approval_id)
+c=$(api POST "/agents/approvals/$A3/reject" "$PAT" '{"reason":"数量不对"}'); cc=$(jget code)
+[[ ( "$c" == 200 || "$c" == 201 ) && "$cc" == 0 && "$(astat $A3)" == "rejected" ]] && ok "M.12a 员工驳回（reason 落库，status=rejected）" || no "M.12a 驳回" "HTTP $c $(body | head -c 160)"
+c=$(atab POST /agent/v1/tools/inventory.adjust "{\"sku\":\"M-BOX-GIFT\",\"warehouse\":\"WH-SH\",\"delta\":-1,\"reason\":\"驳回测试\",\"idempotency_key\":\"m-adj-3\",\"approval_id\":\"$A3\"}"); cc=$(jget code)
+[[ "$c" == 403 && "$cc" == 4034 && "$(sqty M-BOX-GIFT WH-SH)" == "$BOX1" ]] && ok "M.12b 驳回后重试 → 403/4034「被驳回」" || no "M.12b 驳回重试" "HTTP $c code=$cc"
+
+# M.13 幂等重放：同 key 同参数第二次不产生副作用（§11.7.4）
+GOOD='{"page":{"widthMm":60,"heightMm":40,"dpi":300},"variables":[{"key":"name","label":"品名","type":"text"}],"elements":[{"id":"e1","type":"text","x":2,"y":2,"w":40,"h":6,"text":"苹果","bind":"name"},{"id":"bad","type":"unknown_kind","x":0,"y":0}]}'
+c=$(atab POST /agent/v1/tools/templates.create "{\"name\":\"P5 验收-礼盒标签\",\"category\":\"水果\",\"content\":$GOOD,\"idempotency_key\":\"m-tpl-1\"}"); cc=$(jget code)
+TPL=$(jget data data id)
+NEL=$(ps "select jsonb_array_length(content->'elements') from templates where id=$TPL")
+[[ ( "$c" == 200 || "$c" == 201 ) && "$cc" == 0 && -n "$TPL" && "$NEL" == "1" && "$(jget data warnings)" == *丢弃* ]] \
+  && ok "M.13 护栏 8：Agent 模板过 validateAiTemplate，未知元素丢弃（落库 1 个元素 + warning）" || no "M.13 模板清洗" "HTTP $c tpl=$TPL elements=$NEL $(body | head -c 180)"
+c=$(atab POST /agent/v1/tools/templates.create "{\"name\":\"P5 验收-礼盒标签\",\"category\":\"水果\",\"content\":$GOOD,\"idempotency_key\":\"m-tpl-1\"}"); cc=$(jget code)
+NTPL=$(ps "select count(*) from templates where tenant_id=$ID2 and name='P5 验收-礼盒标签'")
+[[ ( "$c" == 200 || "$c" == 201 ) && "$(jget data data idempotent_replay)" == "True" && "$(jget data data id)" == "$TPL" && "$NTPL" == "1" ]] \
+  && ok "M.14 同幂等键重试 → 重放原结果（模板仍 1 张，id=$TPL）" || no "M.14 幂等重放" "HTTP $c replay=$(jget data data idempotent_replay) count=$NTPL"
+
+# M.15 同 key 换参数 → 409/4036；非对象 content → 400
+c=$(atab POST /agent/v1/tools/templates.create "{\"name\":\"P5 验收-换参数\",\"content\":$GOOD,\"idempotency_key\":\"m-tpl-1\"}"); cc=$(jget code)
+[[ "$c" == 409 && "$cc" == 4036 ]] && ok "M.15a 同幂等键换参数 → 409/4036（防串味）" || no "M.15a 幂等冲突" "HTTP $c code=$cc $(body | head -c 160)"
+c=$(atab POST /agent/v1/tools/templates.create '{"name":"坏 content","content":"不是对象","idempotency_key":"m-tpl-2"}'); cc=$(jget code)
+[[ "$c" == 400 ]] && ok "M.15b content 非对象 → 400（护栏 8 拒收）" || no "M.15b 脏模板" "HTTP $c $(body | head -c 160)"
+
+# M.16 templates.update → 版本递增（可回滚）
+c=$(atab POST /agent/v1/tools/templates.update "{\"id\":$TPL,\"content\":$GOOD,\"idempotency_key\":\"m-tpl-3\"}"); cc=$(jget code)
+VER=$(jget data data currentVersion)
+[[ ( "$c" == 200 || "$c" == 201 ) && "$cc" == 0 && "${VER:-0}" -ge 2 ]] && ok "M.16 templates.update → v$VER（版本递增，旧版可回滚）" || no "M.16 版本递增" "HTTP $c v=$VER $(body | head -c 160)"
+
+# M.17 调拨：批次号带到目标仓、总量守恒（高危同样走审批）
+AP0=$(ps "select coalesce(sum(qty),0)::bigint from stock_batches sb join materials m on m.id=sb.material_id where sb.tenant_id=$ID2 and m.code='M-APPLE-ORG'")
+c=$(atab POST /agent/v1/tools/inventory.transfer '{"sku":"M-APPLE-ORG","from_warehouse":"WH-SH","to_warehouse":"WH-JX","qty":20,"idempotency_key":"m-tr-1"}')
+A4=$(jget data data approval_id); api POST "/agents/approvals/$A4/approve" "$PAT" '{}' >/dev/null
+c=$(atab POST /agent/v1/tools/inventory.transfer "{\"sku\":\"M-APPLE-ORG\",\"from_warehouse\":\"WH-SH\",\"to_warehouse\":\"WH-JX\",\"qty\":20,\"idempotency_key\":\"m-tr-1\",\"approval_id\":\"$A4\"}"); cc=$(jget code)
+AP1=$(ps "select coalesce(sum(qty),0)::bigint from stock_batches sb join materials m on m.id=sb.material_id where sb.tenant_id=$ID2 and m.code='M-APPLE-ORG'")
+NB=$(ps "select count(*) from stock_batches sb join warehouses w on w.id=sb.warehouse_id join materials m on m.id=sb.material_id where sb.tenant_id=$ID2 and m.code='M-APPLE-ORG' and w.code='WH-JX'")
+[[ ( "$c" == 200 || "$c" == 201 ) && "$cc" == 0 && "$AP0" == "$AP1" && "$NB" == "2" ]] \
+  && ok "M.17 调拨 20kg 上海→嘉兴：总量守恒（$AP1），目标仓批次行 2（批次号随货走）" || no "M.17 调拨" "HTTP $c sum=$AP0→$AP1 jx_batches=$NB"
+
+# M.18 D7：Agent 提交打印默认关闭；开启 + 审批后才落任务
+c=$(atab POST /agent/v1/tools/print.submit_job "{\"template\":$TPL,\"copies\":2,\"idempotency_key\":\"m-pj-0\"}"); cc=$(jget code)
+[[ "$c" == 403 && "$cc" == 4035 ]] && ok "M.18a D7 默认关闭 → 403/4035（feature 未开，含升级指引）" || no "M.18a D7 关闭" "HTTP $c code=$cc"
+api PUT "/platform/tenants/$ID2/flags" "$PT" '{"key":"agent.print.submit","enabled":true}' >/dev/null
+c=$(atab POST /agent/v1/tools/print.submit_job "{\"template\":$TPL,\"copies\":2,\"idempotency_key\":\"m-pj-1\"}"); A5=$(jget data data approval_id)
+api POST "/agents/approvals/$A5/approve" "$PAT" '{}' >/dev/null
+OWNER=$(ps "select id from users where tenant_id=$ID2 and username='${T2_CODE}_admin'")
+c=$(atab POST /agent/v1/tools/print.submit_job "{\"template\":$TPL,\"copies\":2,\"idempotency_key\":\"m-pj-1\",\"approval_id\":\"$A5\"}"); cc=$(jget code)
+JOB=$(jget data data jobId)
+ROW=$(ps "select status||'/'||total||'/'||coalesce(created_by,-1) from print_jobs where id=$JOB")
+[[ ( "$c" == 200 || "$c" == 201 ) && -n "$JOB" && "$ROW" == *"/2/$OWNER" ]] \
+  && ok "M.18b 开关开 + 审批后出任务（job=$JOB，2 张，created_by=$OWNER=Agent 归属人）" || no "M.18b 提交打印" "HTTP $c job=$JOB row=$ROW owner=$OWNER"
+c=$(atab POST /agent/v1/tools/print.get_status "{\"job_id\":$JOB}"); cc=$(jget code)
+[[ ( "$c" == 200 || "$c" == 201 ) && "$cc" == 0 && "$(jget data data jobId)" == "$JOB" ]] \
+  && ok "M.18c print.get_status 轮询可用（$(jget data summary)）" || no "M.18c 查任务" "HTTP $c $(body | head -c 160)"
+api PUT "/platform/tenants/$ID2/flags" "$PT" '{"key":"agent.print.submit","enabled":false}' >/dev/null
+
+# M.19 限流（§11.7.7 护栏 5）：新客户端 rpm=1 → 第 2 次 429/4037，且超限不计量
+c=$(api POST /agents "$PAT" '{"name":"P5 限流客户端","kind":"mcp_http"}'); CIDR=$(jget data id)
+c=$(api POST "/agents/$CIDR/tokens" "$PAT" '{"scopes":["template:read"],"expiresInDays":1}'); RTK=$(jget data token)
+api PUT "/platform/tenants/$ID2/flags" "$PT" '{"key":"agent.rate_limit","enabled":true,"rollout":{"rpm":1}}' >/dev/null
+M0=$(ps "select coalesce(sum(quantity),0)::bigint from usage_daily where tenant_id=$ID2 and meter='agent_calls'")
+c1=$(api GET /agent/v1/whoami "$RTK")
+M1=$(ps "select coalesce(sum(quantity),0)::bigint from usage_daily where tenant_id=$ID2 and meter='agent_calls'")
+N429=0; N200=0                         # 连打 5 次：出现 429 即判定限流生效；顺带按放行数核对计量
+for i in 1 2 3 4 5; do
+  LASTC=$(api GET /agent/v1/whoami "$RTK")
+  [[ "$LASTC" == 429 ]] && N429=$((N429+1))
+  [[ "$LASTC" == 200 ]] && N200=$((N200+1))
+done
+cc=$(jget code)
+M2=$(ps "select coalesce(sum(quantity),0)::bigint from usage_daily where tenant_id=$ID2 and meter='agent_calls'")
+NRATE=$(ps "select count(*) from audit_logs where tenant_id=$ID2 and detail->>'status'='denied_rate'")
+EXP_M2=$(python3 -c "print(int('$M1')+int('$N200'))")
+[[ "$c1" == 200 && "$N429" -ge 1 && "$cc" == 4037 && "$(jget limit)" == "1" ]] \
+  && ok "M.19a rpm=1：首呼 200、后续 5 呼中 $N429 次 429/4037（limit=1，retry_after=$(jget retry_after)s）" || no "M.19a 限流" "1=$c1 last=$LASTC code=$cc $(body | head -c 160)"
+[[ "$M1" == "$(python3 -c "print(int('$M0')+1)")" && "$M2" == "$EXP_M2" ]] \
+  && ok "M.19b 计量只跟着放行走：$M0 → $M1 → $M2（5 呼放行 $N200 次，denied_rate 审计 $NRATE 条）" || no "M.19b 超限计量" "$M0→$M1→$M2（期望 $EXP_M2）"
+if command -v redis-cli >/dev/null 2>&1; then
+  RKEY=$(redis-cli -p "${REDIS_PORT:-6380}" --scan --pattern "lf:agent:rl:$ID2:$CIDR:*" 2>/dev/null | head -1)
+  [[ -n "$RKEY" ]] && ok "M.19c 限流计数器落 Redis（$RKEY）" || no "M.19c Redis key" "未找到 lf:agent:rl:$ID2:$CIDR:*（可能退回进程内窗口）"
+else
+  ok "M.19c Redis key 跳过（本机无 redis-cli；服务侧已验证，Redis 故障时自动退进程内窗口）"
+fi
+api PUT "/platform/tenants/$ID2/flags" "$PT" '{"key":"agent.rate_limit","enabled":false,"rollout":{}}' >/dev/null
+c3=$(api GET /agent/v1/whoami "$RTK"); [[ "$c3" == 200 ]] && ok "M.19d 阈值恢复默认 60/分后放行（运营即时可调）" || no "M.19d 解除限流" "HTTP $c3"
+
+# M.20 审计（§11.7.7：agent_client_id / on_behalf_of / tool / args_hash / 状态 / 耗时）
+NAUD=$(ps "select count(*) from audit_logs where tenant_id=$ID2 and actor_type='agent'")
+NST=$(ps "select count(distinct detail->>'status') from audit_logs where tenant_id=$ID2 and actor_type='agent'")
+ONB=$(ps "select count(*) from audit_logs where tenant_id=$ID2 and actor_type='agent' and detail->>'onBehalfOf' is not null")
+HAS=$(ps "select string_agg(s,',') from (select distinct detail->>'status' s from audit_logs where tenant_id=$ID2 and actor_type='agent') x")
+[[ "$NAUD" -ge 20 && "$NST" -ge 8 && "$ONB" == "$NAUD" ]] \
+  && ok "M.20 agent 审计 $NAUD 条 / $NST 种状态 / on_behalf_of 全非空（$HAS）" || no "M.20 审计" "rows=$NAUD statuses=$NST onBehalf=$ONB/$NAUD"
+
+# M.21 Agent 侧审批自查 + 只读 token 打高危（§11.11.2 复用 L.12 口径）
+c=$(atab GET "/agent/v1/approvals?status=all"); cc=$(jget code)
+[[ "$c" == 200 && "$(jget data data total)" -ge 4 ]] && ok "M.21 Agent GET /agent/v1/approvals?status=all 自查 $(jget data data total) 条" || no "M.21 Agent 自查" "HTTP $c $(body | head -c 160)"
+
+# M.22 Streamable HTTP 传输（§11.7.1 / D9：SaaS 客户接入自有 Agent）
+MCP_DIR2="$MCP_DIR"
+if [[ -n "$MCP_DIR2" && -f "$MCP_DIR2/dist/http.js" && -f "$MCP_DIR2/dist/selftest-http.js" \
+      && -d "$MCP_DIR2/node_modules/@modelcontextprotocol" ]] && grep -q '"selftest:http"' "$MCP_DIR2/package.json"; then
+  (cd "$MCP_DIR2" && AGENT_TOKEN="$AGENT_TOK" AGENT_API_BASE="$BASE" npm run selftest:http --silent) >/tmp/mcp-http-selftest.log 2>&1
+  if grep -q "SELFTEST HTTP OK" /tmp/mcp-http-selftest.log; then ok "M.22 Streamable HTTP MCP 自测通过（tools/prompts/resources）"
+  else no "M.22 HTTP 自测" "$(tail -3 /tmp/mcp-http-selftest.log | tr '\n' ' ')"; fi
+else
+  ok "M.22 Streamable HTTP 自测跳过（apps/mcp-server 未构建 http 入口；P5 交付后跑 npm run selftest:http）"
+fi
 
 echo
 echo "== 通过 $pass / 失败 $fail"

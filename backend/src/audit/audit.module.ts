@@ -14,10 +14,16 @@ import { useTenant, useTenantId } from '../common/tenant.context';
 @Injectable()
 export class AuditService {
   constructor(@InjectRepository(AuditLog) private repo: Repository<AuditLog>) {}
-  write(tenantId: number, action: string, detail: Record<string, any> = {}, actorId?: number, targetType?: string, targetId?: number) {
+  write(
+    tenantId: number, action: string, detail: Record<string, any> = {},
+    actorId?: number, targetType?: string, targetId?: number,
+    actorType: 'user' | 'agent' = 'user',
+  ) {
     // 兜底：调用方没传 actorId 时从租户上下文取，确保审计日志的操作人字段永远有值
     const finalActorId = actorId ?? useTenant().userId;
-    return this.repo.save({ tenantId, action, detail, actorId: finalActorId, targetType, targetId });
+    return this.repo.save({
+      tenantId, action, detail, actorId: finalActorId, targetType, targetId, actorType,
+    });
   }
 
   /** 查询（分页） */

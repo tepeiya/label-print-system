@@ -27,6 +27,12 @@ export interface AgentCtx {
   clientName: string;
   scopes: string[];
   tokenId: number;
+  /**
+   * Agent 客户端的创建人（§11.7.6 on_behalf_of）。
+   * 写工具在这个身份下执行（模板 createdBy、打印 job createdBy），审计也能追责到人；
+   * 老数据 created_by 为空时为 null，写路径会退化成「无归属」并由执行层拒绝。
+   */
+  onBehalfOf: number | null;
 }
 
 export interface TokenAuthRecord {

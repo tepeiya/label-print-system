@@ -3,13 +3,14 @@
 // PRO 套餐专属：类上 @RequireModule('agent')；token 明文只在签发响应出现一次。
 // =============================================================================
 import {
-  Body, Controller, Get, Param, Post, Query, Request, UseGuards,
+  BadRequestException, Body, Controller, Get, Param, Post, Query, Request, UseGuards,
 } from '@nestjs/common';
 import { TenantGuard } from '../common/tenant.guard';
 import { RequireModule } from '../common/module.guard';
 import { RequirePermission } from '../common/permission.guard';
 import { useTenantId } from '../common/tenant.context';
 import { AgentService } from './agent.service';
+import { ApprovalService } from './approval.service';
 import { PermissionsService } from '../saas/permissions.service';
 import { AuditService } from '../audit/audit.module';
 import {
@@ -24,6 +25,7 @@ export class AgentsController {
     private agent: AgentService,
     private perms: PermissionsService,
     private audit: AuditService,
+    private approvals: ApprovalService,
   ) {}
 
   /** Agent 客户端列表 */
@@ -41,6 +43,36 @@ export class AgentsController {
     const row = await this.agent.createClient(tenantId, req.user?.sub, dto);
     await this.audit.write(tenantId, 'agent.client.create', { name: dto.name, kind: row.kind }, req.user?.sub, 'agent_client', row.id);
     return row;
+  }
+
+  // ------------------------------------------------ 高危操作审批（§11.7.6 / §11.6.1）
+  // 权限：sys:agent:manage 或 sys:agent:approve（§11.6.1「业务权限」，manager/warehouse_keeper 可确认）
+
+  /** 待确认列表：谁（哪个 Agent）要做什么（参数摘要）。status=pending|approved|rejected|expired|consumed|all */
+  @Get('approvals')
+  @RequirePermission('sys:agent:manage', 'sys:agent:approve')
+  async listApprovals(
+    @Query('status') status?: string, @Query('page') page?: string, @Query('pageSize') pageSize?: string,
+  ) {
+    return this.approvals.listForTenant(
+      useTenantId(), String(status ?? 'pending'), Number(page) || 1, Number(pageSize) || 20,
+    );
+  }
+
+  /** 确认：置 approved（5 分钟、一次性），Agent 用同参数 + approval_id 重试才会执行 */
+  @Post('approvals/:id/approve')
+  @RequirePermission('sys:agent:manage', 'sys:agent:approve')
+  approve(@Request() req: any, @Param('id') id: string) {
+    if (!/^\d+$/.test(String(id))) throw new BadRequestException('approval id 必须是数字');
+    return this.approvals.approve(useTenantId(), Number(id), req.user?.sub ?? null);
+  }
+
+  /** 驳回：Agent 重试会得到「审批被驳回」，操作不执行 */
+  @Post('approvals/:id/reject')
+  @RequirePermission('sys:agent:manage', 'sys:agent:approve')
+  reject(@Request() req: any, @Param('id') id: string, @Body() body: { reason?: string }) {
+    if (!/^\d+$/.test(String(id))) throw new BadRequestException('approval id 必须是数字');
+    return this.approvals.reject(useTenantId(), Number(id), req.user?.sub ?? null, body?.reason);
   }
 
   /** 某 Agent 的 Token 列表（脱敏：只回 hash 尾 8 位） */

@@ -97,6 +97,8 @@ export class AuditLog {
   @Column({ name: 'target_id', nullable: true }) targetId: number;
   @Column('jsonb', { nullable: true }) detail: Record<string, any>;
   @Column({ length: 45, nullable: true }) ip: string;
+  /** P5（§11.7.6）：user / agent —— Agent 工具调用审计标 agent，配合 detail.onBehalfOf 追责到人 */
+  @Column({ name: 'actor_type', type: 'varchar', length: 16, default: 'user' }) actorType: string;
   @CreateDateColumn() createdAt: Date;
 }
 

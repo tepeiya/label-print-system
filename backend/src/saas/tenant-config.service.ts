@@ -37,6 +37,17 @@ export class TenantConfigService {
     return !!row?.enabled;
   }
 
+  /**
+   * 开关的 rollout 明细（P5 限流用：feature_flags['agent.rate_limit'].rollout = {rpm: N}）。
+   * 与 isEnabled 不同，这里不看 enabled —— 灰度「阈值」和「是否放行」是两件事，
+   * 运营只改 rollout 就能调 RPM，不必开开关。
+   */
+  async rolloutFor(tenantId: number, key: string): Promise<Record<string, any> | null> {
+    if (!tenantId) return null;
+    const row = await this.flags.findOne({ where: { tenantId, key } });
+    return row?.rollout ?? null;
+  }
+
   /** 写入/更新开关（平台或租户管理员操作后调用，D7 的灰度入口） */
   async setFlag(tenantId: number, key: string, enabled: boolean, rollout: Record<string, any> = {}) {
     const existing = await this.flags.findOne({ where: { tenantId, key } });

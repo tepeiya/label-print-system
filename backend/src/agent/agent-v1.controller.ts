@@ -2,10 +2,12 @@
 // AgentV1Controller —— Agent API（docs/11 §11.6.3，前缀 /agent/v1）
 // 类级 @Public() 跳过全局 JWT/模块/权限链（P2 PlatformAdminController 同款模式），
 // 真正的门禁是 AgentTokenGuard；租户 ID 只从 token 解析，禁止请求体传入。
+// P5：/approvals 由 400 占位改为正式实现（§11.7.6），高危工具无审批返回 **202 need_approval**。
 // =============================================================================
 import {
-  BadRequestException, Body, Controller, Get, Param, Post, Request, UseGuards,
+  BadRequestException, Body, Controller, Get, Param, Post, Query, Request, Res, UseGuards,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { Public } from '../common/public.decorator';
 import { AgentTokenGuard } from './agent-token.guard';
 import { AgentCtx } from './agent.service';
@@ -29,14 +31,21 @@ export class AgentV1Controller {
     return this.tools.listTools(req.agentCtx);
   }
 
-  /** 统一工具调用入口：body = 工具入参（§11.7.3 各工具 schema） */
+  /**
+   * 统一工具调用入口：body = 工具入参（§11.7.3 各工具 schema）。
+   * 高危工具缺有效 approval 时返回 202 + data.need_approval（响应体仍是统一信封，
+   * 让模型能直接读懂「等谁、做什么、怎么重试」），且不产生任何副作用。
+   */
   @Post('tools/:tool')
-  call(
+  async call(
     @Request() req: { agentCtx: AgentCtx },
     @Param('tool') tool: string,
     @Body() args: Record<string, any>,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.tools.call(req.agentCtx, tool, args ?? {});
+    const result = await this.tools.call(req.agentCtx, tool, args ?? {});
+    if (result?.data?.need_approval === true) res.status(202);
+    return result;
   }
 
   /** 只读资源（labelflow://templates/{id}、labelflow://inventory/stock/{ref}） */
@@ -45,14 +54,31 @@ export class AgentV1Controller {
     return this.tools.resource(req.agentCtx, kind, id);
   }
 
-  // 审批流（§11.7.6）与租户 JWT 版 approvals 在 P5 接线；这里先给明确 400，不静默 404
+  /** 主动为高危工具创建审批单（§11.6.3 POST /agent/v1/approvals） */
   @Post('approvals')
-  createApproval() {
-    throw new BadRequestException('审批流将在后续版本开放（P5：高危工具 need_approval 链路）');
+  createApproval(@Request() req: { agentCtx: AgentCtx }, @Body() body: Record<string, any>) {
+    const tool = String(body?.tool ?? '').trim();
+    if (!tool) throw new BadRequestException('需要 tool（高危工具名，如 inventory.adjust）');
+    return this.tools.requestApproval(req.agentCtx, tool, body?.args ?? {});
   }
 
+  /** 查询审批状态（§11.6.3 GET /agent/v1/approvals/:id） */
   @Get('approvals/:id')
-  getApproval() {
-    throw new BadRequestException('审批流将在后续版本开放（P5：approval 状态查询）');
+  getApproval(@Request() req: { agentCtx: AgentCtx }, @Param('id') id: string) {
+    if (!/^\d+$/.test(String(id))) throw new BadRequestException('approval id 必须是数字');
+    return this.tools.getApproval(req.agentCtx, Number(id));
+  }
+
+  /** 自己的审批单列表（模型轮询用；status 缺省 pending） */
+  @Get('approvals')
+  listApprovals(
+    @Request() req: { agentCtx: AgentCtx },
+    @Query('status') status?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.tools.listOwnApprovals(
+      req.agentCtx, String(status ?? 'pending'), Number(page) || 1, Number(pageSize) || 20,
+    );
   }
 }

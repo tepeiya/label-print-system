@@ -5,8 +5,10 @@
 //
 // ⚠️ 权限点用库内真实码（两段式 template:read/write），与文档 print:template:* 的
 //    出入见 docs/10 §10.20 偏离说明。
-// implemented=false 的行 = 已注册但 P4 无执行器（调用返回 400「后续版本开放」；
-//    只读 token 打高危工具会先在 scope 检查处 403，满足 §11.11.2 验收）。
+// implemented=false 的行 = 已注册但无执行器（调用返回 400「后续版本开放」）：
+//    P5 开放了 5 个写工具 + print.get_status；print.estimate/wait_for_job/cancel_job、
+//    ai.*、alerts.* 仍属后续阶段（alert 域无表、ai 域要图片入参与计费联动）。
+// P5 语义：risk==='high' → 必须 approval（§11.7.6）；risk!=='read' → 必须 idempotency_key（§11.7.4）。
 // =============================================================================
 import { matchPermission } from '../common/permission-match';
 
@@ -21,7 +23,7 @@ export interface ToolDef {
   /** 所需订阅模块（满足其一）；空数组 = 不限 */
   modules: string[];
   risk: ToolRisk;
-  /** P4 是否有执行器 */
+  /** 是否已有执行器（false = 调用返回 400「后续版本开放」） */
   implemented: boolean;
   inputSchema: Record<string, unknown>;
 }
@@ -130,20 +132,33 @@ export const AGENT_TOOLS: ToolDef[] = [
     }, ['product', 'demand']),
   },
 
-  // ---------------- 已注册、P4 无执行器（P5 接线） ----------------
+  // ---------------- P5 写工具（§11.7.4 强制 idempotency_key；risk=high 需 approval） ----------------
   {
-    name: 'templates.create', title: '创建模板', risk: 'write', permission: 'template:write', modules: ['templates'], implemented: false,
-    description: '（P5 开放）创建标签模板',
-    inputSchema: S({ name: { type: 'string' }, content: { type: 'object' } }, ['name', 'content']),
+    name: 'templates.create', title: '创建模板', risk: 'write', permission: 'template:write', modules: ['templates'], implemented: true,
+    description: '创建标签模板。content 必须是合法模板 JSON（会过 validateAiTemplate 清洗，护栏 8）；'
+      + '同 idempotency_key 重试只创建一次',
+    inputSchema: S({
+      name: { type: 'string' },
+      category: { type: 'string' },
+      tags: { type: 'array', items: { type: 'string' } },
+      content: { type: 'object', description: '模板设计 JSON（page/variables/elements）' },
+      idempotency_key: { type: 'string', description: '幂等键，重试安全' },
+    }, ['name', 'content', 'idempotency_key']),
   },
   {
-    name: 'templates.update', title: '更新模板', risk: 'write', permission: 'template:write', modules: ['templates'], implemented: false,
-    description: '（P5 开放）更新模板内容',
-    inputSchema: S({ id: { type: 'integer' }, content: { type: 'object' } }, ['id', 'content']),
+    name: 'templates.update', title: '更新模板', risk: 'write', permission: 'template:write', modules: ['templates'], implemented: true,
+    description: '更新模板内容并生成新版本（currentVersion + 1，可回滚）；同 idempotency_key 重试只生效一次',
+    inputSchema: S({
+      id: { type: 'integer' },
+      name: { type: 'string', description: 'id 缺失时按名称定位' },
+      content: { type: 'object' },
+      idempotency_key: { type: 'string' },
+    }, ['content', 'idempotency_key']),
   },
   {
-    name: 'inventory.adjust', title: '库存调整（高危）', risk: 'high', permission: 'inventory:stock:adjust', modules: ['inventory'], implemented: false,
-    description: '（P5 开放，需 approval）按 idempotency_key 幂等调整批次库存',
+    name: 'inventory.adjust', title: '库存调整（高危）', risk: 'high', permission: 'inventory:stock:adjust', modules: ['inventory'], implemented: true,
+    description: '按批次调整库存：delta 正数入库、负数出库（不足整笔拒绝）。'
+      + '无 approval_id 时只建审批单不改动库存；dry_run=true 可先预演',
     inputSchema: S({
       sku: { type: 'string' },
       warehouse: { type: 'string' },
@@ -151,27 +166,37 @@ export const AGENT_TOOLS: ToolDef[] = [
       delta: { type: 'number', description: '正数入库，负数出库' },
       reason: { type: 'string', minLength: 2 },
       idempotency_key: { type: 'string' },
-      approval_id: { type: 'string' },
+      approval_id: { type: 'string', description: '高危操作确认令牌' },
       dry_run: { type: 'boolean', default: false },
     }, ['sku', 'warehouse', 'delta', 'reason', 'idempotency_key']),
   },
   {
-    name: 'inventory.transfer', title: '库存调拨（高危）', risk: 'high', permission: 'inventory:stock:transfer', modules: ['inventory'], implemented: false,
-    description: '（P5 开放，需 approval）批次跨仓调拨',
+    name: 'inventory.transfer', title: '库存调拨（高危）', risk: 'high', permission: 'inventory:stock:transfer', modules: ['inventory'], implemented: true,
+    description: '批次跨仓调拨（批次号原样带过去，目标仓无该批次则新建一行）。需 approval；dry_run 可预演',
     inputSchema: S({
       sku: { type: 'string' }, from_warehouse: { type: 'string' }, to_warehouse: { type: 'string' },
-      qty: { type: 'number' }, idempotency_key: { type: 'string' }, approval_id: { type: 'string' },
+      qty: { type: 'number' }, batch_no: { type: 'string', description: '只调这个批次，缺省按 FIFO 跨批次凑' },
+      idempotency_key: { type: 'string' }, approval_id: { type: 'string' },
+      dry_run: { type: 'boolean', default: false },
     }, ['sku', 'from_warehouse', 'to_warehouse', 'qty', 'idempotency_key']),
   },
   {
-    name: 'print.submit_job', title: '提交打印（高危）', risk: 'high', permission: 'print:job:submit', modules: ['print'], implemented: false,
-    description: '（P5 开放）D7：默认关闭，需 feature_flags[agent.print.submit]=true + approval_id',
+    name: 'print.submit_job', title: '提交打印（高危）', risk: 'high', permission: 'print:job:submit', modules: ['print'], implemented: true,
+    description: 'D7：默认关闭，需 feature_flags[agent.print.submit]=true + approval_id。'
+      + '单次 copies×rows ≤ 500（§11.7.7 护栏 5），走 print_labels 配额',
     inputSchema: S({
       template: { type: 'string', description: '模板 id 或名称' },
-      copies: { type: 'integer', minimum: 1 },
+      copies: { type: 'integer', minimum: 1, maximum: 500 },
+      rows: { type: 'array', items: { type: 'object' }, description: '数据行，缺省 1 行空数据' },
+      printer_id: { type: 'integer' },
       idempotency_key: { type: 'string' },
       approval_id: { type: 'string' },
     }, ['template', 'copies', 'idempotency_key']),
+  },
+  {
+    name: 'print.get_status', title: '查打印任务', risk: 'read', permission: 'print:job:read', modules: ['print'], implemented: true,
+    description: '查询打印任务进度（submit_job 之后的轮询；等待/取消留后续版本）',
+    inputSchema: S({ job_id: { type: 'integer' } }, ['job_id']),
   },
 ];
 
@@ -193,4 +218,14 @@ export function catalogDto(tools: ToolDef[]) {
     permission: t.permission, modules: t.modules, risk: t.risk, implemented: t.implemented,
     inputSchema: t.inputSchema,
   }));
+}
+
+/** 高危工具：无有效 approval 只能建审批单（§11.7.6） */
+export function needsApproval(tool: ToolDef): boolean {
+  return tool.risk === 'high';
+}
+
+/** 写/高危工具：强制幂等键（§11.7.4 / §11.7.7 护栏 4） */
+export function isWriteTool(tool: ToolDef): boolean {
+  return tool.risk !== 'read';
 }

@@ -21,30 +21,9 @@ import { BillingModule } from './billing/billing.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { AgentModule } from './agent/agent.module';
 import { SnakeNamingStrategy } from './snake-naming.strategy';
-import { JWT_SECRET } from './common/config';
+import { JWT_SECRET, redisConnection } from './common/config';
 
 const ENTITIES = Object.values(entities).filter((e) => typeof e === 'function');
-
-/** 兼容 REDIS_URL（如 redis://localhost:6380）与分项环境变量 */
-function redisConnection() {
-  const url = process.env.REDIS_URL;
-  if (url) {
-    try {
-      const u = new URL(url);
-      return {
-        host: u.hostname || '127.0.0.1',
-        port: +(u.port || 6379),
-        password: u.password ? decodeURIComponent(u.password) : undefined,
-        db: u.pathname && u.pathname.length > 1 ? +u.pathname.slice(1) : 0,
-      };
-    } catch { /* 回退到分项配置 */ }
-  }
-  return {
-    host: process.env.REDIS_HOST || '127.0.0.1',
-    port: +(process.env.REDIS_PORT || 6379),
-    password: process.env.REDIS_PASSWORD || undefined,
-  };
-}
 
 @Module({
   imports: [
