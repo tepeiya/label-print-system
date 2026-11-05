@@ -1,0 +1,64 @@
+// /agent/v1 瘦客户端（docs/11 §11.7.1）：只带 Agent Token 打 REST，不持任何数据库凭证。
+// stdio 单租户 —— 一个进程 = 一个 token = 一个租户（§11.7.1）。
+
+export interface AgentToolDto {
+  name: string;
+  title?: string;
+  description: string;
+  permission: string | null;
+  modules: string[];
+  risk?: string;
+  implemented?: boolean;
+  inputSchema: Record<string, unknown>;
+}
+
+export interface Envelope<T = any> {
+  code: number;
+  message: string;
+  data: T;
+  [k: string]: any;
+}
+
+export class AgentApiError extends Error {
+  constructor(public httpStatus: number, public envelope: Envelope | null, message: string) {
+    super(message);
+  }
+}
+
+export class AgentApiClient {
+  private base: string;
+  private token: string;
+
+  constructor(base?: string, token?: string) {
+    this.base = (base ?? process.env.AGENT_API_BASE ?? 'http://127.0.0.1:3200/api/v1').replace(/\/+$/, '');
+    this.token = token ?? process.env.AGENT_TOKEN ?? '';
+    if (!this.token) {
+      throw new Error('缺少 AGENT_TOKEN（在租户后台「Agent 管理」签发，形如 lfagent_…）');
+    }
+  }
+
+  private async req<T = any>(method: string, path: string, body?: unknown): Promise<Envelope<T>> {
+    const res = await fetch(this.base + path, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.token}`,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+    });
+    let json: Envelope<T> | null = null;
+    try { json = (await res.json()) as Envelope<T>; } catch { /* 非 JSON 响应 */ }
+    if (!res.ok || (json && json.code !== 0)) {
+      const msg = json?.message ?? `HTTP ${res.status}`;
+      throw new AgentApiError(res.status, json, msg);
+    }
+    return json!;
+  }
+
+  whoami() { return this.req('GET', '/agent/v1/whoami'); }
+  listTools() { return this.req<AgentToolDto[]>('GET', '/agent/v1/tools'); }
+  callTool(name: string, args: Record<string, unknown>) {
+    return this.req('POST', `/agent/v1/tools/${encodeURIComponent(name)}`, args ?? {});
+  }
+}
