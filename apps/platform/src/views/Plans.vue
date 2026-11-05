@@ -80,7 +80,7 @@
 import { onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { apiListModules, apiListPlans, apiUpdatePlan } from '@/api';
-import type { ModuleCatalogItem, PlanInfo } from '@/api/types';
+import type { ModuleCatalogItem, PlanInfo, PlanUpdatePayload } from '@/api/types';
 
 /** 可编辑草稿：后端没有单套餐 GET，改完直接 PUT /platform/plans/:code */
 interface Draft {
@@ -89,6 +89,8 @@ interface Draft {
   sortOrder: number;
   /** 月费（元），提交时转 priceCents（分） */
   priceYuan: number;
+  /** 列表是否真回了 priceCents：没回就不擅自提交该字段，免得把线上价格清零 */
+  priceKnown: boolean;
   moduleCodes: string[];
 }
 
@@ -105,16 +107,36 @@ const planTagType = (code: string) =>
 
 /** 元 → 分（分是后端唯一口径，plans.price_cents 为 BIGINT，读出可能是字符串） */
 const centsOf = (yuan: number | undefined | null) => Math.round(Number(yuan ?? 0) * 100);
-const priceText = (cents: number | string | undefined | null) => `¥ ${(Number(cents ?? 0) / 100).toFixed(2)}`;
+const hasPrice = (cents: number | string | undefined | null) => cents !== null && cents !== undefined;
+const priceText = (cents: number | string) => `¥ ${(Number(cents) / 100).toFixed(2)}`;
+
+/**
+ * 月费输入框旁注。
+ * GET /platform/plans（PlatformController 目录版）目前不一定回 priceCents（后端 P3 在补），
+ * 所以没回的时候明确告诉运营：保持 0 不会覆盖线上价，改了值才提交该字段。
+ */
+function priceHint(code: string) {
+  const d = drafts[code];
+  if (!d) return '';
+  const cents = centsOf(d.priceYuan);
+  if (!d.priceKnown) {
+    return d.priceYuan > 0
+      ? `列表未回 priceCents，本次将按 ${cents}（分）写入月费`
+      : `列表未回 priceCents：留 0 则不提交该字段（线上月费不变），填值后按 ${cents}（分）写入`;
+  }
+  return `保存提交 priceCents=${cents}（分），是账单中心「按套餐出账」的基准`;
+}
 
 function pickDraft(p: PlanInfo): Draft {
-  // GET /platform/plans 的模块字段叫 modules（运营写接口回的是 moduleCodes），这里都兼容
+  // GET /platform/plans 走 PlatformController 的目录版，模块字段叫 modules；
+  // PUT /platform/plans/:code 的回包才叫 moduleCodes，这里都兼容一次
   return {
     name: p.name ?? '',
     description: p.description ?? '',
     sortOrder: p.sortOrder ?? 0,
-    priceYuan: Number(p.priceCents ?? 0) / 100,
-    moduleCodes: [...(p.moduleCodes ?? p.modules ?? [])],
+    priceYuan: hasPrice(p.priceCents) ? Number(p.priceCents) / 100 : 0,
+    priceKnown: hasPrice(p.priceCents),
+    moduleCodes: [...(p.modules ?? p.moduleCodes ?? [])],
   };
 }
 
@@ -160,16 +182,23 @@ async function load() {
 
 async function save(p: PlanInfo) {
   const d = drafts[p.code];
+  const o = origin[p.code];
   saving.value = p.code;
+  const cents = centsOf(d.priceYuan);
+  // 列表没回 priceCents 且运营没动价格输入 → 不提交该字段，避免把线上月费误清零
+  const touchPrice = d.priceKnown || cents !== centsOf(o?.priceYuan ?? 0);
+  const payload: PlanUpdatePayload = {
+    name: d.name,
+    description: d.description,
+    sortOrder: d.sortOrder,
+    moduleCodes: d.moduleCodes,
+    ...(touchPrice ? { priceCents: cents } : {}),
+  };
   try {
-    await apiUpdatePlan(p.code, {
-      name: d.name,
-      description: d.description,
-      sortOrder: d.sortOrder,
-      priceCents: centsOf(d.priceYuan),
-      moduleCodes: d.moduleCodes,
-    });
-    ElMessage.success(`套餐 ${p.code} 已保存（月费 ${priceText(centsOf(d.priceYuan))}，模块 ${d.moduleCodes.length} 个）`);
+    await apiUpdatePlan(p.code, payload);
+    ElMessage.success(
+      `套餐 ${p.code} 已保存（${touchPrice ? `月费 ${priceText(cents)}，` : ''}模块 ${d.moduleCodes.length} 个）`,
+    );
     await load();
   } catch {
     /* 拦截器已提示 */

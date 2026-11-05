@@ -149,8 +149,9 @@ export const apiTenantModules = (id: number) =>
 
 // ========== 模块目录 / 套餐 ==========
 export const apiListModules = () => http.get<ModuleCatalogItem[]>('/platform/modules');
+/** 列表命中 PlatformController 的目录版（先注册）：模块字段是 modules，P3 起带 priceCents（分） */
 export const apiListPlans = () => http.get<PlanInfo[]>('/platform/plans');
-// PUT /platform/plans/:code 没有对应的 GET（platform-admin 只暴露列表 + 更新）
+// 写侧仍是 PUT /platform/plans/:code（moduleCodes 全量替换 + priceCents 月费，单位分）
 export const apiUpdatePlan = (code: string, data: PlanUpdatePayload) =>
   http.put<PlanUpdateResult>(`/platform/plans/${code}`, data);
 

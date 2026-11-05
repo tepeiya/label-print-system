@@ -92,7 +92,11 @@ export interface TenantSubscriptionDetail {
   modules: string[];
 }
 
-/** GET /platform/plans —— modules 是套餐原始配置，effectiveModules 已按依赖补齐 */
+/**
+ * GET /platform/plans —— 命中的是 PlatformController 的目录版（先注册）：
+ * 模块字段叫 `modules`（套餐原始配置），`effectiveModules` 已按依赖补齐，
+ * 没有 `moduleCodes`（那只是 PUT 回包的字段名）。
+ */
 export interface PlanInfo {
   id: number;
   code: string;
@@ -103,7 +107,10 @@ export interface PlanInfo {
   effectiveModules: string[];
   /** 只有 PUT /platform/plans/:code 的回包带这个字段（GET 列表用 modules）；未改模块时为 null */
   moduleCodes?: string[] | null;
-  /** P3 月费（分）。plans.price_cents 是 BIGINT，pg 驱动可能回字符串，用之前先 Number() */
+  /**
+   * P3 月费（分）：plans.price_cents 是 BIGINT，pg 驱动可能回字符串，用之前先 Number()。
+   * 旧构建的列表可能不带该字段，读侧按「未回」处理（见 views/Plans.vue 的 priceKnown）。
+   */
   priceCents?: number | string;
 }
 
