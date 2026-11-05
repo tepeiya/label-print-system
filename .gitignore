@@ -2,6 +2,9 @@
 node_modules/
 .pnp
 .pnp.js
+# pnpm 的包缓存（内容寻址 store，node_modules 由它硬链接而来）。
+# 本机曾把 store 指到仓库目录内，导致 232MB 缓存被 git add -A 一起提交（见 95b4970）。
+.pnpm-store/
 
 # 构建产物
 dist/
