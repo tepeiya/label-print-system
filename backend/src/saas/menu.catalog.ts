@@ -49,6 +49,8 @@ export const MENU_CATALOG: MenuNode[] = [
       { key: 'billing', name: '账单与用量', icon: 'Wallet', path: '/billing', module: 'users', permission: 'sys:billing:read' },
       { key: 'audit', name: '审计日志', icon: 'Document', path: '/audit', module: 'audit', permission: 'audit:read' },
       { key: 'backups', name: '备份中心', icon: 'Folder', path: '/backups', module: 'backup', permission: 'backup:read' },
+      // 白标（D6）：改的是「登录页对外长相 + 自定义域名」，只给 admin / tenant_admin
+      { key: 'branding', name: '品牌与域名', icon: 'Brush', path: '/branding', module: 'users', permission: 'sys:branding:manage' },
     ],
   },
   // Agent 接入（P4/P5 后端已有，P6 补前端入口）：分组自身不参与可见性判断，

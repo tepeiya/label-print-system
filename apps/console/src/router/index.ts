@@ -41,6 +41,14 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/Backups.vue'),
         meta: { title: '备份中心', icon: 'Folder', module: 'backup', permission: 'backup:read' },
       },
+      // 白标（D6）：与 backend/src/saas/menu.catalog.ts 的 '/branding' 对齐。
+      // module 用 users 而不是新模块——品牌配置存在 tenants.branding 上、域名表也是 SaaS 侧的，
+      // 单开一个模块会让 BASIC 套餐的客户「有权限却没模块」，反而要点 /blocked。
+      {
+        path: 'branding',
+        component: () => import('@/views/Branding.vue'),
+        meta: { title: '品牌与域名', icon: 'Brush', module: 'users', permission: 'sys:branding:manage' },
+      },
       {
         path: 'subscription',
         component: () => import('@/views/SubscriptionInfo.vue'),

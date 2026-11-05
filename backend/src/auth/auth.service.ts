@@ -32,10 +32,22 @@ export class AuthService {
     private configSvc: TenantConfigService,
   ) {}
 
-  /** 登录：按 tenantCode 查租户 → 租户内用户名+密码校验（密码 bcrypt 加盐哈希） */
-  async login(username: string, password: string, tenantCode: string) {
-    const tenant = await this.tenants.findOne({ where: { code: tenantCode } });
-    if (!tenant) throw new UnauthorizedException(`租户 "${tenantCode}" 不存在`);
+  /**
+   * 登录：按 tenantCode 查租户 → 租户内用户名+密码校验（密码 bcrypt 加盐哈希）。
+   *
+   * hostTenantCode（白标 D6，来自**已校验**自定义域名的解析结果）优先级高于请求体：
+   *   · 省略 tenantCode → 用域名的租户；
+   *   · 显式给了同一个 code → 照常；
+   *   · 显式给了别的 code → 401（登录入口归属另一个租户，不做「域名好看、登录别家」）。
+   * hostTenantCode 为 null 时行为与历史完全一致（含 tenantCode 缺省走 default）。
+   */
+  async login(username: string, password: string, tenantCode?: string | null, hostTenantCode?: string | null) {
+    const code = tenantCode ?? hostTenantCode ?? 'default';
+    if (hostTenantCode && tenantCode && tenantCode !== hostTenantCode) {
+      throw new UnauthorizedException('该登录入口不属于此租户，请从对应域名登录');
+    }
+    const tenant = await this.tenants.findOne({ where: { code } });
+    if (!tenant) throw new UnauthorizedException(`租户 "${code}" 不存在`);
     if (tenant.status !== 1) throw new UnauthorizedException('该租户已停用');
     const user = await this.users.findOne({ where: { username, tenantId: tenant.id } });
     if (!user || !(await bcrypt.compare(password, user.passwordHash)))

@@ -1,7 +1,11 @@
 <template>
   <div class="layout">
     <header class="layout-header">
-      <div class="logo">🏷️ LabelFlow Console</div>
+      <div class="logo">
+        <img v-if="branding?.logoUrl" :src="branding.logoUrl" alt=""
+             style="height: 20px; vertical-align: -4px; margin-right: 8px;" />
+        <span v-else>🏷️</span> {{ branding?.appName || 'LabelFlow Console' }}
+      </div>
       <el-menu mode="horizontal" :default-active="route.path" router class="nav">
         <!-- P1 动态菜单：树由后端 /auth/me.menus 下发（modules + permissions 裁剪），
              前端只负责渲染，不再维护菜单清单。带 children 的是分组。 -->
@@ -80,6 +84,7 @@ import { computed, ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/store/auth';
 import { apiLogout, apiSubscription } from '@/api';
+import { branding } from '@/composables/branding';
 import type { MenuNode } from '@/store/auth';
 
 /** 渲染用的菜单节点：后端 MenuNode 的 children 是可选的，这里统一成必有数组 */

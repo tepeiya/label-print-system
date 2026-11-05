@@ -4,14 +4,17 @@
 # 段次：A–G 权限/订阅底座（P0/P1） · H 旧端点回归 · I J 平台运营（P2） · K 账单配额（P3）
 #       L Agent 只读（P4） · M Agent 写工具/幂等/审批/限流/审计/HTTP（P5）
 #       N RLS 兜底 + 租户数据导出/硬删（P6.1/P6.3）+ Agent 前端入口（P5.5）
+#       O 白标（P6.4/D6）：品牌清洗 + 域名 TXT 校验 + Host→租户解析 + 平台强校验
 # P6 段要真删数据，用的是自建的靶租户（${T_CODE}p6 / ${T_CODE}p7），段尾自清理，不碰 A/B/M 的租户。
 #
 # 前提：
 #   1) PG 已按顺序建表：docs/03-database.sql → seed.sql → saas_p0.sql → saas_p0_roles.sql
 #      → saas_p2_platform.sql → saas_p3_billing.sql → saas_p4_agent.sql → saas_p5_agent_tools.sql
-#      → saas_p6_rls.sql → saas_p6_tenant_data.sql   （N 段两条都必需，缺前者 N.1 判失败，缺后者 N.4 直接 500）
+#      → saas_p6_rls.sql → saas_p6_tenant_data.sql → saas_p6_branding.sql
+      （N 段两条都必需，缺前者 N.1 判失败，缺后者 N.4 直接 500；O 段缺 saas_p6_branding.sql 会 O.2 直接 403/500）
 #   2) 后端在跑：npx tsc -p tsconfig.json && node -r reflect-metadata dist/src/main.js
 #      想要 N.6 断言 rlsActive=true，后端必须带 DB_RLS_USER/DB_RLS_PASSWORD 启动（见 docs/10 §10.22.4）
+#      O 段的域名校验走 dev 逃生口，后端还要带 BRANDING_DEV_VERIFY=1（且 NODE_ENV≠production）
 #   3) 默认租户 admin/admin123 可登录（首次启动由 main.ts 种子写入）
 #
 # 用法：
@@ -736,6 +739,176 @@ ps "delete from tenant_backups where tenant_id in ($ID6, $ID7)" >/dev/null
 ps "delete from tenants where id in ($ID6, $ID7)" >/dev/null
 rm -f "$GZ" /tmp/p6_export_$$.json /tmp/p6_dl_$$.code
 echo "  （P6 靶租户 $ID6/$ID7 及其快照已清理）"
+
+# ---------------------------------------------------------------------------
+# O. P6.4 白标（D6）：品牌清洗 / 域名 TXT 校验 / Host→租户解析 / 平台强校验
+# 依赖：backend/scripts/saas_p6_branding.sql（tenant_domains 补列 + sys:branding:manage）
+# 沙盒里查不到真实 DNS，O.11 用 BRANDING_DEV_VERIFY=1 逃生口把域名推到 verified，
+# 验的是「verified 之后才允许解析/登录」这条闸门；TXT 比对本身由
+# backend/src/saas/__tests__/branding.calc.test.ts 覆盖（含 char-string 分段、多段拼串）。
+# 域名统一用 *.${T_CODE}.test，段尾删干净，重跑不撞 domain 唯一约束。
+echo
+echo "-- O. P6.4 白标（品牌 / 自定义域名 / Host 解析）"
+
+O_HOST="label.${T_CODE}.test"
+O_HOST2="ops.${T_CODE}.test"
+B_NAME="${T_CODE} 品牌"
+
+# O.1 出厂访问（Host=127.0.0.1）不该命中任何租户
+check "O.1 未登记域名时公开解析 matched=false（不 404，前端静默兜底）" \
+  "$(api GET /branding)/$(jget data matched)" "200/False"
+
+# O.2 租户侧读取
+check "O.2 GET /branding/me 返回本租户 + 空域名表" \
+  "$(api GET /branding/me "$BAT")/$(jget data tenantCode)/$(jget data domains)" "200/$T_CODE/[]"
+
+# O.3 viewer 没有 sys:branding:manage
+c=$(api GET /branding/me "$VT")
+check "O.3 viewer 读品牌 → HTTP 403 + 业务码 4032" "$c/$(jget code)" "403/4032"
+
+# O.4 写入：白名单键留下、白名单外键丢弃并回报、纯文本去尖括号、颜色转小写
+c=$(api PUT /branding/me "$BAT" "{\"appName\":\"$B_NAME\",\"loginNotice\":\"<script>alert(1)</script>欢迎光临\",\"primaryColor\":\"#0A7C3F\",\"customCssVars\":\"--lf-sidebar-bg: #101820\",\"evil\":\"x\"}")
+if [[ "$c" == 200 || "$c" == 204 || "$c" == 201 ]]; then ok "O.4 PUT /branding/me 写入成功（HTTP $c）"; else no "O.4 保存品牌" "HTTP $c $(body | head -c 200)"; fi
+check "O.5 非白名单键进 dropped 而不是静默吞（前端要提示）" "$(jget data dropped)" '["evil"]'
+check "O.6 appName 落库" "$(ps "select branding->>'appName' from tenants where id=$ID")" "$B_NAME"
+check "O.7 loginNotice 去掉尖括号（前端只按文本渲染，这里再封一层）" \
+  "$(ps "select (branding->>'loginNotice' not like '%<%')::int from tenants where id=$ID")" "1"
+check "O.8 主色规范化为 #rrggbb" "$(ps "select branding->>'primaryColor' from tenants where id=$ID")" "#0a7c3f"
+check "O.9 品牌写入已落审计" "$(ps "select count(*)>=1 from audit_logs where tenant_id=$ID and action='branding.update'")" "t"
+
+# O.10~O.12 三条红线：自由 CSS、非 https、非法颜色都必须是 400，不能「清洗后悄悄收下」
+check "O.10 自由 CSS（body{…}）→ 400" "$(api PUT /branding/me "$BAT" '{"customCssVars":"body{background:url(https://evil.test/x.png)}"}')" "400"
+check "O.11 logo 用 data: → 400" "$(api PUT /branding/me "$BAT" '{"logoUrl":"data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="}')" "400"
+check "O.12 颜色写 red → 400" "$(api PUT /branding/me "$BAT" '{"primaryColor":"red"}')" "400"
+check "O.13 拒绝的写入不落库（primaryColor 仍是 O.8 的值）" \
+  "$(ps "select branding->>'primaryColor' from tenants where id=$ID")" "#0a7c3f"
+
+# O.14 登记域名：立即发 TXT 令牌，verified=false
+c=$(api POST /branding/domains "$BAT" "{\"domain\":\"$(echo "$O_HOST" | tr 'a-z' 'A-Z')\"}")
+DID=$(jget data id)
+[[ ( "$c" == 200 || "$c" == 201 ) && -n "$DID" ]] && ok "O.14 登记域名（大小写混写也行，落库前规范化）id=$DID" || no "O.14 登记域名" "HTTP $c $(body | head -c 200)"
+check "O.15 落库域名已规范化（转小写、去端口、去尾点）" "$(ps "select domain from tenant_domains where id=$DID")" "$O_HOST"
+check "O.16 登记即未校验（verified=false，DB 层口径）" "$(ps "select verified::int from tenant_domains where id=$DID")" "0"
+check "O.17 校验记录名 = _labelflow-verify.<domain>" "$(jget data verifyRecordName)" "_labelflow-verify.$O_HOST"
+[[ "$(jget data verifyToken | wc -c)" -ge 24 ]] && ok "O.18 令牌已下发（$(jget data verifyToken)）" || no "O.18 令牌缺失" "$(body | head -c 200)"
+
+# O.19 抢注闸门：未 verified 的域名绝不参与解析
+check "O.19 未校验域名不参与 Host→租户解析" \
+  "$(api GET "/branding?domain=$O_HOST" '')/$(jget data matched)" "200/False"
+check "O.20 未校验域名不许设为主域名" "$(api PUT "/branding/domains/$DID/primary" "$BAT")" "400"
+
+# O.21 dev 逃生口把域名推到 verified（真实 TXT 比对由单测覆盖）
+c=$(api POST "/branding/domains/$DID/verify" "$BAT")
+[[ ( "$c" == 200 || "$c" == 201 ) && "$(jget data devBypass)" == "True" ]] \
+  && ok "O.21 verify 通过（BRANDING_DEV_VERIFY=1 逃生口，生产必须走真实 TXT）" \
+  || no "O.21 verify" "HTTP $c $(body | head -c 240)—— 后端要带 BRANDING_DEV_VERIFY=1 且 NODE_ENV≠production 启动（见 docs/10 §10.24）"
+check "O.22 校验后 verified=true 且令牌作废（不再回显）" \
+  "$(ps "select (verified and verify_token is null)::int from tenant_domains where id=$DID")" "1"
+c=$(api GET /branding/domains "$BAT")
+check "O.23 已校验域名的令牌不再对外回显（防列表接口泄露）" "$c/$(jget data 0 verifyToken)" "200/"
+
+# O.24 解析命中 + 品牌字段带出
+check "O.24 校验后公开解析命中本租户" "$(api GET "/branding?domain=$O_HOST" '')/$(jget data matched)" "200/True"
+check "O.25 解析结果租户/品牌正确" \
+  "$(jget data branding tenantCode)/$(jget data branding appName)/$(jget data branding primaryColor)" "$T_CODE/$B_NAME/#0a7c3f"
+check "O.26 解析结果带出 CSS 变量（前端 style 直吃这个形状）" "$(jget data branding cssVars --lf-sidebar-bg)" "#101820"
+
+# O.27/O.28 登录侧：域名决定租户 + 显式 tenantCode 不一致直接拒（防钓鱼入口）
+hostapi() { # hostapi <METHOD> <path> <host> [json-body] —— 只为了给 curl 换 Host 头
+  local m=$1 p=$2 h=$3 b=${4:-}
+  local args=(-s -o "$TMP" -w '%{http_code}' -X "$m" "$BASE$p" -H 'Content-Type: application/json' -H "Host: $h")
+  [[ -n $b ]] && args+=(-d "$b")
+  curl "${args[@]}" --max-time 20
+}
+c=$(hostapi POST /auth/login "$O_HOST" "{\"username\":\"${T_CODE}_admin\",\"password\":\"$T_PASS\"}")
+JT=$(jget data accessToken)
+HTID=$(JT="$JT" python3 -c '
+import os, base64, json
+t = os.environ.get("JT", "")
+try:
+    print(json.loads(base64.urlsafe_b64decode(t.split(".")[1] + "=="))["tenantId"])
+except Exception:
+    print("")' 2>/dev/null)
+[[ ( "$c" == 200 || "$c" == 201 ) && "$HTID" == "$ID" ]] \
+  && ok "O.27 只给 Host 头、不传 tenantCode 也能登进对应租户（tenantId=$HTID）" || no "O.27 域名登录" "HTTP $c tenantId=$HTID（期望 $ID）"
+c=$(hostapi POST /auth/login "$O_HOST" "{\"username\":\"${T2_CODE}_admin\",\"password\":\"$T_PASS\",\"tenantCode\":\"$T2_CODE\"}")
+check "O.28 在 A 家域名上显式登 B 家 → 401（不给「看着像真的」的钓鱼入口）" "$c" "401"
+
+# O.29~ 域名格式闸门
+BADF=0
+for bad in "localhost" "127.0.0.1" "foo" "a..b.com" "https://x.com" "x.com:3200/path" "$(printf 'a%.0s' {1..210}).com"; do
+  c=$(api POST /branding/domains "$BAT" "{\"domain\":\"$bad\"}")
+  [[ "$c" == 400 ]] || BADF=$((BADF+1))
+done
+[[ "$BADF" == 0 ]] && ok "O.29 localhost / IP / 单标签 / 带协议 / 带路径 / 超长一律 400" || no "O.29 域名格式闸门" "$BADF 条没拦住"
+
+# O.30 跨租户占用：不透露归属方
+c=$(api POST /branding/domains "$PAT" "{\"domain\":\"$O_HOST\"}")
+M=$(jget message)
+[[ "$c" == 400 && "$M" == *"已被占用"* && "$M" != *"$T_CODE"* ]] \
+  && ok "O.30 抢注他人域名被拒且不泄露归属（$M）" || no "O.30 域名唯一性" "HTTP $c msg=$M"
+
+# O.31 上限：囤域名同样拦住（此时 $ID 下已有 1 条，补到 10 再试第 11 条）
+ADDED=0
+for i in 2 3 4 5 6 7 8 9 10; do
+  c=$(api POST /branding/domains "$BAT" "{\"domain\":\"v${i}.${T_CODE}.test\"}")
+  [[ "$c" == 200 || "$c" == 201 ]] && ADDED=$((ADDED+1))
+done
+check "O.31a 补登到上限共 10 条" "$(ps "select count(*) from tenant_domains where tenant_id=$ID")" "10"
+[[ "$ADDED" == 9 ]] && ok "O.31b 上限内 9 条全部登记成功" || no "O.31b 上限内登记" "$ADDED/9"
+c=$(api POST /branding/domains "$BAT" "{\"domain\":\"over.${T_CODE}.test\"}")
+[[ "$c" == 400 && "$(jget message)" == *"最多"* ]] && ok "O.32 第 11 条 → 400 上限提示" || no "O.32 域名上限" "HTTP $c $(body | head -c 160)"
+
+# O.33 设主域名：verified 才许设，且每租户只一个主
+check "O.33 已校验域名可设主" "$(api PUT "/branding/domains/$DID/primary" "$BAT")/$(ps "select count(*) from tenant_domains where tenant_id=$ID and is_primary")" "200/1"
+
+# O.34 平台侧工单通道：列域名 + 强制校验（绕过 DNS 必须留平台审计）
+api GET "/platform/tenants/$ID/domains" "$PT" >/dev/null
+check "O.34 平台列出租户域名（$ID）" "$(jget data items | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))' 2>/dev/null)" "10"
+c=$(api POST /branding/domains "$PAT" "{\"domain\":\"$O_HOST2\"}")
+D2ID=$(jget data id)
+[[ -n "$D2ID" ]] && ok "O.35 PRO 租户登记第二个域名 id=$D2ID" || no "O.35 PRO 登记域名" "HTTP $c $(body | head -c 200)"
+check "O.36 平台强校验必须核归属（拿别家的 domainId → 400）" \
+  "$(api POST "/platform/tenants/$ID/domains/$D2ID/verify" "$PT")" "400"
+c=$(api POST "/platform/tenants/$ID2/domains/$D2ID/verify" "$PT")
+[[ ( "$c" == 200 || "$c" == 201 ) && "$(jget data forced)" == "True" ]] \
+  && ok "O.37 平台强校验放行（工单通道）" || no "O.37 平台强校验" "HTTP $c $(body | head -c 200)"
+check "O.38 强校验已写平台审计" \
+  "$(ps "select count(*)>=1 from platform_audit_logs where action='platform.tenant.domain.verify' and target_id=$D2ID")" "t"
+check "O.39 平台强校验的域名同样参与解析" \
+  "$(api GET "/branding?domain=$O_HOST2" '')/$(jget data branding tenantCode)" "200/$T2_CODE"
+
+# O.40 删除 + 缓存失效：删完立刻解析，不能吃 30s TTL 的旧命中
+c=$(api DELETE "/branding/domains/$DID" "$BAT")
+check "O.41 删除域名后 DB 无残留" "$c/$(ps "select count(*) from tenant_domains where id=$DID")" "200/0"
+check "O.42 删除后同秒解析即失配（缓存已按域名失效）" \
+  "$(api GET "/branding?domain=$O_HOST" '')/$(jget data matched)" "200/False"
+check "O.43 域名增删均有审计" \
+  "$(ps "select count(*)>=2 from audit_logs where tenant_id=$ID and action in ('branding.domain.add','branding.domain.remove')")" "t"
+
+# O.44 菜单与权限点闭环：tenant_admin 看得到入口，viewer 看不到（前端靠它决定路由放行）
+api GET /auth/me "$PAT" >/dev/null
+HASB=$(python3 -c "
+import json;d=json.load(open('$TMP'))
+def walk(ns):
+    for n in ns or []:
+        yield n
+        yield from walk(n.get('children'))
+print(any(n.get('path')=='/branding' for n in walk(d.get('data',{}).get('menus'))))" 2>/dev/null || echo False)
+check "O.44 tenant_admin 菜单含 /branding" "$HASB" "True"
+api GET /auth/me "$VT" >/dev/null
+HASV=$(python3 -c "
+import json;d=json.load(open('$TMP'))
+def walk(ns):
+    for n in ns or []:
+        yield n
+        yield from walk(n.get('children'))
+print(any(n.get('path')=='/branding' for n in walk(d.get('data',{}).get('menus'))))" 2>/dev/null || echo False)
+check "O.45 viewer 菜单不含 /branding" "$HASV" "False"
+
+# 段尾清理：域名表整段清空（重跑不撞唯一约束），品牌配置留着无害
+ps "delete from tenant_domains where tenant_id in ($ID, $ID2)" >/dev/null
+echo "  （白标靶域名 $ID/$ID2 已清理；tenants.branding 保留不影响后续段）"
 
 echo
 echo "== 通过 $pass / 失败 $fail"

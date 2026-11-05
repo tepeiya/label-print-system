@@ -4,6 +4,8 @@ import { Public } from '../../common/public.decorator';
 import { PlatformJwtGuard } from './platform-jwt.guard';
 import { PlatformAdminService } from './platform-admin.service';
 import { TenantDataService } from './tenant-data.service';
+import { PlatformAuditService } from './platform-audit.service';
+import { BrandingService } from '../branding/branding.service';
 import { AddModuleDto, CreateInvoiceDto, CreatePaymentDto, FeatureFlagDto, IssueInvoiceDto, PlatformLoginDto, ProvisionTenantDto, UpsertPlanDto, UpsertQuotaDto } from '../dto/platform.dto';
 import { TenantConfigService } from '../tenant-config.service';
 import { SubscriptionService } from '../subscription.service';
@@ -25,6 +27,8 @@ export class PlatformAdminController {
     private subSvc: SubscriptionService,
     private modSvc: ModulesService,
     private dataSvc: TenantDataService,
+    private brandingSvc: BrandingService,
+    private platformAudit: PlatformAuditService,
   ) {}
 
   // ---------- 租户 ----------
@@ -210,6 +214,31 @@ export class PlatformAdminController {
   purgeTenant(@Param('id') id: string, @Request() req: any, @Body() body: { confirm?: string; force?: boolean }) {
     if (!/^\d+$/.test(String(id))) throw new BadRequestException('tenant id 必须是数字');
     return this.dataSvc.purgeTenant(+id, req.platformUser, body ?? {});
+  }
+
+  // ---------- 白标（D6）：平台侧强制校验域名 ----------
+
+  /** 列出租户登记过的域名（运营工单时用，未校验的域名不参与解析） */
+  @Get('tenants/:id/domains')
+  async listDomains(@Param('id') id: string) {
+    if (!/^\d+$/.test(String(id))) throw new BadRequestException('tenant id 必须是数字');
+    return { tenantId: +id, items: await this.brandingSvc.listDomains(+id) };
+  }
+
+  /**
+   * 运营强制把域名标记为已校验（客户搞不定 DNS 时的工单通道）。
+   * ⚠️ 这是**绕过 DNS 所有权证明**的动作，只能由平台运营执行，且必须留平台审计。
+   */
+  @Post('tenants/:id/domains/:domainId/verify')
+  async forceVerifyDomain(@Param('id') id: string, @Param('domainId') domainId: string, @Request() req: any) {
+    if (!/^\d+$/.test(String(id)) || !/^\d+$/.test(String(domainId))) {
+      throw new BadRequestException('id 必须是数字');
+    }
+    const out = await this.brandingSvc.forceVerifyByPlatform(+id, +domainId);
+    await this.platformAudit.write(req.platformUser, 'platform.tenant.domain.verify',
+      { tenantId: +id, domain: out.domain, verified: out.verified, forced: !!out.forced, already: !!out.already },
+      'tenant_domain', +domainId);
+    return out;
   }
 }
 

@@ -20,6 +20,9 @@ import { PlatformAdminController, PlatformAuthController } from './platform-admi
 import { PlatformAdminService } from './platform-admin/platform-admin.service';
 import { PlatformAuditService } from './platform-admin/platform-audit.service';
 import { TenantDataService } from './platform-admin/tenant-data.service';
+import { TenantDomain } from './branding/tenant-domain.entity';
+import { BrandingService } from './branding/branding.service';
+import { BrandingController } from './branding/branding.controller';
 import { TenantDataSourceManager } from '../common/tenant-data-source.manager';
 import { AuditModule } from '../audit/audit.module';
 import { BillingModule } from '../billing/billing.module';
@@ -32,19 +35,19 @@ import { BillingModule } from '../billing/billing.module';
       ModuleRecord, Plan, PlanModule, Subscription,
       TenantModule, Permission, RolePermission,
       Role, DataScopeRecord, FeatureFlag,
-      Tenant, User, UserRole, PlatformUser, PlatformAuditLog,
+      Tenant, User, UserRole, PlatformUser, PlatformAuditLog, TenantDomain,
     ]),
   ],
   providers: [
     ModulesService, SubscriptionService, PermissionsService,
     TenantConfigService, ProvisionService, TenantDataSourceManager,
-    PlatformAdminService, PlatformAuditService, TenantDataService,
+    PlatformAdminService, PlatformAuditService, TenantDataService, BrandingService,
   ],
-  controllers: [SubscriptionController, PlatformController, PlatformAdminController, PlatformAuthController],
+  controllers: [SubscriptionController, PlatformController, PlatformAdminController, PlatformAuthController, BrandingController],
   // AuthModule（/auth/me）与全局拦截器都要用，必须导出
   exports: [
     ModulesService, SubscriptionService, PermissionsService,
-    TenantConfigService, ProvisionService, TenantDataSourceManager,
+    TenantConfigService, ProvisionService, TenantDataSourceManager, BrandingService,
   ],
 })
 export class SaasModule {}

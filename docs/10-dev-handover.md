@@ -1,9 +1,9 @@
 # 10. 开发交接文档（面向接手的 AI / 开发者）
 
 > 本文档目标：**任何 AI 或开发者读完本文即可无缝接手继续开发**，不需要再翻历史对话。
-> 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）** → **§10.19 P3 计费闭环（动账单/配额/计量前必读）** → **§10.20 P4 Agent/MCP（动 /agent/v1、agent token、库存只读模型前必读）** → **§10.21 P5 Agent 写工具与审批流（动 Agent 写路径/限流/幂等/MCP HTTP 前必读）** → **§10.22 P6.1 RLS 兜底（动数据库角色/连接、写任何原生 SQL 前必读）** → **§10.23 P6.3 租户数据导出与硬删 + Agent 前端入口（动 /platform/tenants/:id/export|purge、表清单口径前必读）**。
-> 最后更新：2026-11-05（P0–P5 已落地，**P6 首批（P6.1 RLS 兜底 + P6.3 导出/硬删 + P5.5 审批前端入口）已落地**；
-> 本轮新增 **§10.22 / §10.23**；单测 189 条 / 验收 174 项（A–N 段）/ RLS 冒烟 22 项）
+> 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）** → **§10.19 P3 计费闭环（动账单/配额/计量前必读）** → **§10.20 P4 Agent/MCP（动 /agent/v1、agent token、库存只读模型前必读）** → **§10.21 P5 Agent 写工具与审批流（动 Agent 写路径/限流/幂等/MCP HTTP 前必读）** → **§10.22 P6.1 RLS 兜底（动数据库角色/连接、写任何原生 SQL 前必读）** → **§10.23 P6.3 租户数据导出与硬删 + Agent 前端入口（动 /platform/tenants/:id/export|purge、表清单口径前必读）** → **§10.24 P6.4 白标 D6 + P6.3 platform 前端（动 /branding、登录 Host 解析、主题注入前必读）**。
+> 最后更新：2026-11-05（P0–P5 已落地，**P6 已落 P6.1 RLS 兜底 + P6.3 导出/硬删（含 platform 前端）+ P6.4 白标 + P5.5 审批前端入口**；
+> 本轮新增 **§10.22 / §10.23 / §10.24**；单测 202 条 / 验收 219 项（A–O 段）/ RLS 冒烟 22 项；P6 只剩 P6.2 独立库租户、P6.5 Prompts 库）
 >
 > ⚠️ **2026-11-05 历史瘦身**：`.pnpm-store`（232 MB pnpm 包缓存，被 `95b4970` 误提交）已从
 > `feat/dev-base` 的**全部历史**中移除，`.git` 从 54 MB 降到 1.4 MB。
@@ -876,8 +876,9 @@ docs/03-database.sql → backend/scripts/seed.sql → backend/scripts/saas_p0.sq
 ### 10.15.6 测试与验收覆盖
 
 ```bash
-cd backend && npm test                       # 189 条（原 26 → P0 +89 → P1 +2 → 校验 +8 → P2 +5 → P3 +12 → P4 +18 → P5 +20 → P6 +9）
-DB_RLS_USER=labelflow_app T_CODE=p6s1 T2_CODE=p6s1pro bash backend/scripts/p0-acceptance.sh  # 174 项断言（A–N 段），期望「通过 174 / 失败 0」（重跑换新 T_CODE/T2_CODE）
+cd backend && npm test                       # 202 条（原 26 → P0 +89 → P1 +2 → 校验 +8 → P2 +5 → P3 +12 → P4 +18 → P5 +20 → P6.3 +9 → P6.4 +13）
+# O 段（白标）要后端带 BRANDING_DEV_VERIFY=1；N 段要 DB_RLS_USER（两者缺一按对应断言判失败并给提示）
+DB_RLS_USER=labelflow_app T_CODE=p6o1 T2_CODE=p6o1pro bash backend/scripts/p0-acceptance.sh  # 219 项断言（A–O 段），期望「通过 219 / 失败 0」（重跑换新 T_CODE/T2_CODE）
 bash backend/scripts/p6-rls-smoke.sh         # 22 项：RLS 兜底专用冒烟（必须用 labelflow_app DSN 才有效，见 §10.22.3）
 
 # 前置 DDL（顺序敏感；saas_* 都幂等可重跑）：
@@ -885,6 +886,7 @@ bash backend/scripts/p6-rls-smoke.sh         # 22 项：RLS 兜底专用冒烟�
 #   → saas_p2_platform.sql → saas_p3_billing.sql → saas_p4_agent.sql → saas_p5_agent_tools.sql
 #   → saas_p6_rls.sql（角色 + 39 张表策略，缺它 N.1 直接判失败）
 #   → saas_p6_tenant_data.sql（放宽 tenant_backups.kind CHECK，缺它导出必 500 / 23514）
+#   → saas_p6_branding.sql（tenant_domains 补列 + sys:branding:manage，缺它 O 段整段红）
 ```
 
 - 单测分布（本轮新增）：`validate-ai-template` 23、`sql-executor` 14（含真实 PG 集成，PG 不可达自动 skip）、`saas-guards` 10、`menu.catalog` 12（P1 加了 AI 入口 + 菜单/路由一致性两条）、`data-scope` 7、`roles.guard` 7、`module-deps` 6、`permission-match` 8、`errors.filter` 4。
@@ -1524,9 +1526,136 @@ Nest 就不接管响应了——代价是这条路不再走拦截器，`Content-
 
 ### 10.23.8 P6 明确没做（别当成已完成）
 
-- **P6.4 白标（D6）**：`tenant_domains` + `branding` 表、域名解析与主题注入，一行没动。
+- ~~**P6.4 白标（D6）**~~ → **2026-11-05 已落地**，见 §10.24（`saas_p6_branding.sql` + `backend/src/saas/branding/` + `apps/console` 品牌页）。
 - **P6.2 独立库租户（D2）**：只有 `registerDedicated()` 注册表 + 未注册即 503 的兜底；
   缺 `tenants.data_source_key` DDL、缺按租户开通独立库的编排、缺迁移/备份的独立库版本。
 - **P6.5 Prompts 库产品化**：MCP 侧 3 个开箱 prompt 已有（§10.21.7），租户侧「Prompt 库」CRUD/编辑/下发没有。
-- **platform 前端**：保留期看板、导出按钮、下载链接、purge 二次确认都**只有 API**，`apps/platform` 没有对应页面。
+- ~~**platform 前端**：保留期看板、导出按钮、下载链接、purge 二次确认~~ → **2026-11-05 已落地**，见 §10.24.7（`apps/platform/src/views/TenantData.vue`）。
 - 家生子目前只处理「单层 FK 指向带 `tenant_id` 的表」；若以后出现孙表（A→B→`tenant_id`）需要扩 `plan()` 的递归。
+
+## 10.24 P6.4 白标（D6）+ P6.3 平台前端（2026-11-05 落地）
+
+一句话：**白标改的是「登录页对外的长相 + 用哪个域名进哪个租户」，不碰任何鉴权与数据范围。**
+把它当成主题注入 + 域名路由两件事来做，就不会写歪。
+
+### 10.24.1 三条闸门（这是全部安全性的来源，改代码前先读）
+
+| # | 闸门 | 落点 | 不这样做会怎样 |
+|---|------|------|----------------|
+| ① | **只有 `verified` 的域名参与 Host→租户解析** | `branding.calc.resolveTenantByHost()` 里 `r.verified &&` 那半句 | `tenant_domains.domain` 是**唯一约束**，登记即抢注：任何人 POST 一个 `label.客户.com` 就能把客户域名指到自己租户 |
+| ② | **Host 推出的租户与显式 `tenantCode` 不一致 → 401** | `auth.service.login()` 第二道判断 | 客户域名下摆一个能登别家账号的登录框 = 现成钓鱼页 |
+| ③ | **域名被别家占用时报「已被占用」，不带归属方任何信息** | `branding.service.addDomain()` 的 dup 分支 | 探测接口可以逐个域名问出「这家是谁 / 存不存在」 |
+
+②的关键前提：解析结果**只**用于「显示什么品牌」和「允许省略 tenantCode」。
+伪造 Host 头能得到的最多是别人的 logo 和租户名，拿不到一行数据。写文档时不许出现「域名即身份认证」这种表述。
+
+`X-Forwarded-Host` 默认**不信任**，只有 `BRANDING_TRUST_FORWARDED_HOST=1` 才认（反代后面不设它，白标不生效——
+不生效比认错租户安全）。
+
+### 10.24.2 DDL：`backend/scripts/saas_p6_branding.sql`（幂等，已应用到沙盒库）
+
+- 给 P0 预留的 `tenant_domains` 补 4 列：`verify_token / verified_at / is_primary / created_by`；
+- CHECK `tenant_domains_domain_format`（非空 + 无空格，长度对齐 `VARCHAR(200)`）；`ix_tenant_domains_tid`；
+- 新权限点 `sys:branding:manage`（挂 module `users`），只授 `admin` / `tenant_admin`；
+- 两处 `RAISE EXCEPTION` 自检（补列没生效 / 权限点没落地就别让它悄悄过）+ NOTICE 汇总。
+- ⚠️ 域名单租户上限 `MAX_DOMAINS_PER_TENANT=10` 写在代码里（`branding.calc.ts`），不在 DDL 里——改上限改常量，别找约束。
+
+### 10.24.3 品牌值的清洗口径：白名单键 + 两类失败要分开
+
+`sanitizeBranding()`（纯函数，单测 `branding.calc.test.ts` 13 条覆盖）：
+
+- **只有 7 个键能进 `tenants.branding`**：`appName / logoUrl / faviconUrl / primaryColor / backgroundColor / loginNotice / customCssVars`。
+- 白名单**外的键 → `dropped[]`**，请求照样 200。前端必须把 `dropped` 显示出来（`Branding.vue` 顶部黄条），静默吞会让用户以为改了。
+- 白名单**内但值不合法 → 400 整笔退回**：颜色必须 `#RGB/#RRGGBB`（落库转小写）；`logoUrl/faviconUrl` 必须 `https://` 绝对地址（`data:`、`javascript:`、base64 一律拒）；
+  `customCssVars` 只接受 `--小写变量名: 值`，值里出现 `}` `"` `\` `url(` 直接 400。**没有「清洗后收下」这条路。**
+- `appName / loginNotice` 走纯文本：去控制字符和 `<>`、限长 200，前端**只用文本节点渲染**（`{{ }}`，不许 `v-html`）。
+- 整包序列化后 >8 KiB 报错——防住「把 logo 塞成 base64」把 `tenants` 表撑爆。
+
+前端主题注入在 `apps/console/src/composables/branding.ts`：覆盖 `--el-color-primary` 时必须连 EP 的派生色
+（`light-3/5/7/8/9`、`dark-2`）一起按比例算，否则 hover/禁用态还是老颜色，看着像换色失败；
+外壳自己的色走 `--lf-brand` / `--lf-page-bg` / `--lf-sidebar-bg`（`styles/main.css` 里出厂值写在 fallback 上）。
+`clearBranding()` 负责「解析失败 / 没命中域名 → 回到出厂外观」，别留半套颜色。
+
+### 10.24.4 域名生命周期与 dev 逃生口
+
+```
+addDomain → verified=false + verify_token（唯一约束先占名）
+   ↓ 客户在 DNS 放 TXT：_labelflow-verify.<domain> = labelflow-verify=<token>
+verifyDomain → 查 TXT 比对 → verified=true + verify_token 置 null
+   ↓
+参与解析 / 可设 is_primary / 公开解析接口带出品牌
+   ↓
+removeDomain → 删行 + 立刻 invalidateHostCache(domain)
+```
+
+- TXT 比对 `matchVerifyToken()` 要同时比**每个 char-string 片段**与**拼起来的整串**（RFC 1035 允许一条 TXT 分段，
+  只比一种会误判失败）；也接受只填 token 本身或 `record=token` 两种偷懒写法。
+- 已校验的域名**不再回显 token**（`listDomains` 里 `verified ? null : verifyToken`）。
+- `BRANDING_DEV_VERIFY=1` 一键 verified 的逃生口**必须同时满足 `NODE_ENV !== 'production'`**，否则生产上谁都能把别人域名点成已校验。
+  这条判断写在 service 里而不是控制器，别挪。
+- 解析有 30s TTL 缓存（`BRANDING_CACHE_MS`），**增删改域名都要显式失效**，否则验收会出现「删了还能解析出来」这种假通过。
+- ⚠️ **登记入参不吃 `normalizeHost` 的便利**：`normalizeHost` 是给请求头用的，会剥端口和路径；
+  直接拿来洗用户输入会把 `acme.com:3200/path` 静默变成 `acme.com`。`addDomain()` 现在先拦 `/ @ 空白` 再规范化。
+- ⚠️ `Repository.remove()` 之后**实体主键会变成 undefined**：`removeDomain` 返回 `Number(row.id)` 得 NaN，
+  审计 `target_id` 是 bigint → PG 直接 `invalid input syntax for type bigint: "NaN"`（**实测 HTTP 500，数据倒是删干净了**）。
+  删之前先把 `id`/`domain` 取成局部变量。O.41 就是钉这条的。
+
+### 10.24.5 登录侧集成（改动面很小，但顺序要紧）
+
+- `auth.controller.login`：`hostFromHeaders(req.headers, TRUST_FORWARDED)` → `branding.publicBrandingByHost(host)?.tenantCode` → 传给 service。
+- `auth.service.login(username, password, tenantCode?, hostTenantCode?)`：`code = tenantCode ?? hostTenantCode ?? 'default'`。
+  老行为一条没变——**没配自定义域名的租户，登录路径与 P6.4 之前完全一致**。
+- ⚠️ 空字符串陷阱：前端如果传 `tenantCode: ''`，`?? ` 不会兜住（`''` 不是 nullish）→ 报「租户 "" 不存在」。
+  `Login.vue` 的做法是命中域名时把租户码**预填成解析结果并禁用输入框**，既不留空串，也让用户看得见自己进的是哪家。
+- `GET /branding` 是 `@Public()`，**不 404**：没命中回 `{matched:false}`，前端 `apiPublicBranding()` 用**裸 axios**（不走 `http` 实例）
+  调用并 `catch → null`。理由：它可能在老后端（没这条路由）上被登录页调用，弹 toast 或阻塞首屏都是事故。
+
+### 10.24.6 平台工单通道（`platform-admin.controller.ts`）
+
+| 路由 | 说明 |
+|------|------|
+| `GET platform/tenants/:id/domains` | 运营看这家登记了什么、哪些还没校验 |
+| `POST platform/tenants/:id/domains/:domainId/verify` | **绕过 DNS 的强校验**，必须平台 token，且写 `platform.tenant.domain.verify` 审计 |
+
+`forceVerifyByPlatform(tenantId, domainId)` 一定要**先按 domainId 取行、再核 `row.tenantId === tenantId`**：
+只吃 `domainId` 的版本（上一版就是这么写的）拿别家的 id 也能点通，路径里的 `:id` 就成了摆设。O.36 专测这条。
+
+### 10.24.7 前端入口与页面
+
+- 菜单目录 `menu.catalog.ts` 在 `backups` 后加 `branding` 叶子：`path /branding`、`module users`、`permission sys:branding:manage`；
+  `apps/console/src/router/index.ts` 必须同步加 `path: 'branding'`，否则 `menu.catalog.test.ts` 的反向断言直接红（**上一版就是这样挂的**）。
+  `meta.module` 用 `users` 而不是新模块：品牌配置存在 `tenants.branding`、域名是 SaaS 侧的表，单开模块会让 BASIC 客户「有权限却没订阅」而跳 `/blocked`。
+- `apps/console/src/views/Branding.vue`：左品牌表单（保存即 `previewFromMyBranding` 回显，不用刷新）+ 右域名表（登记→展示 TXT 记录名与值→校验→设主→删除）+ 解析自测输入框（吃 `?domain=`）。
+- `apps/platform/src/views/TenantData.vue`（P6.3 的前端闭合）：保留期看板（`due` 整行标红、「已到保留期 · 可硬删」；`warn` 标黄「剩 N 天」）、
+  导出摘要 + 导出件抽屉 + 下载、purge 二次确认（内联展示三道闸门、`trim` 后逐字校验 code、`!due || !canceledAt` 才出现 force 勾选）、
+  `rlsActive` **三态徽标**（true 绿 / false 黄「降级：未走 RLS 角色」/ 未回灰，没有写死的绿色）、`truncated` 非空 → 黄警「导出件不完整」。
+  ⚠️ 契约差异：`GET /tenants/:id/exports` 的 `sizeBytes`/`createdBy` 是 **BIGINT 字符串**（`"985"`），而 `POST /export` 摘要里是数字，前端类型放宽成 `number | string` 再 `Number()` 展示。
+- ⚠️ **vue-tsc（Volar）在本仓库版本下会被模板里的 `//` 咬到**：`placeholder="https://x/y.png"` 这种**静态属性值里带 `//`**，
+  会让生成的虚拟 TS 少一段，报的是跟真因毫无关系的 `TS2339: Property 'value' does not exist on type '{...}'`（而且会牵连同文件里别的 `v-model` 行）。
+  规避：占位文案别写 `://`（本页已改成 `cdn.example.com/logo.png`），或挪到 `<script>` 里再绑定。改完 `npm run build` 立刻验。
+- ⚠️ `<el-alert>` 里的品牌文案一律插值，别学 `v-html`；`el-popconfirm` 用 `v-if` 而不是 `v-permission.hide`（见 §10.23.6）。
+
+### 10.24.8 验证（全部实跑 2026-11-05）
+
+- `npm test` **202/0**（+13：`branding.calc.test.ts`，含「未校验域名不许解析出租户」「自由 CSS 是红线」「TXT 多段 char-string 要认」）。
+- `bash backend/scripts/p0-acceptance.sh` → **通过 219 / 失败 0**（174 → O 段 +45），换 `T_CODE` 连跑 2 轮一致。
+  O 段实测：出厂 Host 不命中 → 租户读写 → viewer 403/4032 → 脏值（白名单外键进 `dropped`、`<script>` 去尖括号、颜色转小写、审计）→
+  自由 CSS / `data:` / `red` 三条 400 且不落库 → 登记（大小写混写规范化）→ **未校验不参与解析、不许设主** → dev 逃生口 verified →
+  校验后解析命中（含 `cssVars` 形状）→ **只给 Host 头就能登进对应租户（解 JWT 核 tenantId）**、A 家域名登 B 家 401 →
+  7 种非法域名全 400 → 抢注被拒不泄露归属 → 补登到 10 条上限、第 11 条 400 → 设主唯一 → 平台列域名 / 越权 400 / 强校验 + 平台审计 + 解析生效 →
+  删除后**同秒解析即失配**、增删审计 → 菜单两条（tenant_admin 有 / viewer 无）。域名在段尾自清理。
+- `bash backend/scripts/p6-rls-smoke.sh` **22/0/0**；`npx tsc -p tsconfig.json` 0 error；
+  `apps/console` 与 `apps/platform` 各自 `npm run build`（含 `vue-tsc -b`）+ `npm run lint` **均 0 error / 0 warning**。
+- ⚠️ 白标**没有**跑真实 DNS：沙盒里 `resolveTxt` 查不到东西，TXT 那条路径只有单测 + 平台强校验通道在验。
+  上线前必须拿一个真域名手工走一遍「登记 → 放 TXT → verify → 解析命中」，并把 `BRANDING_DEV_VERIFY` 明确关掉。
+
+### 10.24.9 P6.4 没做 / 边界（别当成已完成）
+
+- **真实 DNS 校验端到端没验过**（见上一条）。反代部署要设 `BRANDING_TRUST_FORWARDED_HOST=1`，否则解析到的是内部 Host。
+- ⚠️ **主链路切到 `labelflow_app` 时，公开解析这条查询会当场静默失效**：它现在走默认（owner）连接，
+  而 `tenant_domains` / `tenants` 的策略是 fail-closed。切换清单（§10.22.4）里必须把「公开解析改走 `labelflow_platform` 连接」列为一条硬性检查。
+- 域名**只做解析，不做签发/回调**：没接 ACME 自动证书、没做「域名指向了但平台侧 404」的接入向导、没在 CNAME 未生效时给检测提示。
+- 主题只覆盖颜色/标题/favicon/logo：**没有租户级自定义字体、自定义 CSS 文件、登录页版式模板**。要做得先扩白名单键，别再开自由 CSS 的口子。
+- `logoUrl/faviconUrl` 是第三方 https 地址，页面没配 CSP——真上线白标建议同时给 `img-src` 白名单（目前只有 URL 格式校验这一层）。
+- 白标**不影响订阅**：`sys:branding:manage` 是权限点，没做「按套餐收费才给白标」的 gating；要做就照 §11.10 的模块/配额口径加，而不是在 controller 里写 if。
+- 一个租户多个已校验域名都会解析到同一套品牌（`is_primary` 目前只作展示与将来回调用）；主域名切换不改变解析结果。
