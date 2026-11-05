@@ -1,4 +1,4 @@
-import { IsArray, IsIn, IsNumber, IsObject, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsIn, IsNumber, IsObject, IsOptional } from 'class-validator';
 
 /**
  * 打印 DTO。copies 的 1..500 夹取、printerId 存在性等业务规则仍在服务层。

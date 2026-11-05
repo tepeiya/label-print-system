@@ -2,7 +2,7 @@
 // print.controller.ts —— 打印队列 / 指令导出 / 实时预览
 // =============================================================================
 
-import { Controller, Post, Get, Param, Body, Query, UseGuards, Res, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Controller, Post, Get, Param, Body, Query, UseGuards, Res, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Public } from '../common/public.decorator';
 import { Response } from 'express';

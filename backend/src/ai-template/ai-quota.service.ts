@@ -9,7 +9,7 @@
 //   5. 可以在 ai_quotas 表里单独设某租户的 limit（覆盖默认）
 // =============================================================================
 
-import { Injectable, ForbiddenException, Inject, Logger } from '@nestjs/common';
+import { Injectable, ForbiddenException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { AiQuota } from '../entities/ai-quota.entity';

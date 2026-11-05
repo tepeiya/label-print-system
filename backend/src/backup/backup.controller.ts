@@ -1,10 +1,9 @@
-import { Controller, Get, Post, Delete, Param, Body, UseGuards, ForbiddenException, Res } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Param, Body, UseGuards, Res } from '@nestjs/common';
 import { Response } from 'express';
 import { TenantGuard } from '../common/tenant.guard';
 import { Roles, RoleName } from '../common/roles.guard';
 import { RequireModule } from '../common/module.guard';
 import { RequirePermission } from '../common/permission.guard';
-import { useTenant } from '../common/tenant.context';
 import { BackupService } from './backup.service';
 import { CreateBackupDto } from './dto/backup.dto';
 

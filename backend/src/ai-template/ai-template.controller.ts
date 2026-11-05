@@ -1,9 +1,8 @@
 // AI 模板生成 API
 import {
   Controller, Get, Post, Delete, Body, Param, Query, Res,
-  UploadedFile, UseInterceptors, UseGuards, BadRequestException, ParseFilePipeBuilder,
+  UploadedFile, UseInterceptors, UseGuards, BadRequestException,
 } from '@nestjs/common';
-import { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { TenantGuard } from '../common/tenant.guard';
 import { Roles } from '../common/roles.guard';

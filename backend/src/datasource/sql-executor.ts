@@ -188,7 +188,6 @@ export async function execute(
  *  若已有 LIMIT 则保持原样。 */
 function ensureLimit(sql: string, hardLimit: number): string {
   const trimmed = sql.replace(/;\s*$/, '').trim();
-  const lower = trimmed.toLowerCase();
   // 简单检查末尾 LIMIT（不够严格但够 95% 场景）
   if (/\blimit\s+\d+/i.test(trimmed) && /\border\s+by\b[\s\S]*\blimit\b/i.test(trimmed)) {
     // 原 SQL 已经带 LIMIT，不做处理（留给 hardLimit 兜底）
@@ -201,7 +200,7 @@ function ensureLimit(sql: string, hardLimit: number): string {
 export async function ping(config: SqlExecConfig): Promise<{ ok: boolean; message?: string; durationMs: number }> {
   const t0 = Date.now();
   try {
-    const res = await execute(config, 'SELECT 1 AS ok', [], 1);
+    await execute(config, 'SELECT 1 AS ok', [], 1);
     return { ok: true, durationMs: Date.now() - t0 };
   } catch (e: any) {
     return { ok: false, message: e?.message ?? String(e), durationMs: Date.now() - t0 };

@@ -1,6 +1,6 @@
 // 用户管理模块（admin 专属）：CRUD + 角色分配 + 启停 + 重置密码
 import {
-  Module, Controller, Get, Post, Put, Patch, Delete, Body, Param, UseGuards,
+  Module, Controller, Get, Post, Patch, Delete, Body, Param, UseGuards,
   BadRequestException, NotFoundException, ConflictException, ForbiddenException,
 } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -189,7 +189,7 @@ export class UserAdminController {
     }
     const exists = await this.userRoles.findOne({ where: { tenantId, userId: id, role: body.role } });
     if (exists) return { ok: true, already: true };
-    const user = await this.findOneTenant(id, tenantId);
+    await this.findOneTenant(id, tenantId);
     await this.userRoles.save({ tenantId, userId: id, role: body.role as RoleName });
     await this.audit.write(tenantId, 'user.grant_role', { id, role: body.role }, undefined, 'user', id);
     return { ok: true };

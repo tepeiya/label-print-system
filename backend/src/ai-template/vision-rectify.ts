@@ -48,7 +48,6 @@ export async function extractBbox(buf: Buffer, bbox: { left: number; top: number
 /** 把 Vision LLM 返回的 corners（各种字段名）规范化为 Corners */
 export function normalizeCorners(raw: any): Corners | null {
   if (!raw || typeof raw !== 'object') return null;
-  const cornerNames = ['tl', 'topLeft', 'top_left', 'top-left'];
   const cornerPairs: Array<[string, keyof Corners]> = [
     ['tl', 'tl'], ['tr', 'tr'], ['br', 'br'], ['bl', 'bl'],
   ];

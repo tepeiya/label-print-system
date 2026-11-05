@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { Controller, Post, Body, UseGuards } from '@nestjs/common';
 import { TenantGuard } from '../common/tenant.guard';
-import { safeEval, detectCircularDeps } from '../../core/formula-engine';
+import { safeEval } from '../../core/formula-engine';
 import { FormulaEvalDto, FormulaValidateDto } from '../common/dto/render-and-ai.dto';
 
 @Controller('formula')

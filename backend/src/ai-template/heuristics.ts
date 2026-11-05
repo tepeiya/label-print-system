@@ -210,7 +210,7 @@ export function classifyText(line: OcrLine): Classified {
 }
 
 export function buildTemplateFromPriors(input: BuildInput): BuildOutput {
-  const { ocr, barcodes, lines, regions, imagePx, targetMm, mapper } = input;
+  const { ocr, barcodes, lines, regions, imagePx, mapper } = input;
   const elements: any[] = [];
   const variables: any[] = [];
   const confidence: Record<string, number> = {};

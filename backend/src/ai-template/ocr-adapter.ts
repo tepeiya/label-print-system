@@ -43,16 +43,6 @@ export interface OcrResult {
   durationMs: number;
 }
 
-/** PaddleOCR HTTP 服务返回的宽松契约（兼容 PaddleOCR / RapidOCR / PP-Structure 常见输出） */
-interface PaddleRawLine {
-  text?: string;
-  confidence?: number;
-  bbox?: number[][];      // [[x,y],[x,y],[x,y],[x,y]]
-  box?: number[][];
-  points?: number[][];
-  score?: number;
-}
-
 let _worker: Worker | null = null;
 let _workerLangs = '';
 

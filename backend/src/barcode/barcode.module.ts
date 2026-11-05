@@ -1,6 +1,5 @@
-import { Module, Controller, Post, Body, Res, Get, UseGuards } from '@nestjs/common';
+import { Module, Controller, Post, Body, Res, Get } from '@nestjs/common';
 import { Response } from 'express';
-import { TenantGuard } from '../common/tenant.guard';
 import {
   renderBarcodeToPng, renderQrcodeToPng, validateBarcode,
   renderBarcodeSvg, renderQrcodeSvg, supportedSymbologies, is2d,

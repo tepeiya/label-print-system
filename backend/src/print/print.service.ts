@@ -94,7 +94,7 @@ export class PrintService {
     };
   }
 
-  private async _resolvePrinterNames(ids: number[], tenantId: number): Promise<Record<number, string>> {
+  private async _resolvePrinterNames(ids: number[], _tenantId: number): Promise<Record<number, string>> {
     if (!ids.length) return {};
     const list = await this.printers.findByIds(ids);
     const out: Record<number, string> = {};

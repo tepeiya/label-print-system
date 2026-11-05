@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Body, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { SerialModuleService } from './serial.service';
 import { TenantGuard } from '../common/tenant.guard';
 import { RequireModule } from '../common/module.guard';

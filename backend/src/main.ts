@@ -20,7 +20,7 @@ import { AllExceptionsFilter } from './common/errors.filter';
 import { Reflector } from '@nestjs/core';
 import { Tenant, User, UserRole } from './entities/tenant.entity';
 import { Role } from './entities/saas.entity';
-import { JWT_SECRET, PORT } from './common/config';
+import { PORT } from './common/config';
 
 async function seedDefaultTenantAndAdmin(dataSource: DataSource) {
   const tenantRepo = dataSource.getRepository(Tenant);

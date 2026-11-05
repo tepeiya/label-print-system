@@ -53,7 +53,6 @@ export function renderPrintHtml(input: HtmlRenderInput): HtmlRenderOutput {
   const hPx = +(hMm * mmToPx).toFixed(2);
 
   const render = new RenderService();
-  const serialMap: Record<string, string[]> = {};
   const labels: string[] = [];
 
   const totalLabels = rows.length * copies;
@@ -82,8 +81,6 @@ export function renderPrintHtml(input: HtmlRenderInput): HtmlRenderOutput {
   const marginMm = Math.max(0, (page as any).marginMm ?? 0);
   const sheetWMm = cols > 1 ? marginMm * 2 + wMm * cols + gapXMm * (cols - 1) : wMm;
   const sheetHMm = rowsN > 1 ? marginMm * 2 + hMm * rowsN + gapYMm * (rowsN - 1) : hMm;
-  const sheetWPx = +(sheetWMm * mmToPx).toFixed(2);
-  const sheetHPx = +(sheetHMm * mmToPx).toFixed(2);
   const gapXPx = +(gapXMm * mmToPx).toFixed(2);
   const gapYPx = +(gapYMm * mmToPx).toFixed(2);
   const marginPx = +(marginMm * mmToPx).toFixed(2);

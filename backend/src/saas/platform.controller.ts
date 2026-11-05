@@ -1,7 +1,7 @@
 // 平台控制器 —— 平台视角（admin only）：租户开通 / 加购 / 停用 / 退订 / 灰度开关 + 目录查询
 // §11.6.2 的 /platform/v1 前缀在这里仍挂在 /api/v1 下（P0 与租户侧共用 JWT），
 // 真正的平台身份体系（platform_users + 独立 JWT scope）是 P2 的活，见 docs/10 §10.15.7 未做清单。
-import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles, RoleName } from '../common/roles.guard';

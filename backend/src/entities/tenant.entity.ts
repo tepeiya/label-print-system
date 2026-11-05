@@ -1,5 +1,5 @@
 // 租户 / 用户 / 角色 实体（tenant_id 强制行级隔离）
-import { Entity, PrimaryGeneratedColumn, Column, Index, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, Index, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 
 @Entity('tenants')
 export class Tenant {
