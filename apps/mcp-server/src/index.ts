@@ -2,13 +2,15 @@
 // =============================================================================
 // LabelFlow Agent MCP server —— stdio 入口（P4，docs/11 §11.7.1）
 // 启动流程：读 AGENT_TOKEN → GET whoami 确认身份 → GET tools 拉当前 scope 可见工具
-// → 逐个注册进 MCP。工具调用 = POST /agent/v1/tools/:name，返回值整体转文本块。
+// → 交给共享装配层 src/server.ts 注册 tools/resources/prompts → 连 stdio。
+// P5 起 HTTP 入口（src/http.ts）复用同一个 createLabelFlowServer，本文件只保留
+// stdio 特有的「启动即失败」策略：token 无效（401）或工具为空就退出，不半死不活地等客户端调用。
 // 注意：日志一律走 stderr（stdout 是 JSON-RPC 通道）。
 // =============================================================================
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { AgentApiClient, AgentApiError } from './client/agent-api.js';
+import { createLabelFlowServer } from './server.js';
 
 const log = (...a: unknown[]) => console.error('[labelflow-mcp]', ...a);
 
@@ -33,39 +35,7 @@ if (!tools.length) {
   process.exit(1);
 }
 
-const server = new Server(
-  { name: 'labelflow-agent-mcp', version: '0.1.0' },
-  { capabilities: { tools: {} } },
-);
-
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: tools.map((t) => ({
-    name: t.name,
-    title: t.title ?? t.name,
-    description: t.description,
-    inputSchema: (t.inputSchema ?? { type: 'object', properties: {} }) as never,
-  })),
-}));
-
-server.setRequestHandler(CallToolRequestSchema, async (req) => {
-  const name = req.params?.name;
-  const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
-  try {
-    const env = await api.callTool(String(name), args);
-    const data = env?.data;
-    // §11.6.3 统一信封 {summary, data, warnings, next_actions}：摘要给模型读，JSON 给程序读
-    const text = data && typeof data.summary === 'string'
-      ? `${data.summary}\n\n${JSON.stringify(data, null, 2)}`
-      : JSON.stringify(data ?? env, null, 2);
-    return { content: [{ type: 'text', text }] };
-  } catch (e) {
-    const err = e as AgentApiError;
-    const payload: Record<string, unknown> = { error: err?.message ?? String(e) };
-    if (err?.envelope?.code) payload.code = err.envelope.code;
-    if (err?.envelope?.action) payload.action = err.envelope.action;
-    return { isError: true, content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }] };
-  }
-});
+const server: Server = createLabelFlowServer(api, { tools });
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

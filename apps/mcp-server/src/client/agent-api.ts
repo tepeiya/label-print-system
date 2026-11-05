@@ -1,5 +1,6 @@
 // /agent/v1 瘦客户端（docs/11 §11.7.1）：只带 Agent Token 打 REST，不持任何数据库凭证。
-// stdio 单租户 —— 一个进程 = 一个 token = 一个租户（§11.7.1）。
+// 一个实例 = 一个 token = 一个租户：stdio 模式下一进程一个；HTTP 模式下每个会话一个（P5，§11.7.1）。
+// token 可由构造函数显式传入，HTTP 入口就是用它把 header 里的 token 绑到对应会话。
 
 export interface AgentToolDto {
   name: string;
@@ -60,5 +61,9 @@ export class AgentApiClient {
   listTools() { return this.req<AgentToolDto[]>('GET', '/agent/v1/tools'); }
   callTool(name: string, args: Record<string, unknown>) {
     return this.req('POST', `/agent/v1/tools/${encodeURIComponent(name)}`, args ?? {});
+  }
+  /** MCP ReadResource 的后端来源（§11.7.5：kind = template | stock） */
+  getResource(kind: string, id: string) {
+    return this.req('GET', `/agent/v1/resources/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`);
   }
 }
