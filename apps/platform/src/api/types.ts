@@ -369,3 +369,122 @@ export interface TenantMeterDetail {
   month: MeterMonthSummary[];
   meters: MeterUsage[];
 }
+
+// ============================================================================
+// P6.3 租户数据保留期 / 导出 / 硬删（docs/11 D12 + §11.2 RLS 兜底）
+//   TenantRetention*    ← platform-admin/tenant-data.service.ts#retention
+//   TenantExportSummary ← #exportTenant
+//   TenantExportItem    ← #listBackups（读 tenant_backups）
+//   TenantPurgeResult   ← #purgeTenant
+// 三道闸门在 tenant-data.calc.ts#assertPurgeAllowed，UI 只做「如实反映 + 前端预校验」，不替代后端。
+// ============================================================================
+
+/**
+ * GET /platform/tenants/retention 的行。
+ * ⚠️ 后端 SQL 是 `where canceled_at is not null`：**只有已退订租户**会出现在这里，
+ * 列表为空 ≠ 没有租户，而是没有退订中的租户（全量看 GET /platform/tenants）。
+ */
+export interface TenantRetentionItem {
+  tenantId: number;
+  code: string;
+  name: string;
+  /** 非空即已进入保留期（后端只回已退订的行） */
+  canceledAt: string | null;
+  /** canceledAt + retentionDays，过了这个时间点 due 才为 true */
+  hardDeleteAt: string | null;
+  /** 距可硬删还剩几天（向下取整，负数=已过期）；未退订/脏值为 null */
+  daysLeft: number | null;
+  /** daysLeft <= 0：保留期已满，可硬删 */
+  due: boolean;
+  /** 0 < daysLeft <= 7：进入删除前提醒窗口 */
+  warn: boolean;
+  /** 该租户 users 行数（看板用来判断「删掉会影响多少人」） */
+  users: number;
+  /** 该租户 templates 行数 */
+  templates: number;
+}
+
+/** GET /platform/tenants/retention —— retentionDays 后端常量 D12=90 */
+export interface TenantRetentionBoard {
+  retentionDays: number;
+  items: TenantRetentionItem[];
+}
+
+/** POST /platform/tenants/:id/export 的摘要（数据本体落在 tenant_backups，下载另走接口） */
+export interface TenantExportSummary {
+  tenantId: number;
+  tenantCode: string;
+  /** tenant_backups.id，下载用它 */
+  backupId: number;
+  /** `<code>-export-<yyyy-mm-dd>`，下载文件名 = name + '.json.gz' */
+  name: string;
+  createdAt: string;
+  sizeBytes: number;
+  /** 本次导出覆盖的表数（含 tenants 单行快照） */
+  tableCount: number;
+  rowCount: number;
+  /** 超过单表 5 万行上限被截断的表名：非空即「导出件不完整」 */
+  truncated: string[];
+  /** 后端如实回报：false = 跑在主库连接上（只有应用层隔离），不是 RLS 角色 */
+  rlsActive: boolean;
+}
+
+/** 导出件种类：平台导出 / 租户自己手工备份 / 定时备份 / 硬删前自动快照 */
+export type TenantExportKind = 'export' | 'manual' | 'scheduled' | 'purge-pre';
+
+/**
+ * GET /platform/tenants/:id/exports 的行（含租户自己建的备份）。
+ * ⚠️ size_bytes / created_by 是 BIGINT，pg 驱动回**字符串**（实测 "985" / "1"），展示前要 Number()。
+ */
+export interface TenantExportItem {
+  id: number;
+  name: string;
+  kind: TenantExportKind | string;
+  sizeBytes: number | string;
+  storageKey: string | null;
+  createdBy: number | string | null;
+  createdAt: string;
+}
+
+/** GET /platform/tenants/:id/exports（后端 limit 100，按 id 倒序） */
+export interface TenantExportList {
+  tenantId: number;
+  items: TenantExportItem[];
+}
+
+/** POST /platform/tenants/:id/purge 请求体 */
+export interface PurgeTenantPayload {
+  /** 闸门①：必须逐字等于租户 code（后端 trim 后比对） */
+  confirm: string;
+  /** 闸门②③：未过保留期或未退订时，必须显式 true */
+  force?: boolean;
+}
+
+/** 硬删逐表明细（rows=该表本次删掉的行数，0 表示这张表本来没数据） */
+export interface TenantPurgeDetailRow {
+  table: string;
+  rows: number;
+}
+
+/**
+ * POST /platform/tenants/:id/purge 的成功返回。
+ * remaining / cyclic 非空 = 删完复查仍有行 / 外键成环只能按原顺序删 → 可能有孤儿行需人工核查。
+ */
+export interface TenantPurgeResult {
+  tenantId: number;
+  tenantCode: string;
+  rlsActive: boolean;
+  /** 删除前自动落的 purge-pre 快照（唯一的回滚凭据） */
+  snapshot: {
+    backupId: number;
+    name: string;
+    sizeBytes: number;
+    tableCount: number;
+  };
+  deletedRows: number;
+  /** 处理过的表数（不是「删到行的表数」） */
+  tables: number;
+  detail: TenantPurgeDetailRow[];
+  remaining: string[];
+  cyclic: string[];
+}

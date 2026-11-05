@@ -19,11 +19,16 @@ import type {
   PlatformTenant,
   ProvisionTenantPayload,
   ProvisionTenantResult,
+  PurgeTenantPayload,
   RemoveQuotaResult,
   SetEnabledResult,
+  TenantExportList,
+  TenantExportSummary,
   TenantMeterDetail,
   TenantModuleRow,
+  TenantPurgeResult,
   TenantQuota,
+  TenantRetentionBoard,
   TenantSubscriptionDetail,
   UpsertQuotaPayload,
   UsageOverview,
@@ -95,6 +100,22 @@ function forceRelogin(msg: string) {
   }
 }
 
+/**
+ * responseType='blob' 的请求失败时，axios 把错误体也包成了 Blob（后端仍是 {code,message} 信封，
+ * 实测 401/404 的 Content-Type 是 application/json）。不解开就只能弹「Request failed with status code 404」
+ * 这种没用的文案，所以这里先读文本试解析回 JSON 信封再交给 toApiError。
+ * gzip 之类的二进制不试解析（data.type 里没有 json/text 就直接放弃，退回 HTTP 状态文案）。
+ */
+export async function parseBlobErrorBody(data: unknown): Promise<any> {
+  if (!(data instanceof Blob)) return data;
+  if (data.type && !/json|text/i.test(data.type)) return null;
+  try {
+    return JSON.parse(await data.text());
+  } catch {
+    return null;
+  }
+}
+
 instance.interceptors.response.use(
   (res) => {
     const body = res?.data;
@@ -103,9 +124,9 @@ instance.interceptors.response.use(
     }
     return body;
   },
-  (err: any) => {
+  async (err: any) => {
     const status = err?.response?.status;
-    const body = err?.response?.data;
+    const body = await parseBlobErrorBody(err?.response?.data);
     const silent: boolean = err?.config?.silent === true;
     const apiErr = toApiError(body, status ?? 0, err?.message ?? '请求失败');
 
@@ -205,5 +226,47 @@ export const apiDeleteTenantQuota = (tenantId: number, meter: string) =>
 /** 本月聚合 + 原始计量明细（page/pageSize 只作用于明细，month 始终全量） */
 export const apiTenantMeters = (tenantId: number, q: { meter?: string; page?: number; pageSize?: number } = {}) =>
   http.get<TenantMeterDetail>(`/platform/tenants/${tenantId}/meters`, { params: cleanQuery(q) });
+
+// ========== P6.3 租户数据保留期看板 / 导出 / 下载 / 硬删 ==========
+
+/** D12 保留期看板：⚠️ 只含已退订（canceled_at 非空）的租户，不是全量租户 */
+export const apiTenantRetention = () => http.get<TenantRetentionBoard>('/platform/tenants/retention');
+
+/** 全量导出该租户业务数据（gzip 落 tenant_backups，kind=export），返回摘要不含数据本体 */
+export const apiExportTenantData = (tenantId: number) =>
+  http.post<TenantExportSummary>(`/platform/tenants/${tenantId}/export`);
+
+/** 该租户的导出件清单（含租户自己手工/定时备份的，后端 limit 100） */
+export const apiTenantExports = (tenantId: number) =>
+  http.get<TenantExportList>(`/platform/tenants/${tenantId}/exports`);
+
+/**
+ * 下载导出件：后端这个接口用 @Res() 直发 gzip **原文件**，不走 {code,message,data} 信封，
+ * 所以必须 responseType:'blob'（仍复用同一个 instance，Authorization 头由拦截器带上）。
+ *
+ * 坑：失败时（401/404）后端回的仍是 JSON 信封，但被 blob 包住 →
+ * ① HTTP 非 2xx：交给响应拦截器，里面 parseBlobErrorBody 会把 Blob 解回可读文案并弹提示；
+ * ② HTTP 200 但 content-type 是 json（理论上不该发生，防一手）：这里主动判 blob.type，
+ *    解出 message 弹提示并 reject，绝不让浏览器存下一个内容是 JSON 的 .json.gz。
+ */
+export async function apiTenantExportDownload(tenantId: number, exportId: number): Promise<Blob> {
+  const blob = await http.get<Blob>(`/platform/tenants/${tenantId}/exports/${exportId}/download`, {
+    responseType: 'blob',
+  });
+  if (blob instanceof Blob && /json/i.test(blob.type)) {
+    const body = await parseBlobErrorBody(blob);
+    const apiErr = toApiError(body, 200, '导出件下载失败：接口返回的不是 gzip 文件');
+    ElMessage.error(apiErr.message);
+    throw apiErr;
+  }
+  return blob;
+}
+
+/**
+ * 硬删租户全部业务数据（不可逆）。闸门由后端强制（tenant-data.calc.ts#assertPurgeAllowed）：
+ * confirm 逐字等于租户 code；未过保留期或未退订必须 force=true。前端只做预校验，不替代后端判定。
+ */
+export const apiPurgeTenant = (tenantId: number, data: PurgeTenantPayload) =>
+  http.post<TenantPurgeResult>(`/platform/tenants/${tenantId}/purge`, data);
 
 export default http;
