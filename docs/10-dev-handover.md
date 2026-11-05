@@ -1,8 +1,8 @@
 # 10. 开发交接文档（面向接手的 AI / 开发者）
 
 > 本文档目标：**任何 AI 或开发者读完本文即可无缝接手继续开发**，不需要再翻历史对话。
-> 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）** → **§10.19 P3 计费闭环（动账单/配额/计量前必读）**。
-> 最后更新：2026-11-05（P0/P1/P2/P3 已落地；本轮新增 **§10.19 P3 计费闭环**；单测 142 条 / 验收 91 项）
+> 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）** → **§10.19 P3 计费闭环（动账单/配额/计量前必读）** → **§10.20 P4 Agent/MCP（动 /agent/v1、agent token、库存只读模型前必读）**。
+> 最后更新：2026-11-05（P0–P4 已落地；本轮新增 **§10.20 P4 Agent/MCP**；单测 160 条 / 验收 115 项）
 >
 > ⚠️ **2026-11-05 历史瘦身**：`.pnpm-store`（232 MB pnpm 包缓存，被 `95b4970` 误提交）已从
 > `feat/dev-base` 的**全部历史**中移除，`.git` 从 54 MB 降到 1.4 MB。
@@ -875,8 +875,8 @@ docs/03-database.sql → backend/scripts/seed.sql → backend/scripts/saas_p0.sq
 ### 10.15.6 测试与验收覆盖
 
 ```bash
-cd backend && npm test                       # 142 条（原 26 → P0 +89 → P1 +2 → 校验 +8 → P2 +5 → P3 +12）
-T_CODE=p0a1 T2_CODE=p0a2 bash backend/scripts/p0-acceptance.sh   # 91 项断言，期望「通过 91 / 失败 0」（重跑换新 T_CODE/T2_CODE）
+cd backend && npm test                       # 160 条（原 26 → P0 +89 → P1 +2 → 校验 +8 → P2 +5 → P3 +12 → P4 +18）
+T_CODE=p0a1 T2_CODE=p0a2 bash backend/scripts/p0-acceptance.sh   # 115 项断言，期望「通过 115 / 失败 0」（重跑换新 T_CODE/T2_CODE）
 ```
 
 - 单测分布（本轮新增）：`validate-ai-template` 23、`sql-executor` 14（含真实 PG 集成，PG 不可达自动 skip）、`saas-guards` 10、`menu.catalog` 12（P1 加了 AI 入口 + 菜单/路由一致性两条）、`data-scope` 7、`roles.guard` 7、`module-deps` 6、`permission-match` 8、`errors.filter` 4。
@@ -1171,3 +1171,58 @@ npx esbuild --format=esm --outfile=/dev/null web/js/api.js
 - `npx tsc` 0 error；`npm test` **142/0**（新增 billing.calc.test.ts 12 条）；
 - p0-acceptance.sh **91/0**：K.1–K.19 覆盖 设配额→打印带软告警→4033 硬拦→租户用量→订阅聚合真实值→越权写 403→自动出账→发单→部分收款→结清→已付拒作废→租户可见性→详情流水→退订租户出账保护→0 元账单→草稿隔离/作废→原始明细→运营筛选；
 - 前端：apps/platform 账单中心 + 租户配额抽屉 + 套餐价格编辑；apps/console `/billing` 页（菜单目录 /billing + 路由一致性断言 #12 绿）。
+
+---
+
+## 10.20 P4 Agent/MCP（2026-11-05 落地）
+
+> 目标（docs/11 §11.11 P4 行）：agent 表 + `/agent/v1` + stdio MCP + 只读工具；演示口径「Claude Desktop 可查库存/齐套」。
+> 明确没做的见 §10.20.5。DDL：`backend/scripts/saas_p4_agent.sql`；演示数据：`backend/scripts/seed-inventory-demo.sql`（`psql -v tid=<租户ID>` 幂等）。
+
+### 10.20.1 数据模型
+
+- Agent 层四张表按 §11.5.3 原样：`agent_clients`（kind=mcp_stdio|mcp_http|internal，status=active|disabled）、`agent_tokens`（token_hash UNIQUE + scopes TEXT[] + expires_at/revoked/last_used_at）、`agent_approvals`（**只建表，审批流 P5 接线**）、`external_mcp_servers`（**D10 预留不实现**）。
+- **库存最小读模型**（本阶段的关键前置：文档验收要求「无库存数据返回空数组+友好摘要」，而库内此前 inventory/bom 域零实现）：
+  `warehouses`、`materials`（safety_stock NUMERIC(14,3)）、`stock_batches`（批次粒度，unit_cost_cents 分口径、expires_at DATE）、`boms`/`bom_items`（qty_per + loss_rate）。
+  定位是「Agent 只读工具的数据面」，**没有租户 REST 控制器、没有出入库写路径**——完整 WMS（单据、流水、预警引擎）留给后续阶段在此模型上扩展。
+- 权限字典补 3 码：`bom:shortage:read`、`inventory:stock:transfer`、`alert:event:ack`（其余 §11.7.2 所需码 P0 已种）；role_permissions 同步授 admin/tenant_admin（**legacy admin 此前只种了 4 个 sys 码，靠 SUPER_ROLES 兜底；为 Agent scope 校验字典完整显式补齐**）、warehouse_keeper 调拨、manager/viewer 缺料读。
+- ⚠️ 又一次踩联合类型反射坑：`status: 'draft' | 'active' | 'inactive'` 这类**字面量联合**同样反射成 Object，必须显式 `type: 'varchar'`（agent.entity / inventory.entity 都有显式标注）。
+
+### 10.20.2 Token 与鉴权链
+
+- 形态：`lfagent_` + 40 hex（20 字节随机）；库里只存 **sha256 hex**，明文仅签发响应出现一次；列表只回 hash 尾 8 位（`agent.calc.ts` 纯函数，8 条单测）。
+- `AgentTokenGuard`：Bearer → 形态校验（租户 JWT 打 /agent/v1 直接 401，不查库）→ hash 查 token → revoked/expires_at → client.status → tenant.status。
+  身份无效一律 401；身份有效但客户端/租户停用 → 403。通过后写 `req.agentCtx = {tenantId, clientId, clientName, scopes, tokenId}`，**tenantId 只来自 token**（§11.6.3 禁止请求体传租户）；last_used_at 异步打点失败不阻断。
+- 控制器：`/agent/v1` 类级 `@Public()` + 自有 Guard（P2 同款跳链模式）；`/agents` 管理面 `TenantGuard + @RequireModule('agent') + @RequirePermission('sys:agent:manage')`（PRO 套餐专属，BASIC → 4031，验收 L.4）。
+- 签发护栏（§11.7.7）：scope ⊆ 创建者权限（admin/tenant_admin 跳过，与 PermissionGuard SUPER_ROLES 一致）；**不传 scopes = P4 默认只读五码**（defaultReadScopes）。
+
+### 10.20.3 工具目录与 dispatch（ToolsService）
+
+- `tool.catalog.ts`：23 个工具定义 —— 3 元（whoami/list_modules/describe_capabilities）+ 8 个业务只读执行器（templates.search/get、inventory.query_stock/list_low_stock/list_batches/list_expiring、bom.check_kit_rate/explain_shortage）+ 5 个**已注册未开放**（templates.create/update、inventory.adjust/transfer、print.submit_job，P4 调用 → 400「后续版本开放」）。
+- ⚠️ 权限点用**库内真实码**：文档 §11.7.2 写 `print:template:read/write`，实际字典是两段式 `template:read/template:write`（P0 已种），目录按真实码走（偏离已记 docs/11 §11.15.2）。
+- dispatch 顺序（验收 L.12 依赖此顺序）：**scope 检查（403/4032 + 审计 denied_scope）→ 订阅模块（4031 + 审计）→ 执行器可用性 → agent_calls 配额（4033）→ 执行 → 计量 + 审计**。
+  只读 token 打 inventory.adjust 在第一步就 403 —— 即便该工具没有执行器；`visibleTools()`/运行时 scope 判定共用 `matchPermission`（通配 `inventory:*` 语义一致）。
+- 返回统一信封 `{summary, data, warnings, next_actions}`（§11.6.3）；空数据路径返回 `items:[]` + 中文友好摘要（不报错）。
+- 计量：`agent_calls` 每次 POST /tools/:tool 记 1（含执行报错的调用；被 scope/模块拒的不计），`GET /whoami` 也走 call 链所以计量，`GET /tools` 清单不计量；`/agent/v1/resources/:kind/:id`（template/stock）复用对应工具的完整检查链。
+- 审计：`audit_logs.action = agent.tool.<name>`（≤40 字符截断），detail `{clientId, clientName, argsHash, scopes, status: ok|denied_scope|denied_module|not_open|denied_quota|error, durationMs}`；actorId 走 useTenant() 兜底=0（agent 无用户身份；`actor_type=agent` 规范化留 P5）。argsHash = 键排序稳定 JSON 的 sha256（P5 approval 绑定用同一实现）。
+
+### 10.20.4 apps/mcp-server（stdio）
+
+- 技术选型：`@modelcontextprotocol/sdk@1.32.2` **低层 Server API**（McpServer.registerTool 需要 zod，低层 setRequestHandler(ListTools/CallTool) 直接吃后端下发的 JSON Schema，零额外依赖）。ESM（type:module，NodeNext，tsc 编译到 dist/）。
+- 启动流：AGENT_TOKEN 缺失即退出 → GET whoami（401 时 stderr 提示重签）→ GET tools → 逐个注册；tools/call → POST /agent/v1/tools/:name → 信封转「摘要 + 缩进 JSON」文本块，4xx/5xx 转 `isError` content。
+- **只持 Agent Token，不碰数据库**（§11.7.1）；stdio 单租户 = 一进程一 token。
+- `npm run selftest`：SDK `Client + StdioClientTransport` 拉起 dist/index.js，断言 tools≥10、whoami 含租户、空数据查询 items:[]+友好摘要；**§11.11.2 的 `npx @modelcontextprotocol/inspector` 也已实测**（`--cli node dist/index.js --method tools/list` 列出 11 个）。验收 L.14 跑 selftest，未装依赖时自动跳过。
+
+### 10.20.5 P4 明确没做（留给 P5/P6）
+
+- **写工具执行器 + 幂等键 + 限流 + approval 流**（agent_approvals 表已建；`/agent/v1/approvals` 现为明确 400 占位）；Streamable HTTP 多租户入口（D9：P5）。
+- 库存/齐套的**租户 REST 页面与写路径**（adjust/transfer 只注册目录）；alerts.* 工具未注册（无 alert 数据表）。
+- print.submit_job 的 D7 灰度（feature_flags key 已随 P0 建好，执行链路 P5）。
+- actor_type=agent 的审计列规范化（现在在 detail JSON 里）；data_scope 字段脱敏（护栏 7）。
+- MCP server 的 HTTP 模式、Resources/Prompts 暴露（§11.7.5 只做了 REST 端点，MCP 侧 prompts/resources 声明未注册）。
+
+### 10.20.6 验证（全部实跑 2026-11-05）
+
+- `npx tsc` 0 error；lint 0 error；`npm test` **160/0**（新增 agent.calc.test.ts 18 条：token 形态/hash/argsHash 键序无关/过期/scope 通配/默认只读 + kit 齐套口径含浮点临界与空行）。
+- p0-acceptance.sh **115/0**：L.1–L.20 覆盖 加购模块→种子→建客户端→BASIC 4031→签发→whoami 租户/scope→tools≥11→sku/batch/below_safety 三种查法→**空数组+友好摘要**→齐套率 60%（含 5% 损耗）→缺料 205kg→**只读 token 打 adjust 403+审计**→resources 快照→**stdio MCP selftest**→agent_calls 日配额 4033→撤销后 401→租户 JWT 打 agent API 401→停用客户端存量 token 403。
+- 手工冒烟：真 token 走 /agent/v1 全链 + inspector CLI tools/list + SDK Client 三断言全绿。
