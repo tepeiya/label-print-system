@@ -1,8 +1,8 @@
 # 10. 开发交接文档（面向接手的 AI / 开发者）
 
 > 本文档目标：**任何 AI 或开发者读完本文即可无缝接手继续开发**，不需要再翻历史对话。
-> 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）**。
-> 最后更新：2026-11-04（SaaS **P0 权限与订阅底座** + **P1 前端动态化**已落地，见 §10.15 / §10.16；上一版对应 commit `c822386`）
+> 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）**。
+> 最后更新：2026-11-05（P0/P1 已落地；新增 **§10.17 入参校验底座** + **§10.18 P2 平台运营后台**；上一版对应 commit `c822386`）
 >
 > ⚠️ **2026-11-05 历史瘦身**：`.pnpm-store`（232 MB pnpm 包缓存，被 `95b4970` 误提交）已从
 > `feat/dev-base` 的**全部历史**中移除，`.git` 从 54 MB 降到 1.4 MB。
@@ -1057,3 +1057,55 @@ npx esbuild --format=esm --outfile=/dev/null web/js/api.js
 - `@Query()` 的 DTO 化（list 接口的 page/pageSize/keyword 仍是裸 `any`，风险低）。
 - `forbidNonWhitelisted: true`（多传字段报 400 而不是忽略）——与「整包透传」兼容策略冲突，不做。
 - AI 模型配置等深校验（settings 内部结构）；DTO 里的 `@IsAny` 型自由字段维持透传。
+
+---
+
+## 10.18 P2 平台运营后台（2026-11-05 落地）
+
+> 对应 docs/11 §11.11 P2 行 + §11.6.2 平台 API 契约。范围：平台运营身份、租户运营、
+> 套餐配置、用量看板、到期提醒。计费/账单（P3）、模拟登录、`/platform/v1` 前缀迁移不在本轮。
+
+### 10.18.1 平台身份体系（最重要的行为变化）
+
+- 新表 `platform_users`（scripts/saas_p2_platform.sql，含种子账号 `platform / platform#2026`，幂等）。
+- `POST /platform/auth/login` 签 `scope='platform'` 的 JWT（2h，无 refresh，过期重登）。
+- **P0 时代拿租户 admin JWT 直接调 /platform 写接口的用法已关闭**：`PlatformJwtGuard`
+  只认 scope=platform，租户 JWT 得 403（验收 J.1）。租户 admin 现在只能读三个目录接口。
+- 目录查询（GET /platform/modules、/plans、/permissions）挂 `PlatformOrAdminGuard`：
+  平台运营或租户 admin 都能读（console 订阅页靠它做套餐对比，P1 不能回归），operator 403。
+- p0-acceptance.sh 相应升级：0.2 平台登录拿 `PT`，运营写调用全部换 `PT`（`AT` 只剩目录）。
+
+### 10.18.2 运营接口（platform-admin/ 目录）
+
+| 接口 | 说明 |
+| --- | --- |
+| GET /platform/tenants | 租户列表（订阅状态/席位/试用到期/退订时间，复用 provision.listTenants） |
+| POST /platform/tenants | 开通（同 P0 语义，单事务） |
+| POST /platform/tenants/:id/suspend \| /resume | 停用/恢复（tenants.status 翻转 + invalidate） |
+| POST /platform/tenants/:id/cancel | 退订（D12：canceled_at → 90 天硬删） |
+| POST/DELETE /platform/tenants/:id/modules[/:code] | 加购（自动补依赖）/ 停用（依赖检查） |
+| GET/PUT /platform/tenants/:id/flags | D7 灰度开关（从租户 admin JWT 迁到平台身份） |
+| GET /platform/plans + PUT /platform/plans/:code | 套餐配置：moduleCodes 全量替换 plan_modules + invalidateAll |
+| GET /platform/usage | 全局看板：totals 聚合 + byPlan 分布 + expiringSoon |
+| GET /platform/audit | 平台审计（最近 200 条） |
+
+### 10.18.3 平台审计与到期提醒
+
+- **platform_audit_logs 独立表**：租户 audit_logs.tenant_id 有 FK（REFERENCES tenants），
+  平台动作没有租户上下文，写 0 会撞 FK —— 所以平台侧另建表，别混用 AuditService。
+- 到期提醒：`expire.util.ts` 纯函数（单测不连实体，见 §10.15.6 脚注）+
+  服务 `onModuleInit` 启动 10s 后首扫、之后每 24h 一次，3 天内到期的 trial 打 WARN 日志；
+  看板 `usage.expiringSoon` 同源。P3 接消息通道后把 console.warn 换成推送。
+
+### 10.18.4 验证（全部实跑）
+
+- `npx tsc` 0 error；`npm test` **130/0**（新增 platform-admin.test.ts 5 条）；
+- p0-acceptance.sh **72/0**（0.2 + J.1–J.6：scope 隔离、看板、列表、suspend/resume、审计）；
+- curl 实测：租户 JWT → 运营接口 403；平台 token → 租户业务接口 403（缺租户上下文）；suspend 后
+  该租户登录 401「该租户已停用」，resume 恢复；PUT plans/BASIC 换模块后目录立即变化。
+
+### 10.18.5 P2 明确没做（接 P3/P6）
+
+- 计费/账单/发票（P3）；`/platform/v1` 独立前缀（仍挂在 /api/v1 下）；
+- 模拟登录 impersonate（§11.6.2 列了，风险高，单独排期）；
+- platform_users 的 CRUD UI（后台只有种子账号，加人直接 SQL）；refresh token 机制。

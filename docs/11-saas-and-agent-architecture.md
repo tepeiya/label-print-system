@@ -827,7 +827,7 @@ Agent 调用 print.submit_job
 | --- | --- | --- | --- |
 | **P0 权限与订阅底座** ✅ 已完成（2026-11-04） | 平台/租户/模块/套餐/订阅表；`permissions` 字典；`role_permissions`；`user_roles.role_id` 迁移（含 `sql → manager`）；`ModuleGuard` + `PermissionGuard`；`TenantCtx.dataSourceKey`；连接池 `SET app.tenant_id`；`feature_flags` 表；`tenants.canceled_at`；`/auth/me` 扩展 | 后端可校验模块与权限点；现有 4 角色平滑映射 | 4–5 天 |
 | **P1 前端动态化** ✅ 已完成（2026-11-04） | 动态菜单/路由/按钮权限；模块未订阅页；订阅信息页（只读） | 前端不再硬编码菜单：`apps/console` 菜单与路由守卫改为消费 `/auth/me.menus`；新增 `v-permission` / `v-module` 指令、`/blocked` 落地页、`/subscription` 到期横幅、数据源/审计/AI 三个页面；零构建的 `web/` 同步改为「权限点优先 + 角色兜底」+ 按订阅模块裁剪页签（细节见 docs/10 §10.16） | 3–4 天 |
-| **P2 平台运营后台** | 租户开通/停用/加购；套餐配置；用量看板；到期提醒任务 | 可人工售卖与开通 | 1.5–2 周 |
+| **P2 平台运营后台**（2026-11-05 后端+前端落地，细节 docs/10 §10.18） | 租户开通/停用/加购；套餐配置；用量看板；到期提醒任务 | 可人工售卖与开通 | 1.5–2 周 |
 | **P3 计费闭环** | 用量采集 + 配额 + 账单 + 支付（先手动登记）+ 发票 | 可出账、可对账 | 2–3 周 |
 | **P4 Agent / MCP** | agent 表 + `/agent/v1` + stdio MCP + 6 个只读工具 | Claude Desktop 可查库存/齐套 | 4–5 天 |
 | **P5 Agent 增强** | 写工具 + 幂等 + 限流 + 审计 + 审批流 + Streamable HTTP | SaaS 客户可接入自有 Agent | 1.5–2 周 |
@@ -995,6 +995,9 @@ SELECT COUNT(*) FROM user_roles WHERE role_id IS NULL;  -- 期望 0
 | 2026-11-04 | `serial` 模块已订阅（BASIC 内含）但**不进菜单**：`serial-sequences` 只实现了 `segment-preview`，没有列表/CRUD 接口 | 避免前端出现点进去就 404/空白的入口；P2 补 CRUD 时再加目录项 |
 | 2026-11-05 | **全局入参校验底座落地**（docs/10 §10.17）：全局 `ValidationPipe` + 9 个 DTO 文件覆盖 40/45 个 `@Body()`；缺 `content` 建模板由 500 变 400 + 中文明细；`class-validator` 挪进 dependencies；验收脚本 62→65 项 | P1 遗留的「根因还留着」（缺字段 → TypeORM 23502 → 500），P2 平台后台会新增一批写接口，先把门装上 |
 | 2026-11-05 | 修复 console `apiResetUserPassword` 字段名 bug：一直发 `{ password }`，后端收 `newPassword`，**console 重置密码必失败** | 单测 + curl 复核过；`web/js/api.js` 本来就是对的 |
+| 2026-11-05 | **ESLint 基线落地**（backend + apps/console，flat config 0 error；24 文件 29 处死代码清理） | docs/10 §10.9 #12；只立门禁不搞洁癖，存量 any 不治理 |
+| 2026-11-05 | **P2 平台运营落地**：platform_users 独立身份（scope=platform），P0 时代「租户 admin JWT 直调 /platform 写接口」的口子关闭；目录查询改混合守卫（平台运营或租户 admin 可读） | §11.6.2 的设计如此；租户身份进运营接口本来就是 P0 的临时放行 |
+| 2026-11-05 | 到期提醒任务按「启动+每 24h 扫描打 WARN + 看板 expiringSoon」实现，未接消息推送 | P3 做计费时一并接通知通道 |
 | 2026-11-04 | `GET /subscription` 响应新增 `moduleDetails`（名称/图标/说明/`isCore`），原 `modules`（code 数组）保持不变 | 设计稿没定义该字段；只回 code 的话订阅页只能把英文码当模块名显示。加字段而非改形状，验收脚本 E/F 段断言不受影响 |
 | 2026-11-04 | 修 `DELETE /backups/:id`：后端 `remove()` 原来标的是 `@Post(':id')`，与 docs/10 §10.3 的约定和前端调用都不一致 | 前端「删除备份」一直 404；顺带补 `@RequirePermission('backup:write')`（原先只有 `@Roles('admin')`，缺 L1 权限点判定） |
 | 2026-11-04 | `web/`（零构建原生前端，§11.10 未覆盖）同步改为权限点优先 + 角色兜底，并按订阅模块裁剪主标签页；**`features`（D7 灰度）在该前端无处挂载**，未接入 | 现网仍有用户直接用 `web/`；它读同一个 `/auth/me`，不做裁剪就会出现「前端能点、后端 403」。`web/index.html` 的 AI 视图没有透视矫正按钮，`ai.vision` 开关没有可挂的 UI，未做猜测性映射 |

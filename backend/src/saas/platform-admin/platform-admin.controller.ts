@@ -4,6 +4,8 @@ import { PlatformJwtGuard } from './platform-jwt.guard';
 import { PlatformAdminService } from './platform-admin.service';
 import { AddModuleDto, FeatureFlagDto, PlatformLoginDto, ProvisionTenantDto, UpsertPlanDto } from '../dto/platform.dto';
 import { TenantConfigService } from '../tenant-config.service';
+import { SubscriptionService } from '../subscription.service';
+import { ModulesService } from '../modules.service';
 
 /**
  * 平台运营后台 API（P2，docs/11 §11.6.2）。
@@ -18,6 +20,8 @@ export class PlatformAdminController {
   constructor(
     private svc: PlatformAdminService,
     private configSvc: TenantConfigService,
+    private subSvc: SubscriptionService,
+    private modSvc: ModulesService,
   ) {}
 
   // ---------- 租户 ----------
@@ -56,6 +60,13 @@ export class PlatformAdminController {
   disableModule(@Param('id') id: string, @Param('code') code: string) {
     return this.svc.disableModule(+id, code);
   }
+
+  /** 某租户的订阅详情 + 开通模块（P0 契约保留，前端「查看已开模块」抽屉用） */
+  @Get('tenants/:id/subscription')
+  tenantSubscription(@Param('id') id: string) { return this.subSvc.getByTenant(+id); }
+
+  @Get('tenants/:id/modules')
+  tenantModules(@Param('id') id: string) { return this.modSvc.listTenantModules(+id); }
 
   // ---------- 功能开关（D7 灰度，从 P0 的租户 admin JWT 迁到平台身份） ----------
 
