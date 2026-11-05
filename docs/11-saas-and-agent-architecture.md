@@ -830,7 +830,7 @@ Agent 调用 print.submit_job
 | **P2 平台运营后台**（2026-11-05 后端+前端落地，细节 docs/10 §10.18） | 租户开通/停用/加购；套餐配置；用量看板；到期提醒任务 | 可人工售卖与开通 | 1.5–2 周 |
 | **P3 计费闭环**（2026-11-05 落地，细节 docs/10 §10.19） | 用量采集 + 配额 + 账单 + 支付（先手动登记）+ 发票 | 可出账、可对账（实测：p0-acceptance.sh K 段 19 项；发票开具与自动扣款未做，见 §10.19.5） | 2–3 周 |
 | **P4 Agent / MCP**（2026-11-05 落地，细节 docs/10 §10.20） | agent 表 + `/agent/v1` + stdio MCP + 只读工具 | Claude Desktop 可查库存/齐套（实测：6 个业务只读工具 + 3 元工具 + apps/mcp-server stdio；写工具/审批流/HTTP 传输属 P5） | 4–5 天 |
-| **P5 Agent 增强** | 写工具 + 幂等 + 限流 + 审计 + 审批流 + Streamable HTTP | SaaS 客户可接入自有 Agent | 1.5–2 周 |
+| **P5 Agent 增强**（2026-11-05 落地，细节 docs/10 §10.21） | 写工具 + 幂等 + 限流 + 审计 + 审批流 + Streamable HTTP | SaaS 客户可接入自有 Agent（实测：p0-acceptance.sh M 段 31 项 + 验收 146/0；写工具 5 个全部有执行器、Streamable HTTP 一 token 一会话；**审批的 console 前端页与 Prompts 库产品化未做**，见 §10.21.8） | 1.5–2 周 |
 | **P6 加固** | RLS、独立库租户、租户导出/删除、白标、Prompts 库 | 可对外规模化 | 1–2 周 |
 
 > P0+P1（约 1.5 周）即可跑通「按模块订阅 + 权限分级」的最小闭环；
@@ -850,19 +850,19 @@ Agent 调用 print.submit_job
       （后端裁剪逻辑见 `src/saas/menu.catalog.ts`；**前端已于 P1 接入**，
       `apps/console` 顶栏与路由守卫只读 `me.menus`，见 docs/10 §10.16）
 - [x] 现有 `admin/operator/sql/viewer` 映射后行为不变（回归测试 16 项 + 手工 8 项）
-      （实测：单测 160 条 + 验收脚本 115 项；`sql` 登录后双码回显 `["sql","manager"]`）
+      （实测：单测 180 条 + 验收脚本 146 项（A–M 段）；`sql` 登录后双码回显 `["sql","manager"]`）
 
 ### 11.11.2 验收标准（P4）
 
-> ✅ **2026-11-05 前四条通过**（p0-acceptance.sh L 段 L.1–L.20，实现与偏差见 docs/10 §10.20）：
-> inspector CLI 实测 `--cli node dist/index.js --method tools/list` 列出 11 个工具；
-> 第五条依赖 approval 流（agent_approvals 表已建），归 P5。
+> ✅ **2026-11-05 五条全部通过**（p0-acceptance.sh L 段 L.1–L.20 + M 段 M.1–M.22，实现与偏差见 docs/10 §10.20 / §10.21）：
+> inspector CLI 实测 `--cli node dist/index.js --method tools/list` 列出 11 个（P5 后目录共 17 个 = 3 元 + 9 只读 + 5 写/高危，写工具全部有执行器）；
+> 第五条原归 P5 的 approval 流已于本轮落地（M.4 起）。
 
 - [x] `npx @modelcontextprotocol/inspector` 能列出全部工具（验收 L.14 stdio 自测 + inspector CLI 实测）
 - [x] `whoami` 返回正确租户与 scope（L.6）
 - [x] `inventory.query_stock` 在无库存数据时返回空数组 + 友好摘要（L.9）
 - [x] 用只读 token 调 `inventory.adjust` 返回 403 且写入审计（L.12，403/4032 + audit `denied_scope`）
-- [ ] 高危工具无 approval_id 时返回 `need_approval` 且不产生副作用（**P5**：表已建、dispatch 预留）
+- [x] 高危工具无 approval_id 时返回 `need_approval` 且不产生副作用（**P5 已落**：M.4 实测 HTTP 202 + `data.need_approval` + `approval_id`，库存行数与总量零变化；M.6/M.9/M.10/M.11/M.12 覆盖 pending 拦下、确认后执行、一次性、hash 篡改、驳回；细节 docs/10 §10.21）
 
 ---
 
@@ -1006,6 +1006,7 @@ SELECT COUNT(*) FROM user_roles WHERE role_id IS NULL;  -- 期望 0
 | 2026-11-05 | `GET /platform/plans` 响应补 `priceCents`；platform-admin 的同名 GET 被目录版路由遮蔽（注册顺序），前端价格数据源实际在 PlatformController 版 | 出账基准要在运营端可见；遮蔽是 P2 遗留，行为无害，已注释在 modules.service |
 | 2026-11-05 | **P4 Agent/MCP 落地**（docs/10 §10.20）：agent_clients/agent_tokens/agent_approvals/external_mcp_servers 四表（§11.5.3 原样，后两张建表不接线）；`/agent/v1`（whoami/tools/tools/:tool/resources，AgentTokenGuard：sha256 存储 + scope/模块/配额三级检查）；`lfagent_` token 签发与租户侧 `/agents` 管理（scope ⊆ 创建者权限、默认只读）；stdio MCP server（apps/mcp-server，@modelcontextprotocol/sdk 低层 API，启动即从后端拉工具清单注册）；`agent_calls` 计量 + 4033 配额复用 P3 底座。偏差：①为满足 §11.11.2「无库存数据」验收，**新建库存最小读模型**（materials/warehouses/stock_batches/boms/bom_items，只读，无租户 REST/WMS 写路径）；②§11.7.2 模板权限点 `print:template:*` 按库内真实码 `template:read/write` 执行；③写工具（templates.create/update、inventory.adjust/transfer、print.submit_job）**只注册目录无执行器**（400 占位），approval 流、限流、Streamable HTTP、MCP resources/prompts 声明均留 P5；④approvals REST 端点为明确 400 占位 | §11.11 P4 排期；D7/D9/D10 决议如此 |
 | 2026-11-05 | 权限字典补 `bom:shortage:read`、`inventory:stock:transfer`、`alert:event:ack`；legacy `admin` 角色显式补授新码 | §11.7.2 工具矩阵需要而 P0 未种；admin 此前只种 4 个 sys 码靠 SUPER_ROLES 兜底，Agent scope 校验需要完整字典 |
+| 2026-11-05 | **P5 Agent 增强落地**（docs/10 §10.21）：5 个写/高危工具接执行器（templates.create/update、inventory.adjust/transfer、print.submit_job）+ 新增 `print.get_status`；`tool_idempotency` 表 + claim/finish/release 幂等（同键同参重放原结果、异参 409/4036）；`agent_approvals` 接线成完整审批流（pending→approved→consumed / rejected / expired，批准后 5 分钟一次性，args_hash 剔除 `approval_id` 后取指纹）；Agent 维度限流（Redis 固定窗口 + feature_flags `rollout.rpm`，Redis 故障退进程内）；`audit_logs.actor_type` 新列 + agent 调用结构化审计；租户侧 `/agents/approvals` 三件套 + 新权限码 `sys:agent:approve`；apps/mcp-server 增 **Streamable HTTP**（一 token 一会话）+ resources/prompts 声明。偏差：①`tool_idempotency` DDL 文档未给，自拟；②限流阈值复用 `feature_flags` 而非新表/环境变量；③`need_approval` 用 **HTTP 202 + 正常信封**承载（不是 4xx）；④写工具**强制** `idempotency_key`（§11.7.4 只建议）；⑤`print.estimate/wait_for_job/cancel_job`、`ai.*`、`alerts.*` 仍未注册；⑥审批只做后端 REST，console 前端「待确认」页留后续 | §11.11 P5 排期；D7/D8/D9 决议如此 |
 | 2026-11-04 | `GET /subscription` 响应新增 `moduleDetails`（名称/图标/说明/`isCore`），原 `modules`（code 数组）保持不变 | 设计稿没定义该字段；只回 code 的话订阅页只能把英文码当模块名显示。加字段而非改形状，验收脚本 E/F 段断言不受影响 |
 | 2026-11-04 | 修 `DELETE /backups/:id`：后端 `remove()` 原来标的是 `@Post(':id')`，与 docs/10 §10.3 的约定和前端调用都不一致 | 前端「删除备份」一直 404；顺带补 `@RequirePermission('backup:write')`（原先只有 `@Roles('admin')`，缺 L1 权限点判定） |
 | 2026-11-04 | `web/`（零构建原生前端，§11.10 未覆盖）同步改为权限点优先 + 角色兜底，并按订阅模块裁剪主标签页；**`features`（D7 灰度）在该前端无处挂载**，未接入 | 现网仍有用户直接用 `web/`；它读同一个 `/auth/me`，不做裁剪就会出现「前端能点、后端 403」。`web/index.html` 的 AI 视图没有透视矫正按钮，`ai.vision` 开关没有可挂的 UI，未做猜测性映射 |

@@ -1,8 +1,8 @@
 # 10. 开发交接文档（面向接手的 AI / 开发者）
 
 > 本文档目标：**任何 AI 或开发者读完本文即可无缝接手继续开发**，不需要再翻历史对话。
-> 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）** → **§10.19 P3 计费闭环（动账单/配额/计量前必读）** → **§10.20 P4 Agent/MCP（动 /agent/v1、agent token、库存只读模型前必读）**。
-> 最后更新：2026-11-05（P0–P4 已落地；本轮新增 **§10.20 P4 Agent/MCP**；单测 160 条 / 验收 115 项）
+> 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）** → **§10.19 P3 计费闭环（动账单/配额/计量前必读）** → **§10.20 P4 Agent/MCP（动 /agent/v1、agent token、库存只读模型前必读）** → **§10.21 P5 Agent 写工具与审批流（动 Agent 写路径/限流/幂等/MCP HTTP 前必读）**。
+> 最后更新：2026-11-05（P0–P5 已落地；本轮新增 **§10.21 P5 Agent 增强**；单测 180 条 / 验收 146 项）
 >
 > ⚠️ **2026-11-05 历史瘦身**：`.pnpm-store`（232 MB pnpm 包缓存，被 `95b4970` 误提交）已从
 > `feat/dev-base` 的**全部历史**中移除，`.git` 从 54 MB 降到 1.4 MB。
@@ -875,8 +875,8 @@ docs/03-database.sql → backend/scripts/seed.sql → backend/scripts/saas_p0.sq
 ### 10.15.6 测试与验收覆盖
 
 ```bash
-cd backend && npm test                       # 160 条（原 26 → P0 +89 → P1 +2 → 校验 +8 → P2 +5 → P3 +12 → P4 +18）
-T_CODE=p0a1 T2_CODE=p0a2 bash backend/scripts/p0-acceptance.sh   # 115 项断言，期望「通过 115 / 失败 0」（重跑换新 T_CODE/T2_CODE）
+cd backend && npm test                       # 180 条（原 26 → P0 +89 → P1 +2 → 校验 +8 → P2 +5 → P3 +12 → P4 +18 → P5 +20）
+T_CODE=p0a1 T2_CODE=p0a2 bash backend/scripts/p0-acceptance.sh   # 146 项断言（A–M 段），期望「通过 146 / 失败 0」（重跑换新 T_CODE/T2_CODE）
 ```
 
 - 单测分布（本轮新增）：`validate-ai-template` 23、`sql-executor` 14（含真实 PG 集成，PG 不可达自动 skip）、`saas-guards` 10、`menu.catalog` 12（P1 加了 AI 入口 + 菜单/路由一致性两条）、`data-scope` 7、`roles.guard` 7、`module-deps` 6、`permission-match` 8、`errors.filter` 4。
@@ -1226,3 +1226,98 @@ npx esbuild --format=esm --outfile=/dev/null web/js/api.js
 - `npx tsc` 0 error；lint 0 error；`npm test` **160/0**（新增 agent.calc.test.ts 18 条：token 形态/hash/argsHash 键序无关/过期/scope 通配/默认只读 + kit 齐套口径含浮点临界与空行）。
 - p0-acceptance.sh **115/0**：L.1–L.20 覆盖 加购模块→种子→建客户端→BASIC 4031→签发→whoami 租户/scope→tools≥11→sku/batch/below_safety 三种查法→**空数组+友好摘要**→齐套率 60%（含 5% 损耗）→缺料 205kg→**只读 token 打 adjust 403+审计**→resources 快照→**stdio MCP selftest**→agent_calls 日配额 4033→撤销后 401→租户 JWT 打 agent API 401→停用客户端存量 token 403。
 - 手工冒烟：真 token 走 /agent/v1 全链 + inspector CLI tools/list + SDK Client 三断言全绿。
+
+---
+
+## 10.21 P5 Agent 增强（2026-11-05 落地）
+
+> 目标（docs/11 §11.11 P5 行）：写工具 + 幂等 + 限流 + 审计 + 审批流 + Streamable HTTP，交付口径「SaaS 客户可接入自有 Agent」，同时闭合 §11.11.2 第五条。
+> DDL：`backend/scripts/saas_p5_agent_tools.sql`（幂等，可重复执行）。明确没做的见 §10.21.8。
+
+### 10.21.1 数据模型与 DDL
+
+| 对象 | 内容 |
+| --- | --- |
+| `tool_idempotency` | **新建**（文档只说「幂等键」未给表）：`(tenant_id, tool, idem_key)` UNIQUE + `args_hash` + `result JSONB` + `approval_id`。语义见 §10.21.5 |
+| `agent_approvals` | P4 建的表本轮接线：`args_preview JSONB`、`status`（pending/approved/rejected/expired/consumed）、`approved_by/approved_at/consumed_at`；补两个索引 `(agent_client_id,status)`、`(tenant_id,status,created_at DESC)` |
+| `audit_logs.actor_type` | **新列** `VARCHAR(16) NOT NULL DEFAULT 'user'`（§11.7.6「agent_client_id、on_behalf_of、tool、args_hash、耗时、结果码」的结构化落点；P4 时全塞在 detail JSON 里） |
+| 权限字典 | 新增 `sys:agent:approve`（module_code 用 `users` —— 库里 `sys:*` 码统一挂 users 模块，挂 `sys` 会撞外键），授 admin / tenant_admin / manager / warehouse_keeper |
+| 限流阈值 | **复用 `feature_flags['agent.rate_limit'].rollout.rpm`**，不新建表、不加环境变量：运营 `PUT /platform/tenants/:id/flags` 即时生效（验收 M.19 就是这么把 rpm 压到 1 的） |
+
+实体侧两个新类 `AgentApproval` / `ToolIdempotency`（`src/agent/agent.entity.ts`，`src/entities/index.ts` 导出）；`AuditLog` 加 `actorType` 列，`audit.write(...)` 尾部加可选参数 `actorType: 'user'|'agent' = 'user'`（P4 起的 3 个调用点零改动）。
+
+### 10.21.2 错误码与 HTTP 语义
+
+`BusinessException` 基类从 `extends ForbiddenException` 改为 **`extends HttpException` + 末位可选 `httpStatus = 403`**（P2/P3 的 4031/4032/4033 行为逐字节不变，验收 B/C/K 段仍绿），P5 新增四码：
+
+| BizCode | HTTP | 类 | 触发 |
+| --- | --- | --- | --- |
+| 4034 `APPROVAL_INVALID` | 403 | `ApprovalInvalidException` | approval_id 缺失以外的所有无效态：pending / rejected / expired / consumed / hash_mismatch / 非数字 |
+| 4035 `FEATURE_DISABLED` | 403 | `FeatureDisabledException` | D7：`agent.print.submit` 未开 |
+| 4036 `IDEMPOTENCY_CONFLICT` | **409** | `IdempotencyConflictException` | 同幂等键不同 args_hash |
+| 4037 `RATE_LIMITED` | **429** | `RateLimitedException` | 超 rpm（detail 带 `limit/window/retry_after/action`） |
+
+⚠️ **`need_approval` 不是错误**：HTTP **202** + 正常信封 `{code:0,data:{summary,data:{need_approval:true,approval_id,args_hash,preview,expires_at,next_actions}}}`，由 `AgentV1Controller` 用 `@Res({passthrough:true})` 按 `data.need_approval===true` 改状态码 —— 模型读 202 信封就知道「等谁、多久内、怎么重试」，比 400/403 更省一轮对话。
+⚠️ 异常信封的 detail 由 `AllExceptionsFilter` **平铺在顶层**（`data` 仍是 null），所以取 `approval_status`/`limit`/`retry_after` 用 `jget approval_status` 而不是 `jget data approval_status`（M.6/M.19 的断言按此写）。
+
+### 10.21.3 dispatch 顺序（`ToolsService.call`，十步）
+
+```
+1 scope(403/4032, 审计 denied_scope)   2 订阅模块(4031, denied_module)   3 implemented(400, not_open)
+4 D7 开关(4035, denied_feature)          5 限流(429, denied_rate)         6 agent_calls 配额(4033, denied_quota)
+7 幂等键必给(400, denied_no_idem_key) → 已有 result？同 hash 重放 / 异 hash 409
+8 审批：无 approval_id → 202 need_approval（零副作用）；有 → verdict≠ok 一律 403/4034
+9 占坑 claim（并发/崩溃接管）  10 执行 → finish 回写 + consume 审批 + 计量 + 审计(ok/error)
+```
+
+顺序的理由：① **重放判定在审批之前** —— 已经成功过的幂等键不该再要求一张新审批单，否则模型重试会撞 4034 而不是拿到「上次已生效」；② **need_approval 早于 claim** —— 建审批单时不能往 `tool_idempotency` 塞占坑行，否则同键重试会被当成"上次执行中"；③ 限流/配额在幂等之前，被拒的调用不消耗服务也不计量。
+
+计量口径：`agent_calls` 对 **ok / error / need_approval / idempotent_replay 各记 1**（真实消耗了服务），`denied_scope / denied_module / denied_rate / denied_quota / denied_no_idem_key` **不记**（验收 M.19b 用「放行数 == 计量增量」正证）。
+
+### 10.21.4 审批流（§11.7.6）
+
+- 状态机：`pending →(员工确认) approved →(Agent 重试命中) consumed`；`pending →(驳回) rejected`；pending/approved 过了 `expires_at` → `expired`（**读时判定** + `expireStale()` 顺手落库，没有定时任务）。
+- 时限：approved = **5 分钟一次性**（文档硬规定）；pending = **30 分钟**（文档未规定，自拟，给员工留响应时间）。
+- `args_hash` = 键排序稳定 JSON 的 sha256，**计算时剔除 `approval_id`**（重试必须把它带回来，否则永远对不上）；`dry_run`、`idempotency_key` 参与指纹 —— 所以「换个幂等键复用旧审批」也会被判 hash_mismatch，这是有意的（一次审批只授权一次执行）。
+- 判定纯函数 `src/agent/approval.calc.ts`（14 条单测）：`approvalVerdict(row, incomingHash, now)` → ok/pending/rejected/expired/consumed/hash_mismatch/not_found + 中文提示表 `APPROVAL_MESSAGES`，异常与 202 信封共用同一份文案。
+- 端点：Agent 侧 `POST /agent/v1/approvals`（主动建单）、`GET /agent/v1/approvals/:id`（只能查自己租户+自己 client+同工具的单）、`GET /agent/v1/approvals?status=`；租户侧 `GET /agents/approvals`、`POST /agents/:id/approve`、`POST /agents/:id/reject`（`@RequirePermission('sys:agent:manage','sys:agent:approve')`，OR 语义；viewer → 403/4032）。
+- 高危 `dry_run=true` **免审批**（§11.7.4「高危可预演」，预演不产生副作用、不消耗审批与幂等键）。
+
+### 10.21.5 幂等与限流
+
+- **幂等**：`claim()` 插 `(result=null)` 占坑 → 执行成功 `finish(id, result)`；业务异常 `release(id)` 删占坑，同键可安全重试。已有 result 且同 hash → `replay()` 原样回存好的信封，summary 前缀「【幂等重放】」+ `data.idempotent_replay=true`（模型据此停止重试）；不同 hash → 409/4036。
+- **限流**：Redis 固定窗口 `INCR lf:agent:rl:{tenant}:{client}:{minuteBucket}` + `pexpire`（窗口剩余 +5s），阈值 `resolveRpm(rollout)` 脏值回退 60、夹在 [1,600]；超限抛 429。Redis 不可用/未启动时退回**进程内 Map 窗口**（>5000 键清空），服务不因此中断。`GET /agent/v1/whoami` 里回 `rate_limit`（当前计数/阈值/剩余），模型可自查。
+- ⚠️ **踩过的坑**：ioredis 配 `enableOfflineQueue:false` 时，进程启动后第一条 INCR 会在连接建立前直接失败 → 静默退回本地窗口，表现为「count 恒为 0、Redis 里没有 key」。改成默认离线队列 + `connectTimeout: 2000`，并把读取统一走 `currentCount()`（Redis 读失败才标 broken 并转本地）。`redisConnection()` 已从 `app.module.ts` 抽到 `common/config.ts` 供两处复用。
+
+### 10.21.6 写执行器（库存 / 模板 / 打印）
+
+- **库存（`InventoryService.adjustStock/transferStock`）**：FIFO 顺序 = `expires_at ASC → produced_at ASC → id ASC`（PG 默认 ASC NULLS LAST，不过期批次自然排最后）；出库不足**整笔拒绝**并在错误里给缺口数量；事务内 `pessimistic_write` 锁批次行复核余量，防并发把库存打成负数；入库无 `batch_no` 时生成 `ADJ-<时间戳>` 新批次；调拨把**同批次号带到目标仓**（目标仓没有就新建行，复制 producedAt/expiresAt/unitCostCents）→ 验收 M.17 实测总量守恒 320、目标仓批次行 1→2。
+- **模板（护栏 8）**：Agent 给的 `content` 必过 `validateAiTemplate()`，非对象 → 400；未知元素类型 → **丢弃 + warning「N 个非法元素已丢弃」**（M.13 落库只剩 1 个元素）；`templates.update` 走版本链 `currentVersion+1`（M.16 → v2）。⚠️ `TemplateService.update` 用 `{...t, ...dto}` save，`name: undefined` 会污染返回对象，所以摘要里的名字取**定位到的 `tpl.name`**（DB 值未被破坏）。
+- **打印（D7）**：`print.submit_job` 必须 ① `feature_flags['agent.print.submit']=true` ② 有效 `approval_id` ③ `copies×rows ≤ 500`（`batchOverLimit`，超限 400）；走 PrintService 正常队列 → 复用 P3 `print_labels` 配额；任务 `created_by = onBehalfOf`（M.18b 实测 = Agent 创建人用户 id），配 `print.get_status` 轮询。
+- **ALS 关键点**：`/agent/v1` 是 `@Public()`，`TenantContextInterceptor` 只会给一个 `tenantId=0/userId=0` 的空上下文，所以领域服务一律包在 `inAgentTenant(ctx, fn)` 里 —— 它 `tenantStorage.run({tenantId, userId: onBehalfOf, roles:[], modules:[], permissions:[], plan:null, features:{}, dataScopes:null, dataSourceKey:'default'}, fn)`；**`onBehalfOf` 为空（客户端没有创建人）时写操作直接拒绝**，宁可不做也不做无主写。
+
+### 10.21.7 apps/mcp-server：Streamable HTTP + resources / prompts（§11.7.1 / §11.7.5 / D9）
+
+- 抽出共享装配层 `src/server.ts`（`createLabelFlowServer(api)` 注册 ListTools/CallTool + ListResources/ReadResource + ListPrompts/GetPrompt），stdio 入口 `src/index.ts` 改为复用同一工厂（行为与日志不变，验收 L.14 仍绿）。
+- 新增 `src/http.ts`：SDK `StreamableHTTPServerTransport` + Node 原生 `http`（零新依赖），端点 `POST/GET/DELETE /mcp` + `GET /health`；**每个会话绑一个 `Authorization: Bearer lfagent_...`**（whoami 401 直接拒建会话），`Mcp-Session-Id` 路由到 session map，默认端口 3300 —— 这就是「SaaS 客户接入自有 Agent」的多租户形态：一 token 一会话，权限完全由 token 的 scope 决定。
+- `src/resources.ts` 暴露 `labelflow://templates/{id}`、`labelflow://inventory/stock/{ref}`（转调 `GET /agent/v1/resources/:kind/:id`，与工具链同一套 scope 检查）；`src/prompts.ts` 给出 D8 要求的 3 个开箱即用场景 `inventory.health_check` / `bom.daily_kit_report` / `print.label_from_description`。
+- `CallTool` 对 `need_approval` / `idempotent_replay` **不判为错误**，把 summary 原样转文本给模型 —— 模型看到的就是「已建审批单 #13，5 分钟内带 approval_id 重试」。
+- 自检：`npm run selftest`（stdio，原三条断言）+ `npm run selftest:http`（`StreamableHTTPClientTransport` 拉起 `dist/http.js`，断言 tools≥10、含 query_stock/submit_job、三个 prompt 名、resources/list 不报错 → `SELFTEST HTTP OK`）。验收 M.22 在 `dist/http.js` + `selftest:http` 脚本存在时自动跑，否则跳过（与 L.14 同策略）。
+
+### 10.21.8 P5 明确没做（别当成已完成）
+
+- **审批的前端页面**：后端 `/agents/approvals` 三件套已就绪，`apps/console` 还没有「Agent 待确认」列表/确认按钮 —— 目前员工只能靠 curl 或 API 直接确认。
+- **未注册的工具**：§11.7.4 提到的 `print.estimate` / `print.wait_for_job` / `print.cancel_job`、`ai.*`、`alerts.*` **目录里根本没有条目**（调用 → 404「未知工具」，不是 400 占位）—— alert 域无数据表、ai 域要图片入参与计费联动，都留给后续阶段。dispatch 第 3 步的 `implemented` 分支目前不会命中，是留给以后「先注册后实现」的护栏。
+- 审批过期靠**读时判定**，没有定时任务批量回写 `expired`；`tool_idempotency` 没有 TTL 清理任务（长跑会一直攒行）。
+- 限流只有 **Agent 维度**（tenant+client+分钟），无 per-tool / per-token 细分，也没有下发 `X-RateLimit-*` 响应头（detail 里有 `retry_after`）。
+- 幂等只保证「同 key 同参数最多一次副作用」，**不保证跨进程崩溃窗口的 exactly-once**（占坑行残留需同键重试或人工清理）；护栏 7 的字段脱敏 / RLS 数据域仍在 P6。
+- D10 `external_mcp_servers`（调第三方 MCP）继续不实现。
+
+### 10.21.9 验证（全部实跑 2026-11-05）
+
+- `npx tsc --noEmit` / `npx tsc -p tsconfig.json` **0 error**；`npm run lint` **0 error / 11 warning**（warning 全是 P0~P3 存量，新增文件 0 条）。
+- `npm test` **180/0**（原 160 → P5 +20：`approval.calc.test.ts` 14 条 = 指纹剔除 approval_id、五种状态判定、hash 篡改、5 分钟窗口与脏日期、consumed 优先于到期、isStale、compactPreview 折叠、isDryRun 严格布尔；`rate.calc.test.ts` 6 条 = key 分桶与租户/client 隔离、TTL 余量、resolveRpm 脏值与上下限、放行/拦截边界、批量 500 与自定义上限）。
+- `T_CODE=p5xi T2_CODE=p5xj bash backend/scripts/p0-acceptance.sh` → **通过 146 / 失败 0**（原 115 → M 段 +31），M 段实测：
+  缺幂等键 400（库存 60 未动）→ dry_run 预演 200 零副作用 → 无 approval **202** + 单 pending + 库存 60 未动 → 未确认重试 403/4034 → 租户 pending 列表 + viewer 403/4032 → 确认 approved（5 分钟窗口）→ 重试真实出库 **60→50** + 单置 consumed → 复用旧单 403/4034 → 批准后偷改 delta=-999 **403/4034**（库存仍 50）→ 驳回 + 重试被拒 → 模板清洗（未知元素丢弃、落库 1 元素）→ 同键重放（模板仍 1 张）→ 同键换参 409/4036 → 脏 content 400 → update 到 v2 → 调拨总量守恒 320 / 目标仓批次 2 → D7 关闭 403/4035、开启 + 审批出任务（2 张、`created_by`=Agent 归属人）→ `print.get_status` success 2/2 → rpm=1 首呼 200 后 5 呼全 429/4037（`retry_after=33s`、Redis key `lf:agent:rl:<租户>:<client>:<桶>` 实存）→ 计量 26→27→27（放行才计）→ 解除阈值后恢复放行 → `actor_type='agent'` 审计 42 条 / **14 种状态** / `on_behalf_of` 全非空 → Agent 自查 5 张审批单。
+- 库里最终留痕（租户 114）：`agent_approvals` = consumed 3 / approved 1 / rejected 1，`tool_idempotency` 6 行，`agent_calls` 本月 28，M-BOX-GIFT 上海仓 50。
+- ⚠️ 重跑注意：M 段每次都要**新租户码**（A.1 唯一约束）；限流项刻意新建独立 client（桶键含 clientId）才拿得到干净的一分钟窗口；`agent.print.submit` / `agent.rate_limit` 两个 flag 在 M 段结尾被复原（D7 回 false、rollout 清空）。
