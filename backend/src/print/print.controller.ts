@@ -2,7 +2,7 @@
 // print.controller.ts —— 打印队列 / 指令导出 / 实时预览
 // =============================================================================
 
-import { Controller, Post, Get, Param, Body, Query, UseGuards, Res, UnauthorizedException } from '@nestjs/common';
+import { Controller, Post, Get, Param, Body, Query, UseGuards, Res, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Public } from '../common/public.decorator';
 import { Response } from 'express';
@@ -14,6 +14,7 @@ import { Roles, RoleName } from '../common/roles.guard';
 import { RequireModule } from '../common/module.guard';
 import { RequirePermission } from '../common/permission.guard';
 import { generateZpl, mmToDots } from '../../core/zpl-generator';
+import { CreatePrintJobDto, PreviewRenderDto, PrintCommandsDto, RetryPrintDto } from './dto/print.dto';
 import { buildJob as buildTsplJob } from '../../core/tspl-generator';
 import { PrintEvents } from './events.event';
 import * as crypto from 'crypto';
@@ -31,7 +32,7 @@ export class PrintController {
   // 提交：人工入口沿用 print:job:write，Agent 走 print:job:submit（D7 灰度，任一即可）
   @RequirePermission('print:job:write', 'print:job:submit')
   @Roles(...PRINT_ACTION)
-  @Post() create(@Body() b: any) { return this.svc.createJob(b); }
+  @Post() create(@Body() b: CreatePrintJobDto) { return this.svc.createJob(b); }
   @RequirePermission('print:job:read')
   @Get() list(@Query() q: any) { return this.svc.list(q); }
   @RequirePermission('print:stats:read')
@@ -50,10 +51,10 @@ export class PrintController {
   @Post(':id/cancel') cancel(@Param('id') id: number) { return this.svc.cancel(+id); }
   @RequirePermission('print:job:write')
   @Roles(...PRINT_ACTION)
-  @Post(':id/retry') retry(@Param('id') id: number, @Body() b: any) { return this.svc.retry(+id, b?.seqNos); }
+  @Post(':id/retry') retry(@Param('id') id: number, @Body() b: RetryPrintDto) { return this.svc.retry(+id, b?.seqNos); }
   @RequirePermission('print:job:write')
   @Roles(...PRINT_ACTION)
-  @Post(':id/reprint') reprint(@Param('id') id: number, @Body() b: any) { return this.svc.retry(+id, b?.seqNos); }
+  @Post(':id/reprint') reprint(@Param('id') id: number, @Body() b: RetryPrintDto) { return this.svc.retry(+id, b?.seqNos); }
 }
 
 /**
@@ -63,7 +64,7 @@ export class PrintController {
 @Controller('print/preview')
 export class PrintPreviewController {
   @Post()
-  render(@Body() body: any): HtmlRenderOutput {
+  render(@Body() body: PreviewRenderDto): HtmlRenderOutput {
     return renderPrintHtml({
       templateContent: body.templateContent,
       rows: body.rows ?? [{}],
@@ -82,9 +83,10 @@ export class PrintCommandsController {
   constructor(private render: RenderService) {}
 
   @Post()
-  commands(@Body() b: any) {
+  commands(@Body() b: PrintCommandsDto) {
     const tpl = b.templateContent;
-    if (!tpl?.page) throw new Error('缺少 templateContent');
+    // DTO 已挡掉缺 templateContent，这里兜底 page 结构；原来是 throw new Error → 500
+    if (!tpl?.page) throw new BadRequestException('templateContent 缺少 page 结构');
     const rows: any[] = b.rows?.length ? b.rows : [{}];
     const copies = Math.max(1, Math.min(500, b.copies ?? 1));
     const dpi = b.dpi ?? tpl.page.dpi ?? 300;

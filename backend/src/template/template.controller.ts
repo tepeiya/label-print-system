@@ -4,6 +4,7 @@ import { TenantGuard } from '../common/tenant.guard';
 import { Roles, RoleName } from '../common/roles.guard';
 import { RequireModule } from '../common/module.guard';
 import { RequirePermission } from '../common/permission.guard';
+import { CopyTemplateDto, CreateTemplateDto, FavoriteTemplateDto, ImportTemplateDto, UpdateTemplateDto } from './dto/template.dto';
 
 /** 模板写操作权限 */
 const TPL_WRITE: RoleName[] = ['admin', 'operator'];
@@ -21,19 +22,19 @@ export class TemplateController {
   @Get(':id') get(@Param('id') id: number) { return this.svc.get(+id); }
   @RequirePermission('template:write')
   @Roles(...TPL_WRITE)
-  @Post() create(@Body() b: any) { return this.svc.create(b); }
+  @Post() create(@Body() b: CreateTemplateDto) { return this.svc.create(b); }
   @RequirePermission('template:write')
   @Roles(...TPL_WRITE)
-  @Put(':id') update(@Param('id') id: number, @Body() b: any) { return this.svc.update(+id, b); }
+  @Put(':id') update(@Param('id') id: number, @Body() b: UpdateTemplateDto) { return this.svc.update(+id, b); }
   @RequirePermission('template:write')
   @Roles(...TPL_WRITE)
   @Delete(':id') remove(@Param('id') id: number) { return this.svc.remove(+id); }
   @RequirePermission('template:write')
   @Roles(...TPL_WRITE)
-  @Post(':id/copy') copy(@Param('id') id: number, @Body() b: any) { return this.svc.copy(+id, b?.name); }
+  @Post(':id/copy') copy(@Param('id') id: number, @Body() b: CopyTemplateDto) { return this.svc.copy(+id, b?.name); }
   @RequirePermission('template:favorite')
   @Roles(...TPL_WRITE)
-  @Post(':id/favorite') favorite(@Param('id') id: number, @Body() b: any) { return this.svc.favorite(+id, b?.value ?? true); }
+  @Post(':id/favorite') favorite(@Param('id') id: number, @Body() b: FavoriteTemplateDto) { return this.svc.favorite(+id, b?.value ?? true); }
   @RequirePermission('template:read')
   @Get(':id/versions') versions(@Param('id') id: number) { return this.svc.versions(+id); }
   @RequirePermission('template:read')
@@ -43,7 +44,7 @@ export class TemplateController {
   @Post(':id/versions/:v/rollback') rollback(@Param('id') id: number, @Param('v') v: number) { return this.svc.rollback(+id, +v); }
   @RequirePermission('template:write')
   @Roles(...TPL_WRITE)
-  @Post('import') importOne(@Body() b: any) { return this.svc.import(b); }
+  @Post('import') importOne(@Body() b: ImportTemplateDto) { return this.svc.import(b); }
   @RequirePermission('template:read')
   @Get(':id/export') exportOne(@Param('id') id: number) { return this.svc.exportOne(+id); }
 }

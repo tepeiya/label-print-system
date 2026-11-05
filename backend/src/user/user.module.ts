@@ -16,6 +16,8 @@ import { useTenant, useTenantId } from '../common/tenant.context';
 import { AuditModule, AuditService } from '../audit/audit.module';
 
 export const ALL_ROLES: RoleName[] = ['admin', 'operator', 'sql', 'viewer'];
+
+import { CreateUserDto, GrantRoleDto, ResetPasswordDto, UpdateUserDto } from './dto/user.dto';
 const BCRYPT_ROUNDS = 10;
 const PASSWORD_MIN = 6;
 const USERNAME_MIN = 2;
@@ -69,7 +71,7 @@ export class UserAdminController {
   @RequirePermission('sys:user:manage')
   @Post()
   async create(
-    @Body() body: { username: string; password: string; displayName?: string; email?: string; status?: number },
+    @Body() body: CreateUserDto,
   ) {
     const tenantId = useTenantId();
     const username = String(body.username ?? '').trim();
@@ -105,7 +107,7 @@ export class UserAdminController {
   @Patch(':id')
   async update(
     @Param('id') id: number,
-    @Body() body: { displayName?: string; email?: string; status?: number },
+    @Body() body: UpdateUserDto,
   ) {
     const tenantId = useTenantId();
     const u = await this.findOneTenant(id, tenantId);
@@ -134,7 +136,7 @@ export class UserAdminController {
   @Post(':id/reset-password')
   async resetPassword(
     @Param('id') id: number,
-    @Body() body: { newPassword: string },
+    @Body() body: ResetPasswordDto,
   ) {
     const tenantId = useTenantId();
     const u = await this.findOneTenant(id, tenantId);
@@ -179,16 +181,16 @@ export class UserAdminController {
   @Post(':id/roles')
   async grantRole(
     @Param('id') id: number,
-    @Body() body: { role: RoleName },
-  ) {
+    @Body() body: GrantRoleDto,
+  ): Promise<any> {
     const tenantId = useTenantId();
-    if (!ALL_ROLES.includes(body.role)) {
+    if (!ALL_ROLES.includes(body.role as RoleName)) {
       throw new BadRequestException(`非法角色，允许值: ${ALL_ROLES.join(', ')}`);
     }
     const exists = await this.userRoles.findOne({ where: { tenantId, userId: id, role: body.role } });
     if (exists) return { ok: true, already: true };
     const user = await this.findOneTenant(id, tenantId);
-    await this.userRoles.save({ tenantId, userId: id, role: body.role });
+    await this.userRoles.save({ tenantId, userId: id, role: body.role as RoleName });
     await this.audit.write(tenantId, 'user.grant_role', { id, role: body.role }, undefined, 'user', id);
     return { ok: true };
   }

@@ -850,7 +850,7 @@ Agent 调用 print.submit_job
       （后端裁剪逻辑见 `src/saas/menu.catalog.ts`；**前端已于 P1 接入**，
       `apps/console` 顶栏与路由守卫只读 `me.menus`，见 docs/10 §10.16）
 - [x] 现有 `admin/operator/sql/viewer` 映射后行为不变（回归测试 16 项 + 手工 8 项）
-      （实测：单测 117 条 + 验收脚本 H 段 18 项；`sql` 登录后双码回显 `["sql","manager"]`）
+      （实测：单测 125 条 + 验收脚本 65 项；`sql` 登录后双码回显 `["sql","manager"]`）
 
 ### 11.11.2 验收标准（P4）
 
@@ -993,6 +993,8 @@ SELECT COUNT(*) FROM user_roles WHERE role_id IS NULL;  -- 期望 0
 | 2026-11-04 | **P1 前端动态化落地**（`apps/console` + `web/`；细节见 docs/10 §10.16），§11.11 P1 行标记完成 | 按 §11.11 排期执行 |
 | 2026-11-04 | §11.10「动态路由 \| 由 `/auth/me` 的 `menus` 生成」实现为**静态路由表 + 守卫按 `menus`/`modules`/`permissions` 校验**，没有用 `router.addRoute()` 动态注册 | 路由必须有组件映射，路由表本身就是前端源码的一部分，动态注册只是把同一份表换个写法；真正要后端说了算的是「可见性、排序、入口裁剪」，这三项已完全由 `me.menus` 决定（菜单不再硬编码）。新增页面仍需在前端加一条路由 + `menu.catalog.ts` 一条目录项 |
 | 2026-11-04 | `serial` 模块已订阅（BASIC 内含）但**不进菜单**：`serial-sequences` 只实现了 `segment-preview`，没有列表/CRUD 接口 | 避免前端出现点进去就 404/空白的入口；P2 补 CRUD 时再加目录项 |
+| 2026-11-05 | **全局入参校验底座落地**（docs/10 §10.17）：全局 `ValidationPipe` + 9 个 DTO 文件覆盖 40/45 个 `@Body()`；缺 `content` 建模板由 500 变 400 + 中文明细；`class-validator` 挪进 dependencies；验收脚本 62→65 项 | P1 遗留的「根因还留着」（缺字段 → TypeORM 23502 → 500），P2 平台后台会新增一批写接口，先把门装上 |
+| 2026-11-05 | 修复 console `apiResetUserPassword` 字段名 bug：一直发 `{ password }`，后端收 `newPassword`，**console 重置密码必失败** | 单测 + curl 复核过；`web/js/api.js` 本来就是对的 |
 | 2026-11-04 | `GET /subscription` 响应新增 `moduleDetails`（名称/图标/说明/`isCore`），原 `modules`（code 数组）保持不变 | 设计稿没定义该字段；只回 code 的话订阅页只能把英文码当模块名显示。加字段而非改形状，验收脚本 E/F 段断言不受影响 |
 | 2026-11-04 | 修 `DELETE /backups/:id`：后端 `remove()` 原来标的是 `@Post(':id')`，与 docs/10 §10.3 的约定和前端调用都不一致 | 前端「删除备份」一直 404；顺带补 `@RequirePermission('backup:write')`（原先只有 `@Roles('admin')`，缺 L1 权限点判定） |
 | 2026-11-04 | `web/`（零构建原生前端，§11.10 未覆盖）同步改为权限点优先 + 角色兜底，并按订阅模块裁剪主标签页；**`features`（D7 灰度）在该前端无处挂载**，未接入 | 现网仍有用户直接用 `web/`；它读同一个 `/auth/me`，不做裁剪就会出现「前端能点、后端 403」。`web/index.html` 的 AI 视图没有透视矫正按钮，`ai.vision` 开关没有可挂的 UI，未做猜测性映射 |

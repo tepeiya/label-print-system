@@ -130,8 +130,9 @@ export const apiListUsers = (params?: any) => http.get('/users', { params });
 export const apiCreateUser = (data: any) => http.post('/users', data);
 export const apiUpdateUser = (id: number, data: any) => http.patch(`/users/${id}`, data);
 export const apiDeleteUser = (id: number) => http.delete(`/users/${id}`);
-export const apiResetUserPassword = (id: number, password: string) =>
-  http.post(`/users/${id}/reset-password`, { password });
+// 后端收的是 newPassword（web/js/api.js 同款字段名）；曾错发 { password } 导致 console 重置密码必失败
+export const apiResetUserPassword = (id: number, newPassword: string) =>
+  http.post(`/users/${id}/reset-password`, { newPassword });
 export const apiGrantRole = (id: number, role: string) =>
   http.post(`/users/${id}/roles`, { role });
 export const apiRevokeRole = (id: number, role: string) =>

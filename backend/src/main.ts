@@ -2,6 +2,7 @@
 import 'dotenv/config';
 
 import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import { AppModule } from './app.module';
@@ -80,6 +81,12 @@ async function bootstrap() {
   );
 
   app.setGlobalPrefix('api/v1');
+  // 全局入参校验（docs/10 §10.17）：
+  // - transform:true 让 @Param('id') id: number 真正变成数字（NaN → 400），字符串/布尔同理
+  // - whitelist:false 不丢未知字段：web 设计器 / AI 保存的 body 历史上是整包透传的，
+  //   开白名单会静默丢数据。DTO 只挡「形状」，多余字段原样保留（跟改造前行为一致）
+  // - 没写 DTO 的 @Body()（metatype 是 Object）会被 pipe 跳过，存量接口零影响
+  app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: false, forbidNonWhitelisted: false }));
   app.useGlobalInterceptors(
     new TenantContextInterceptor(modulesSvc, permsSvc, configSvc),
     new ResponseInterceptor(),

@@ -6,6 +6,7 @@ import { RequireModule } from '../common/module.guard';
 import { RequirePermission } from '../common/permission.guard';
 import { useTenant } from '../common/tenant.context';
 import { BackupService } from './backup.service';
+import { CreateBackupDto } from './dto/backup.dto';
 
 const ADMIN: RoleName[] = ['admin'];
 
@@ -24,7 +25,7 @@ export class BackupController {
 
   @Roles(...ADMIN)
   @RequirePermission('backup:write')
-  @Post() create(@Body() body?: { name?: string }) { return this.svc.create(body?.name); }
+  @Post() create(@Body() body: CreateBackupDto) { return this.svc.create(body?.name); }
 
   @Roles(...ADMIN)
   @RequirePermission('backup:restore')

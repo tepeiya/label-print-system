@@ -10,6 +10,7 @@ import { Roles, RoleName } from '../common/roles.guard';
 import { RequireModule } from '../common/module.guard';
 import { useTenantId } from '../common/tenant.context';
 import { PrinterProviderRegistry } from '../../printer/printer-provider.interface';
+import { CalibratePrinterDto, CreatePrinterDto, TestCommandsDto, UpdatePrinterDto } from './dto/printer.dto';
 import { AuditModule, AuditService } from '../audit/audit.module';
 import { generateZpl } from '../../core/zpl-generator';
 import { buildJob as buildTsplJob } from '../../core/tspl-generator';
@@ -178,20 +179,20 @@ export class PrinterController {
   constructor(private svc: PrinterService) {}
   @Get() list() { return this.svc.list(); }
   @Roles(...PRINTER_WRITE)
-  @Post() create(@Body() b: any) { return this.svc.create(b); }
+  @Post() create(@Body() b: CreatePrinterDto) { return this.svc.create(b); }
   @Get(':id') get(@Param('id') id: number) { return this.svc.get(+id).then(normalize); }
   @Roles(...PRINTER_WRITE)
-  @Put(':id') update(@Param('id') id: number, @Body() b: any) { return this.svc.update(+id, b); }
+  @Put(':id') update(@Param('id') id: number, @Body() b: UpdatePrinterDto) { return this.svc.update(+id, b); }
   @Roles(...PRINTER_WRITE)
   @Delete(':id') remove(@Param('id') id: number) { return this.svc.remove(+id); }
   @Roles(...PRINTER_WRITE)
-  @Post(':id/calibrate') calibrate(@Param('id') id: number, @Body() b: any) { return this.svc.calibrate(+id, b); }
+  @Post(':id/calibrate') calibrate(@Param('id') id: number, @Body() b: CalibratePrinterDto) { return this.svc.calibrate(+id, b); }
   @Roles(...PRINTER_WRITE)
   @Post(':id/test') test(@Param('id') id: number) { return this.svc.test(+id); }
   @Roles(...PRINTER_WRITE)
   @Post(':id/test-print') testPrint(@Param('id') id: number) { return this.svc.testPrint(+id); }
   @Roles(...PRINTER_WRITE)
-  @Post(':id/test-commands') testCommands(@Param('id') id: number, @Body() b: any) { return this.svc.testCommands(+id, b?.protocol); }
+  @Post(':id/test-commands') testCommands(@Param('id') id: number, @Body() b: TestCommandsDto) { return this.svc.testCommands(+id, b?.protocol); }
 }
 
 @Module({

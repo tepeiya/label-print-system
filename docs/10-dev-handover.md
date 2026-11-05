@@ -391,7 +391,7 @@ apps/console/src/
 ### 10.8.1 自动化测试（P0 后已不再是「只有 16 条」）
 
 ```bash
-cd backend && npm test     # 117 条全通过（core/__tests__ 16 + src/**/__tests__ 101，见 §10.15.6 分布）
+cd backend && npm test     # 125 条全通过（core/__tests__ 16 + src/**/__tests__ 109，见 §10.15.6 分布）
 ```
 
 覆盖已补到：守卫链（Module/Permission/Roles）、`/auth/me` 菜单裁剪、模块依赖闭包、数据范围、
@@ -442,7 +442,7 @@ cd backend && npm test     # 117 条全通过（core/__tests__ 16 + src/**/__tes
    `sql-executor` 14 条（含引号内分号、注释走私、真实 PG 集成，PG 不可达自动 skip）、
    `validate-ai-template` 23 条（脏输入）、`menu.catalog` 12 条、`module-deps` 6 条、
    `data-scope` 7 条、`permission-match` 8 条、`errors.filter` 4 条。
-   `cd backend && npm test` → **117 条全通过**（原 `core/__tests__` 16 条 + `html-renderer` 10 条仍在）。
+   `cd backend && npm test` → **125 条全通过**（原 `core/__tests__` 16 条 + `html-renderer` 10 条仍在）。
    ⚠️ 唯一没按原建议做的是 `datasource.service.testSql` 的 service 级测试：`npx tsx` 不产装饰器元数据，
    import 实体就 `ColumnTypeUndefinedError`，因此覆盖下沉到 executor 层，原因写在
    `src/datasource/__tests__/sql-executor.test.ts` 头注释。
@@ -645,7 +645,7 @@ curl -s -X POST http://localhost:3200/api/v1/ai-template/generate -H "$H" \
 curl -N "http://localhost:3200/api/v1/print-stream/events?token=$TOKEN"
 
 # 8. 单元测试
-cd backend && npm test     # 期望 117 条全绿（PG 不可达时 110 pass / 7 skip）
+cd backend && npm test     # 期望 125 条全绿（PG 不可达时 118 pass / 7 skip）
 
 # 9. SaaS P0 验收（§11.11.1 六条 + 旧角色回归，需要后端 + PG + Redis 都在跑）
 cd backend && T_CODE=p0a1 T2_CODE=p0a2 bash scripts/p0-acceptance.sh   # 期望「通过 62 / 失败 0」
@@ -732,6 +732,13 @@ SaaS P0 底座（2026-11-04 新增，详见 §10.15）：
   backend/scripts/saas_p0.sql            P0 基础 DDL + 模块/套餐/权限字典种子
   backend/scripts/saas_p0_roles.sql      P0 生命周期 + roles 两步迁移 + 序列复位（13 节，幂等）
   backend/scripts/p0-acceptance.sh       §11.11.1 可重跑验收脚本
+
+全局入参校验底座（2026-11-05 新增，详见 §10.17）：
+  backend/src/main.ts                  useGlobalPipes(ValidationPipe)（transform:true / whitelist:false）
+  backend/src/common/errors.filter.ts   class-validator 的 string[] → 「参数校验失败：…」+ errors 明细
+  backend/src/{auth,template,user,datasource,print,printer,backup,saas}/dto/*.dto.ts  各域 DTO
+  backend/src/common/dto/render-and-ai.dto.ts  barcode / formula / ai-template 共用 DTO
+  backend/src/common/__tests__/validation-pipe.test.ts  8 条单测（500→400 根因回归）
 
 SaaS P1 前端动态化（2026-11-04 新增，详见 §10.16）：
   apps/console/src/api/index.ts          唯一 axios 出口：拆信封 + 401 单飞刷新 + 4031/4032 业务码
@@ -868,7 +875,7 @@ docs/03-database.sql → backend/scripts/seed.sql → backend/scripts/saas_p0.sq
 ### 10.15.6 测试与验收覆盖
 
 ```bash
-cd backend && npm test                       # 117 条（原 26 → P0 新增 89 → P1 新增 2）
+cd backend && npm test                       # 125 条（原 26 → P0 新增 89 → P1 新增 2 → 校验底座新增 8）
 T_CODE=p0a1 T2_CODE=p0a2 bash backend/scripts/p0-acceptance.sh   # 62 项断言，期望「通过 62 / 失败 0」
 ```
 
@@ -972,7 +979,7 @@ cd apps/console && npm run build
 
 # 2) 后端编译 + 单测（P1 新增 1 条菜单/路由一致性断言）
 cd backend && npx tsc -p tsconfig.json && npm test
-#    PG 起着：117 tests / 117 pass；PG 不可达：117 tests / 110 pass / 7 skip（sql-executor 集成用例自动跳过）
+#    PG 起着：125 tests / 125 pass；PG 不可达：125 tests / 118 pass / 7 skip（sql-executor 集成用例自动跳过）
 
 # 3) P0 验收回归（P1 没动守卫链，期望仍是「通过 62 / 失败 0」）
 cd backend && T_CODE=p0a1 T2_CODE=p0a2 bash scripts/p0-acceptance.sh
@@ -1002,5 +1009,51 @@ npx esbuild --format=esm --outfile=/dev/null web/js/api.js
   `web/` 也没消费 `me.menus` 菜单树（页签是固定 DOM，见 §10.16.5）。
 - L3 数据范围（`dataScopes`）只读回来了，UI 上没有体现（属 P2/P6）。
 - `/serial` 没有页面：后端 `serial-sequences` 只有 `segment-preview`，没有列表/CRUD。
-- `POST /templates` 仍无 DTO 校验，缺字段直接撞 `23502` → HTTP 500（P0 验收 H.5 就是被这个坑到的，
-  见 §10.15.6）。前端「保存为模板」传的是合法 `content`，不受影响，但这是已知待修项。
+- ~~`POST /templates` 仍无 DTO 校验，缺字段直接撞 `23502` → HTTP 500~~（2026-11-05 已修，见 §10.17）。
+  原 P0 验收 H.5 就是被这个坑到的（§10.15.6），现在缺 content 在门口就 400。
+
+---
+
+## 10.17 全局入参校验底座（2026-11-05 落地）
+
+> 起因：45 个 `@Body()` 全是 `any` 或裸 TS 类型（运行时擦成 Object），少传字段会一路穿透到
+> TypeORM 撞数据库约束 → HTTP 500。P0 验收 H.5 当年就是把用例改对了、根因还留着
+> （§10.15.6）。本轮把它堵上，并顺手修了一个真实的前端契约 bug。
+
+### 10.17.1 做了什么
+
+1. `main.ts` 注册全局 `ValidationPipe({ transform: true, whitelist: false, forbidNonWhitelisted: false })`。
+2. 新增 9 个 DTO 文件（各域 `dto/` 目录 + `common/dto/render-and-ai.dto.ts`），覆盖全部 45 个
+   `@Body()` 写入口中的 40 个；剩下的 5 个是 multipart（`@UploadedFile`）或 `/print/preview`
+   这类自由 JSON 端点，pipe 对 `Object` metatype 本来就跳过，行为不变。
+3. `errors.filter.ts`：class-validator 的报错是 `string[]`，现在拼成
+   `message: "参数校验失败：content 必须是对象…"` 并把明细放进 `errors` 字段，前端能直接 toast。
+4. 顺手修了真实 bug：`apps/console/src/api/index.ts` 的 `apiResetUserPassword` 一直在发
+   `{ password }`，而后端收 `newPassword`（`web/js/api.js` 是对的）——**console 重置密码必失败**。
+5. `class-validator` / `class-transformer` 从 devDependencies 挪进 dependencies（运行时真实依赖）。
+
+### 10.17.2 三个关键决策（改之前先读）
+
+- **`whitelist: false`，故意不开白名单剔除**：web 设计器、AI 保存、打印机临时创建
+  （`web/js/printers.js` 的 `tempCreate` spread 整个 draft）历史上一律「整包透传」，
+  多余字段靠 TypeORM 忽略未知列兜着。开白名单会静默丢字段，那是比 500 更难查的坑。
+- **DTO 只挡「形状」，业务规则仍在服务层**：密码最短位数、连接串前缀、copies 1..500、
+  角色取值集合这些校验有专门的中文报错文案，还留在服务里，DTO 不重复（避免两处文案漂移）。
+- **DTO 类不要用 extends 复用必填字段**：class-validator 的装饰器沿原型链**累加**不覆盖，
+  子类把 `name` 改成可选是没用的（PrinterDto 踩过，最后 UpdatePrinterDto 平铺全可选）。
+
+### 10.17.3 验证（全部实跑）
+
+- `npx tsc -p tsconfig.json` 0 error；`npm test` **125/0**（新增
+  `src/common/__tests__/validation-pipe.test.ts` 8 条：缺 content→400、白名单不丢字段、
+  Object 跳过、filter 拼 message 等）。
+- `p0-acceptance.sh` **65/0**（新增 I.1–I.3 三项校验回归，T_CODE 要用没跑过的）。
+- curl 实测：`POST /templates` 缺 content → `400 + 参数校验失败：content 必须是对象…`；
+  带 `legacyExtra` 的正常请求 → 201 且多余字段原样落库。
+- `apps/console npm run build` 0 error。
+
+### 10.17.4 没做（记入下一轮）
+
+- `@Query()` 的 DTO 化（list 接口的 page/pageSize/keyword 仍是裸 `any`，风险低）。
+- `forbidNonWhitelisted: true`（多传字段报 400 而不是忽略）——与「整包透传」兼容策略冲突，不做。
+- AI 模型配置等深校验（settings 内部结构）；DTO 里的 `@IsAny` 型自由字段维持透传。

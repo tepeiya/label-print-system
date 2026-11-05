@@ -198,6 +198,22 @@ VWT=$(jget data accessToken)
 c=$(api POST /templates "$VWT" '{"name":"x"}'); cc=$(jget code)
 check "H.6 viewer 写模板被拒 → 403/4032" "$c/$cc" "403/4032"
 
+# ---------------------------------------------------------------------------
+# I. 入参校验底座（docs/10 §10.17）：缺字段 → 400 + errors 明细，不再是 500
+# ---------------------------------------------------------------------------
+c=$(api POST /templates "$OPT" '{"name":"no-content"}'); cc=$(jget code)
+[[ "$cc" == 400 && "$(jget message)" == *"参数校验失败"* ]] \
+  && ok "I.1 缺 content 建模板 → 400 参数校验失败（原 500 根因已堵）" \
+  || no "I.1 缺 content 建模板" "HTTP $c code=$cc $(body | head -c 160)"
+c=$(api POST /auth/login '' '{"username":"admin"}'); cc=$(jget code)
+[[ "$cc" == 400 && "$(jget message)" == *"参数校验失败"* ]] \
+  && ok "I.2 登录缺 password → 400" \
+  || no "I.2 登录缺 password" "HTTP $c code=$cc $(body | head -c 160)"
+c=$(api POST /platform/tenants "$AT" '{"name":"缺管理员的租户","code":"p0val1"}'); cc=$(jget code)
+[[ "$cc" == 400 && "$(jget message)" == *"参数校验失败"* ]] \
+  && ok "I.3 开通租户缺 adminUsername → 400" \
+  || no "I.3 开通租户缺 adminUsername" "HTTP $c code=$cc $(body | head -c 160)"
+
 echo
 echo "== 通过 $pass / 失败 $fail"
 if (( fail == 0 )); then echo "P0 验收通过（docs/11 §11.11.1）"; else echo "存在失败项，见上面 [FAIL]"; fi

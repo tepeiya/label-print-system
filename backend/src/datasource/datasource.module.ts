@@ -12,6 +12,7 @@ import { RequirePermission } from '../common/permission.guard';
 import { useTenantId } from '../common/tenant.context';
 import { AuditModule, AuditService } from '../audit/audit.module';
 import { encrypt, decrypt, hasProdKey } from './sql-crypto';
+import { DsPreviewDto, SaveRowsDto, SaveSqlDto, SqlExecDto, UploadCsvDto, UploadExcelMetaDto } from './dto/datasource.dto';
 import * as sqlx from './sql-executor';
 
 const DS_WRITE: RoleName[] = ['admin', 'operator'];
@@ -202,7 +203,7 @@ export class DataSourceController {
 
   @Roles(...DS_WRITE)
   @RequirePermission('datasource:write')
-  @Post('upload') upload(@Body() b: { name: string; csvText: string; fieldMap: Record<string, string> }) {
+  @Post('upload') upload(@Body() b: UploadCsvDto) {
     return this.svc.uploadCsv(b.name, b.csvText, b.fieldMap ?? {});
   }
 
@@ -211,7 +212,7 @@ export class DataSourceController {
   @RequirePermission('datasource:write')
   @Post('upload-excel')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
-  async uploadExcel(@UploadedFile() file: Express.Multer.File, @Body() body: { name?: string; fieldMap?: string } = {} as any) {
+  async uploadExcel(@UploadedFile() file: Express.Multer.File, @Body() body: UploadExcelMetaDto = new UploadExcelMetaDto()) {
     if (!file) throw new BadRequestException('缺少 file');
     if (!/\.xlsx?$/i.test(file.originalname || '')) throw new BadRequestException('仅支持 .xlsx / .xls');
     const wb = XLSX.read(file.buffer, { type: 'buffer', cellDates: false });
@@ -233,10 +234,10 @@ export class DataSourceController {
   }
 
   @Roles(...DS_WRITE)
-  @Post('rows') saveRows(@Body() b: any) { return this.svc.saveRows(b); }
+  @Post('rows') saveRows(@Body() b: SaveRowsDto) { return this.svc.saveRows(b); }
 
   @Roles(...DS_WRITE)
-  @Post('save-sql') saveSql(@Body() b: { name: string; connectionUrl: string; queryTemplate?: string; description?: string }) {
+  @Post('save-sql') saveSql(@Body() b: SaveSqlDto) {
     return this.svc.saveSql(b);
   }
 
@@ -247,7 +248,7 @@ export class DataSourceController {
   @Post(':id/sql-exec')
   execSql(
     @Param('id') id: number,
-    @Body() b: { params?: any[]; limit?: number } = {},
+    @Body() b: SqlExecDto = new SqlExecDto(),
   ) {
     return this.svc.execSql(+id, Array.isArray(b.params) ? b.params : [], b.limit ?? 1000);
   }
@@ -256,7 +257,7 @@ export class DataSourceController {
   @Post(':id/sql-preview')
   previewSql(
     @Param('id') id: number,
-    @Body() b: { params?: any[]; limit?: number } = {},
+    @Body() b: SqlExecDto = new SqlExecDto(),
   ) {
     return this.svc.execSql(+id, Array.isArray(b.params) ? b.params : [], b.limit ?? 200);
   }
@@ -265,7 +266,7 @@ export class DataSourceController {
     return this.svc.rowsOf(+id, q.limit ? +q.limit : 500, q.offset ? +q.offset : 0);
   }
 
-  @Post('preview') preview(@Body() b: { sourceId: number; templateId: number; limit?: number }) {
+  @Post('preview') preview(@Body() b: DsPreviewDto) {
     return this.svc.preview(b.sourceId, b.templateId, b.limit ?? 10);
   }
 

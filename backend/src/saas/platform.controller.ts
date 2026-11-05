@@ -8,8 +8,9 @@ import { Roles, RoleName } from '../common/roles.guard';
 import { ModulesService } from './modules.service';
 import { PermissionsService } from './permissions.service';
 import { SubscriptionService } from './subscription.service';
-import { ProvisionService, ProvisionTenantDto } from './provision.service';
+import { ProvisionService } from './provision.service';
 import { TenantConfigService } from './tenant-config.service';
+import { AddModuleDto, FeatureFlagDto, ProvisionTenantDto } from './dto/platform.dto';
 
 @Controller('platform')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -61,7 +62,7 @@ export class PlatformController {
 
   /** 加购单模块（D1：套餐外单独开通，自动补齐前置模块） */
   @Post('tenants/:id/modules')
-  addModule(@Param('id') id: string, @Body() body: { moduleCode: string; source?: 'addon' | 'manual' | 'gift' }) {
+  addModule(@Param('id') id: string, @Body() body: AddModuleDto) {
     return this.provisionSvc.addModule(+id, body?.moduleCode, body?.source ?? 'addon');
   }
 
@@ -87,10 +88,9 @@ export class PlatformController {
   @Put('tenants/:id/flags')
   async setFlag(
     @Param('id') id: string,
-    @Body() body: { key: string; enabled: boolean; rollout?: Record<string, any> },
+    @Body() body: FeatureFlagDto,
   ) {
     const tenantId = +id;
-    if (!body?.key) throw new BadRequestException('缺少 key');
     const row = await this.configSvc.setFlag(tenantId, body.key, !!body.enabled, body.rollout ?? {});
     return { tenantId, key: row.key, enabled: row.enabled };
   }

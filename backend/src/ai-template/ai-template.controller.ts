@@ -10,6 +10,7 @@ import { Roles } from '../common/roles.guard';
 import { RequireModule } from '../common/module.guard';
 import { RequirePermission } from '../common/permission.guard';
 import { AiTemplateService } from './ai-template.service';
+import { CreateAiModelDto, SaveAiTemplateDto, TextToTemplateDto } from '../common/dto/render-and-ai.dto';
 
 const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/tiff'];
 
@@ -24,7 +25,7 @@ export class AiTemplateController {
   @RequirePermission('ai:text-to-template')
   @Roles('admin', 'operator')
   @Post('text-to-template')
-  textToTemplate(@Body() body: { description: string; widthMm?: number; heightMm?: number }) {
+  textToTemplate(@Body() body: TextToTemplateDto) {
     if (!body.description || typeof body.description !== 'string') {
       throw new BadRequestException('description 不能为空');
     }
@@ -192,7 +193,7 @@ export class AiTemplateController {
   @RequirePermission('template:write')
   @Roles('admin', 'operator')
   @Post('save')
-  save(@Body() body: any) { return this.svc.saveAsTemplate(body); }
+  save(@Body() body: SaveAiTemplateDto) { return this.svc.saveAsTemplate(body); }
 
   /** 最近生成记录 */
   @Get('jobs')
@@ -207,7 +208,7 @@ export class AiTemplateController {
   @RequirePermission('ai:models:manage')
   @Roles('admin')
   @Post('models')
-  createModel(@Body() body: any) { return this.svc.createModel(body); }
+  createModel(@Body() body: CreateAiModelDto) { return this.svc.createModel(body); }
 
   @RequirePermission('ai:models:manage')
   @Roles('admin')
