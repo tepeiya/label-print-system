@@ -3,7 +3,12 @@ import { ElMessage } from 'element-plus';
 import type {
   AddModuleResult,
   CancelTenantResult,
+  CreateInvoicePayload,
+  CreatePaymentPayload,
   DisableModuleResult,
+  Invoice,
+  InvoiceDetail,
+  InvoicePage,
   ModuleCatalogItem,
   ModuleSource,
   PlanInfo,
@@ -14,9 +19,13 @@ import type {
   PlatformTenant,
   ProvisionTenantPayload,
   ProvisionTenantResult,
+  RemoveQuotaResult,
   SetEnabledResult,
+  TenantMeterDetail,
   TenantModuleRow,
+  TenantQuota,
   TenantSubscriptionDetail,
+  UpsertQuotaPayload,
   UsageOverview,
 } from './types';
 
@@ -148,5 +157,52 @@ export const apiUpdatePlan = (code: string, data: PlanUpdatePayload) =>
 // ========== 用量看板 / 平台审计 ==========
 export const apiUsage = () => http.get<UsageOverview>('/platform/usage');
 export const apiPlatformAudit = () => http.get<PlatformAuditLog[]>('/platform/audit');
+
+// ========== P3 计费：账单 / 收款 ==========
+
+/** 只把有值的字段拼进 query：0 是合法筛选值（如 tenantId=0 不会发生，但 page 从 1 起），空串/undefined/null 一律丢 */
+function cleanQuery(q: Record<string, unknown>): Record<string, string | number> {
+  const out: Record<string, string | number> = {};
+  for (const [k, v] of Object.entries(q)) {
+    if (v === undefined || v === null || v === '') continue;
+    out[k] = v as string | number;
+  }
+  return out;
+}
+
+export const apiListInvoices = (q: { tenantId?: number; status?: string; page?: number; pageSize?: number } = {}) =>
+  http.get<InvoicePage>('/platform/invoices', { params: cleanQuery(q) });
+
+/** items 与 amountCents 都不传 = 按租户当前套餐月费自动出账（后端 resolvePlan 拿 active→trial 订阅） */
+export const apiCreateInvoice = (data: CreateInvoicePayload) =>
+  http.post<Invoice>('/platform/invoices', data);
+
+export const apiInvoiceDetail = (id: number) => http.get<InvoiceDetail>(`/platform/invoices/${id}`);
+
+/** 发出草稿账单：dueDays 后端默认 15，会被夹到 1–365 */
+export const apiIssueInvoice = (id: number, dueDays?: number) =>
+  http.post<Invoice>(`/platform/invoices/${id}/issue`, dueDays ? { dueDays } : {});
+
+/** 作废：已付账单后端会 400（退款走红字账单，V1 手工另开负额账单） */
+export const apiVoidInvoice = (id: number) => http.post<Invoice>(`/platform/invoices/${id}/void`);
+
+/** D5 收款登记：只有 issued / overdue 状态可登记，返回 InvoiceDetail 便于直接刷新详情抽屉 */
+export const apiRegisterPayment = (id: number, data: CreatePaymentPayload) =>
+  http.post<InvoiceDetail>(`/platform/invoices/${id}/payments`, data);
+
+// ========== P3 计费：配额 / 计量 ==========
+export const apiTenantQuotas = (tenantId: number) =>
+  http.get<TenantQuota[]>(`/platform/tenants/${tenantId}/quotas`);
+
+/** softLimit / hardLimit 传 null = 取消该侧限制；两边都 null 等价删除 */
+export const apiSetTenantQuota = (tenantId: number, meter: string, data: UpsertQuotaPayload) =>
+  http.put<TenantQuota>(`/platform/tenants/${tenantId}/quotas/${encodeURIComponent(meter)}`, data);
+
+export const apiDeleteTenantQuota = (tenantId: number, meter: string) =>
+  http.delete<RemoveQuotaResult>(`/platform/tenants/${tenantId}/quotas/${encodeURIComponent(meter)}`);
+
+/** 本月聚合 + 原始计量明细（page/pageSize 只作用于明细，month 始终全量） */
+export const apiTenantMeters = (tenantId: number, q: { meter?: string; page?: number; pageSize?: number } = {}) =>
+  http.get<TenantMeterDetail>(`/platform/tenants/${tenantId}/meters`, { params: cleanQuery(q) });
 
 export default http;

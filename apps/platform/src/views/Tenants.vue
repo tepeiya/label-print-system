@@ -66,7 +66,7 @@
             <el-button v-else link size="small" type="success" @click="toggleEnabled(row, true)">恢复</el-button>
             <el-button v-if="!row.canceledAt" link size="small" type="danger" @click="doCancel(row)">退订</el-button>
             <el-button link size="small" @click="openAddModule(row)">加购模块</el-button>
-            <el-button link size="small" @click="openModules(row)">已开模块</el-button>
+            <el-button link size="small" @click="openModules(row)">租户详情</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -151,8 +151,8 @@
       </template>
     </el-dialog>
 
-    <!-- ============ 已开模块（抽屉） ============ -->
-    <el-drawer v-model="drawer.show" :title="`已开模块 · ${drawer.tenant?.name ?? ''}`" size="480px">
+    <!-- ============ 租户详情（抽屉）：已开模块 + 配额与计量 ============ -->
+    <el-drawer v-model="drawer.show" :title="`租户详情 · ${drawer.tenant?.name ?? ''}`" size="640px">
       <div v-loading="drawer.loading">
         <el-descriptions :column="1" border size="small" style="margin-bottom: 16px;">
           <el-descriptions-item label="租户 code">{{ drawer.tenant?.code }}</el-descriptions-item>
@@ -163,6 +163,8 @@
             {{ fmtDate(drawer.subscription.subscription.endsAt) }}
           </el-descriptions-item>
         </el-descriptions>
+
+        <el-divider content-position="left">已开模块</el-divider>
 
         <el-alert
           v-if="drawer.derived"
@@ -191,6 +193,8 @@
           </div>
         </div>
         <el-empty v-if="!drawer.loading && !drawer.modules.length" description="该租户没有生效中的模块" />
+
+        <QuotaPanel v-if="drawer.tenant" :tenant="drawer.tenant" />
       </div>
     </el-drawer>
   </div>
@@ -199,6 +203,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
+import QuotaPanel from './tenant/QuotaPanel.vue';
 import {
   apiAddTenantModule,
   apiCancelTenant,

@@ -79,7 +79,8 @@
       <template #header>用量概览</template>
       <el-row :gutter="16">
         <el-col :span="6">
-          <el-statistic title="打印任务" :value="usage.printJobs?.used || 0">
+          <!-- P3 起 printJobs.used 的口径是「张数」（usage_daily 的 print_labels 聚合），不再是任务数 -->
+          <el-statistic title="本月打印（张）" :value="usage.printJobs?.used || 0">
             <template #suffix>
               <span style="font-size: 14px; color: #999;">
                 / {{ usage.printJobs?.limit === -1 ? '∞' : usage.printJobs?.limit }}

@@ -10,7 +10,7 @@
       :closable="false"
       show-icon
       title="改动说明"
-      description="保存走 PUT /platform/plans/:code，moduleCodes 是全量替换；套餐内容变化后后端会失效所有模块缓存，已订阅租户下次读取即生效（不用等 60s）。核心模块与依赖仍由后端展开补齐。"
+      description="保存走 PUT /platform/plans/:code，moduleCodes 是全量替换；套餐内容变化后后端会失效所有模块缓存，已订阅租户下次读取即生效（不用等 60s）。核心模块与依赖仍由后端展开补齐。月费（priceCents）是账单中心「按套餐出账」的基准，改价只影响之后新出的账单，已出账单的套餐快照不动。"
       style="margin-bottom: 16px;"
     />
 
@@ -19,6 +19,12 @@
         <div class="plan-head">
           <span class="plan-code">{{ p.code }}</span>
           <el-tag size="small" :type="planTagType(p.code)" effect="plain">{{ p.name }}</el-tag>
+          <span class="plan-price">
+            <template v-if="hasPrice(p.priceCents)">
+              {{ priceText(p.priceCents) }}<span class="muted sub"> / 月</span>
+            </template>
+            <span v-else class="muted sub">列表未返回月费</span>
+          </span>
         </div>
 
         <el-form label-width="72px" label-position="left" size="small">
@@ -27,6 +33,13 @@
           </el-form-item>
           <el-form-item label="描述">
             <el-input v-model="drafts[p.code].description" type="textarea" :rows="2" maxlength="500" show-word-limit />
+          </el-form-item>
+          <el-form-item label="月费（元）">
+            <el-input-number
+              v-model="drafts[p.code].priceYuan"
+              :min="0" :precision="2" :step="10" controls-position="right"
+            />
+            <span class="muted sub">{{ priceHint(p.code) }}</span>
           </el-form-item>
           <el-form-item label="排序">
             <el-input-number v-model="drafts[p.code].sortOrder" :min="0" :max="999" controls-position="right" />
@@ -74,6 +87,8 @@ interface Draft {
   name: string;
   description: string;
   sortOrder: number;
+  /** 月费（元），提交时转 priceCents（分） */
+  priceYuan: number;
   moduleCodes: string[];
 }
 
@@ -88,12 +103,17 @@ const origin = reactive<Record<string, Draft>>({});
 const planTagType = (code: string) =>
   code === 'ENTERPRISE' ? 'danger' : code === 'PRO' ? 'warning' : 'info';
 
+/** 元 → 分（分是后端唯一口径，plans.price_cents 为 BIGINT，读出可能是字符串） */
+const centsOf = (yuan: number | undefined | null) => Math.round(Number(yuan ?? 0) * 100);
+const priceText = (cents: number | string | undefined | null) => `¥ ${(Number(cents ?? 0) / 100).toFixed(2)}`;
+
 function pickDraft(p: PlanInfo): Draft {
   // GET /platform/plans 的模块字段叫 modules（运营写接口回的是 moduleCodes），这里都兼容
   return {
     name: p.name ?? '',
     description: p.description ?? '',
     sortOrder: p.sortOrder ?? 0,
+    priceYuan: Number(p.priceCents ?? 0) / 100,
     moduleCodes: [...(p.moduleCodes ?? p.modules ?? [])],
   };
 }
@@ -110,6 +130,7 @@ function same(a: Draft, b: Draft) {
   return a.name === b.name
     && a.description === b.description
     && a.sortOrder === b.sortOrder
+    && a.priceYuan === b.priceYuan
     && a.moduleCodes.join(',') === b.moduleCodes.join(',');
 }
 
@@ -145,9 +166,10 @@ async function save(p: PlanInfo) {
       name: d.name,
       description: d.description,
       sortOrder: d.sortOrder,
+      priceCents: centsOf(d.priceYuan),
       moduleCodes: d.moduleCodes,
     });
-    ElMessage.success(`套餐 ${p.code} 已保存（模块 ${d.moduleCodes.length} 个）`);
+    ElMessage.success(`套餐 ${p.code} 已保存（月费 ${priceText(centsOf(d.priceYuan))}，模块 ${d.moduleCodes.length} 个）`);
     await load();
   } catch {
     /* 拦截器已提示 */
@@ -173,6 +195,7 @@ onMounted(async () => {
 .plan-card { display: flex; flex-direction: column; }
 .plan-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .plan-code { font-size: 16px; font-weight: 600; color: #1a73e8; }
+.plan-price { margin-left: auto; font-weight: 600; color: #303133; }
 .mod-codes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .mod-tag { font-size: 11px; }
 .plan-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }

@@ -187,6 +187,99 @@ export const apiAiSaveTemplate = (data: { template: any; name?: string; category
 export const apiSubscription = () => http.get('/subscription');
 export const apiSubscriptionUsage = () => http.get('/subscription/usage');
 
+// ========== SaaS P3: Billing（账单与用量，租户侧只读，权限点 sys:billing:read）==========
+// 契约见 docs/11 §11.7 / backend/src/billing/billing.controller.ts。
+// 金额一律「分」（BIGINT），前端展示统一 /100 保留两位。
+
+/** 计量项用量（softLimit/hardLimit 为 null 表示该侧未设限） */
+export interface BillingUsageItem {
+  meter: string;
+  used: number;
+  softLimit: number | null;
+  hardLimit: number | null;
+  period: string;
+}
+
+export interface BillingUsageSummary {
+  tenantId: number;
+  period: string;
+  items: BillingUsageItem[];
+}
+
+/** 日序列点位：稀疏，没记录的日期后端不补零 */
+export interface BillingSeriesPoint {
+  day: string;
+  quantity: number;
+}
+
+export interface BillingQuota {
+  meter: string;
+  softLimit: number | null;
+  hardLimit: number | null;
+  period: string;
+}
+
+export type InvoiceStatus = 'draft' | 'issued' | 'paid' | 'overdue' | 'void';
+
+/** 账单行：plan 出账时带 qty/unitPriceCents，手工行可能只有 title + amountCents */
+export interface InvoiceLineItem {
+  code?: string;
+  title: string;
+  qty?: number;
+  unitPriceCents?: number;
+  amountCents?: number;
+}
+
+/** 出账快照（invoices.detail），运营改价不影响已出账单 */
+export interface InvoiceDetail {
+  source?: 'plan' | 'manual' | string;
+  plan?: { id?: number; code?: string; name?: string; priceCents?: number };
+  items?: InvoiceLineItem[];
+  note?: string;
+}
+
+export interface Invoice {
+  id: number;
+  tenantId: number;
+  number: string;
+  amountCents: number;
+  currency: string;
+  status: InvoiceStatus;
+  periodStart: string | null;
+  periodEnd: string | null;
+  dueAt: string | null;
+  paidAt: string | null;
+  detail: InvoiceDetail;
+  createdBy?: number | null;
+  createdAt?: string;
+  paidCents: number;
+  balanceCents: number;
+}
+
+export interface InvoicePayment {
+  id: number;
+  invoiceId?: number;
+  tenantId?: number;
+  provider: string;
+  providerRef: string | null;
+  amountCents: number;
+  note: string | null;
+  paidBy?: number | null;
+  paidAt: string;
+}
+
+/** GET /billing/invoices/:id —— 账单 + 收款记录 */
+export interface InvoiceFull extends Invoice {
+  payments: InvoicePayment[];
+}
+
+export const apiBillingUsage = () => http.get('/billing/usage');
+export const apiBillingSeries = (meter: string, days = 30) =>
+  http.get('/billing/usage/series', { params: { meter, days } });
+export const apiBillingInvoices = () => http.get('/billing/invoices');
+export const apiBillingInvoice = (id: number) => http.get(`/billing/invoices/${id}`);
+export const apiBillingQuotas = () => http.get('/billing/quotas');
+
 // ========== SaaS: Platform (admin only，用于订阅页做套餐对比) ==========
 export const apiPlatformModules = () => http.get('/platform/modules');
 export const apiPlatformPlans = () => http.get('/platform/plans');

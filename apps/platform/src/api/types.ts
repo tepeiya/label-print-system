@@ -103,6 +103,8 @@ export interface PlanInfo {
   effectiveModules: string[];
   /** 只有 PUT /platform/plans/:code 的回包带这个字段（GET 列表用 modules）；未改模块时为 null */
   moduleCodes?: string[] | null;
+  /** P3 月费（分）。plans.price_cents 是 BIGINT，pg 驱动可能回字符串，用之前先 Number() */
+  priceCents?: number | string;
 }
 
 /** PUT /platform/plans/:code 的请求体；moduleCodes 传了就全量替换 plan_modules */
@@ -111,6 +113,8 @@ export interface PlanUpdatePayload {
   description?: string;
   sortOrder?: number;
   moduleCodes?: string[];
+  /** P3：月费（分）。不传保持原价，0 = 免费/未定价 */
+  priceCents?: number;
 }
 
 /** PUT /platform/plans/:code 的返回体（回 plan 行 + 本次写入的 moduleCodes，未改模块时为 null） */
@@ -208,4 +212,153 @@ export interface PlatformAuditLog {
   targetType: string | null;
   targetId: number | null;
   createdAt: string;
+}
+
+// ============================================================================
+// P3 计费：账单 / 收款 / 配额 / 计量（docs/11 §11.7）
+//   Invoice / Payment ← billing/invoice.service.ts#toDto / #payToDto
+//   Quota / Meter     ← billing/usage.service.ts#listQuotas / #monthSummary / #listMeters
+// 金额一律「分」（amountCents），UI 展示时 /100 转「元」保留两位。
+// ============================================================================
+
+/** 账单状态机：draft（运营出账）→ issued（发单）→ paid；issued 逾期转 overdue；未付可 void */
+export type InvoiceStatus = 'draft' | 'issued' | 'paid' | 'void' | 'overdue';
+
+/** 收款通道：D5 只做运营手动登记，manual 有真实业务含义，其余为预留 */
+export type PaymentProvider = 'manual' | 'wechat' | 'alipay' | 'stripe' | 'bank';
+
+/** 账单行项快照（存 invoices.detail，qty×unitPriceCents 或直接给 amountCents） */
+export interface InvoiceLine {
+  code?: string;
+  title: string;
+  qty?: number;
+  unitPriceCents?: number;
+  amountCents?: number;
+}
+
+/** 出账快照：source=plan 时 detail.plan 冻结了当时的套餐与月费 */
+export interface InvoiceDetailSnapshot {
+  source: 'plan' | 'manual';
+  plan?: { id: number; code: string; name: string; priceCents: number } | null;
+  items?: InvoiceLine[];
+  note?: string;
+}
+
+/** GET /platform/invoices 的行（listAll 顺带把已收/余额一起回给运营页） */
+export interface Invoice {
+  id: number;
+  tenantId: number;
+  /** 账单号 INV-{tenantId}-{yymm}-{seq} */
+  number: string;
+  amountCents: number;
+  currency: string;
+  status: InvoiceStatus;
+  periodStart: string | null;
+  periodEnd: string | null;
+  dueAt: string | null;
+  paidAt: string | null;
+  detail: InvoiceDetailSnapshot;
+  createdBy: number | null;
+  createdAt: string;
+  paidCents?: number;
+  balanceCents?: number;
+}
+
+/** POST /platform/invoices/:id/payments 与 GET /platform/invoices/:id 的回包：账单 + 收款汇总 */
+export interface InvoiceDetail extends Invoice {
+  paidCents: number;
+  balanceCents: number;
+  payments: Payment[];
+}
+
+/** GET /platform/invoices —— 分页信封（后端 pageSize 上限 200） */
+export interface InvoicePage {
+  items: Invoice[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+/** POST /platform/invoices/:id/payments 的收款记录 */
+export interface Payment {
+  id: number;
+  invoiceId: number;
+  tenantId: number;
+  provider: PaymentProvider | string;
+  providerRef: string | null;
+  amountCents: number;
+  note: string | null;
+  paidBy: number | null;
+  paidAt: string;
+}
+
+/** POST /platform/invoices —— items 与 amountCents 都不传 = 按租户当前套餐月费自动出账 */
+export interface CreateInvoicePayload {
+  tenantId: number;
+  periodStart?: string;
+  periodEnd?: string;
+  items?: InvoiceLine[];
+  amountCents?: number;
+  currency?: string;
+  note?: string;
+}
+
+/** POST /platform/invoices/:id/payments 的请求体（amountCents 为正整数分） */
+export interface CreatePaymentPayload {
+  amountCents: number;
+  provider?: PaymentProvider;
+  providerRef?: string;
+  note?: string;
+}
+
+/** 配额周期：month（自然月窗口）/ day（当天窗口） */
+export type QuotaPeriod = 'month' | 'day';
+
+/** GET /platform/tenants/:id/quotas 的行；null = 该侧不设限 */
+export interface TenantQuota {
+  meter: string;
+  softLimit: number | null;
+  hardLimit: number | null;
+  period: QuotaPeriod | string;
+}
+
+/** PUT /platform/tenants/:id/quotas/:meter：字段传 null 取消该侧限制，两边都 null 等价删除 */
+export interface UpsertQuotaPayload {
+  softLimit?: number | null;
+  hardLimit?: number | null;
+  period?: QuotaPeriod;
+}
+
+/** DELETE /platform/tenants/:id/quotas/:meter */
+export interface RemoveQuotaResult {
+  tenantId: number;
+  meter: string;
+  removed: boolean;
+}
+
+/** GET /platform/tenants/:id/meters 的 month 聚合（used 来自 usage_daily，限额来自 quotas） */
+export interface MeterMonthSummary {
+  meter: string;
+  used: number;
+  softLimit: number | null;
+  hardLimit: number | null;
+  period: QuotaPeriod | string;
+}
+
+/** 原始计量明细行（对账颗粒度到单次动作） */
+export interface MeterUsage {
+  id: number;
+  tenantId: number;
+  meter: string;
+  moduleCode: string | null;
+  quantity: number;
+  userId: number | null;
+  meta: Record<string, unknown>;
+  occurredAt: string;
+}
+
+/** GET /platform/tenants/:id/meters —— 本月聚合 + 原始明细（明细按 page/pageSize 分页） */
+export interface TenantMeterDetail {
+  month: MeterMonthSummary[];
+  meters: MeterUsage[];
 }

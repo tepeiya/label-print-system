@@ -46,6 +46,7 @@ export const MENU_CATALOG: MenuNode[] = [
     icon: 'Setting',
     children: [
       { key: 'users', name: '用户管理', icon: 'User', path: '/users', module: 'users', permission: 'sys:user:read' },
+      { key: 'billing', name: '账单与用量', icon: 'Wallet', path: '/billing', module: 'users', permission: 'sys:billing:read' },
       { key: 'audit', name: '审计日志', icon: 'Document', path: '/audit', module: 'audit', permission: 'audit:read' },
       { key: 'backups', name: '备份中心', icon: 'Folder', path: '/backups', module: 'backup', permission: 'backup:read' },
     ],

@@ -46,6 +46,13 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/SubscriptionInfo.vue'),
         meta: { title: '我的订阅', icon: 'Tickets', always: true },
       },
+      // P3 账单与用量：后端 BillingController 是 @RequireModule('users') + sys:billing:read，
+      // meta 与之一致；path 必须叫 billing（backend/src/saas/menu.catalog.ts 的 '/billing' 有反向断言）。
+      {
+        path: 'billing',
+        component: () => import('@/views/Billing.vue'),
+        meta: { title: '账单与用量', icon: 'Wallet', module: 'users', permission: 'sys:billing:read' },
+      },
       // 未订阅 / 权限不足的统一落地页（§11.10「模块未订阅」）
       {
         path: 'blocked',

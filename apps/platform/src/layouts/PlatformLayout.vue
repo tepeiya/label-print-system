@@ -49,8 +49,8 @@ import { PLATFORM_MENUS } from '@/router';
 
 /**
  * 平台后台骨架：顶栏（身份 + 退出）+ 左侧固定菜单 + 内容区。
- * 菜单是静态的（4 个页面），不像 console 那样由后端 /auth/me.menus 驱动 ——
- * 运营身份没有「订阅模块裁剪菜单」这一说。
+ * 菜单项来自 router 的 PLATFORM_MENUS（5 个页面），这里只负责渲染；
+ * 不像 console 那样由后端 /auth/me.menus 驱动 —— 运营身份没有「订阅模块裁剪菜单」这一说。
  */
 const menus = PLATFORM_MENUS;
 const route = useRoute();
