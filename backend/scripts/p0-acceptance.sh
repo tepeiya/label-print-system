@@ -292,6 +292,105 @@ c=$(api GET "/platform/invoices?tenantId=$ID2&status=paid" "$PT"); cc=$(jget cod
 [[ "$cc" == 0 && "$(jget data total)" == "1" && "$(jget data items 0 paidCents)" == "29900" ]] \
   && ok "K.19 运营侧按租户+状态筛账单（paid 1 张，已收=应付）" || no "K.19 运营筛选" "HTTP $c $(body | head -c 200)"
 
+# ---------------------------------------------------------------------------
+# L. P4 Agent/MCP（docs/11 §11.11.2：whoami 正确租户与 scope / 空数据友好摘要 /
+#    只读 token 打高危 403+审计 / 计量 + agent_calls 配额 + stdio MCP 自检）
+#    用 PRO 租户（ID2/PAT）：agent 模块在套餐里；BASIC 的订阅在 G 段被退订不能作主场景。
+# ---------------------------------------------------------------------------
+echo
+echo "-- L. P4 Agent/MCP"
+
+c=$(api POST "/platform/tenants/$ID2/modules" "$PT" '{"moduleCode":"inventory"}'); [[ "$c" == 201 || "$c" == 200 ]] \
+  && ok "L.1a PRO 加购 inventory 模块" || no "L.1a 加购 inventory" "HTTP $c $(body | head -c 160)"
+c=$(api POST "/platform/tenants/$ID2/modules" "$PT" '{"moduleCode":"bom"}'); [[ "$c" == 201 || "$c" == 200 ]] \
+  && ok "L.1b 加购 bom 模块（依赖 inventory 已在）" || no "L.1b 加购 bom" "HTTP $c $(body | head -c 160)"
+
+SEED_SQL="$(dirname "$0")/seed-inventory-demo.sql"
+$PSQL -v tid="$ID2" -f "$SEED_SQL" >/dev/null 2>&1
+NSEED=$(ps "select count(*) from stock_batches where tenant_id=$ID2")
+[[ "$NSEED" == "5" ]] && ok "L.2 演示库存种子（5 批次 / 有机苹果 320kg）" || no "L.2 种子" "batches=$NSEED"
+
+c=$(api POST /agents "$PAT" '{"name":"验收 Agent","kind":"mcp_stdio"}'); cc=$(jget code)
+CID=$(jget data id)
+[[ "$c" == 201 && "$cc" == 0 && -n "$CID" ]] && ok "L.3 建 Agent 客户端（id=$CID）" || no "L.3 建客户端" "HTTP $c $(body | head -c 160)"
+c=$(api GET /agents "$BAT"); [[ "$c" == 403 && "$(jget code)" == 4031 ]] \
+  && ok "L.4 BASIC 租户无 agent 模块 → /agents 403/4031" || no "L.4 模块门禁" "HTTP $c $(jget code)"
+
+c=$(api POST "/agents/$CID/tokens" "$PAT" '{"scopes":["template:read","inventory:stock:read","inventory:batch:read","bom:kit:read","bom:shortage:read"]}'); cc=$(jget code)
+AGENT_TOK=$(jget data token)
+[[ "$c" == 201 && "$cc" == 0 && "$AGENT_TOK" == lfagent_* ]] && ok "L.5 签发只读 token（一次性明文）" || no "L.5 签发" "HTTP $c $(body | head -c 160)"
+
+atab() { # atab <METHOD> <path> [json-body] —— 用 Agent Token 打 /agent/v1（stdout=HTTP code，body→$TMP）
+  local m=${1:-GET} p=$2 b=${3:-}
+  local args=(-s -o "$TMP" -w '%{http_code}' -X "$m" "$BASE$p" -H "Authorization: Bearer $AGENT_TOK")
+  [[ -n $b ]] && args+=(-H 'Content-Type: application/json' -d "$b")
+  curl "${args[@]}" --max-time 20
+}
+c=$(atab GET /agent/v1/whoami); cc=$(jget code)
+[[ "$c" == 200 && "$cc" == 0 && "$(jget data data tenant id)" == "$ID2" && "$(jget data data agent scopes | python3 -c 'import sys,json;print(len(json.loads(sys.stdin.read())))')" == "5" ]] \
+  && ok "L.6 whoami 返回正确租户（$ID2）与 5 条 scope" || no "L.6 whoami" "HTTP $c $(body | head -c 200)"
+c=$(atab GET /agent/v1/tools); NTOOL=$(jget data | python3 -c 'import sys,json;d=json.loads(sys.stdin.read() or "null");print(len(d) if isinstance(d,list) else 0)' 2>/dev/null)
+[[ "$c" == 200 && "$NTOOL" -ge 11 ]] && ok "L.7 tools 清单 ≥11（3 元 + 8 只读）" || no "L.7 tools 清单" "HTTP $c n=$NTOOL"
+
+c=$(atab POST "/agent/v1/tools/inventory.query_stock" '{"keyword":"苹果","group_by":"sku"}'); cc=$(jget code)
+[[ ( "$c" == 200 || "$c" == 201 ) && "$(jget data data items 0 qty)" == "320" && "$(jget data data items 0 belowSafety)" == "True" ]] \
+  && ok "L.8a query_stock(sku)：有机苹果 320 且低于安全库存" || no "L.8a sku" "HTTP $c $(body | head -c 200)"
+c=$(atab POST "/agent/v1/tools/inventory.query_stock" '{"keyword":"苹果","group_by":"batch"}')
+[[ "$(jget data data total)" == "2" ]] && ok "L.8b query_stock(batch)：两个苹果批次" || no "L.8b batch" "$(body | head -c 160)"
+c=$(atab POST "/agent/v1/tools/inventory.query_stock" '{"below_safety":true}')
+[[ "$(jget data data total)" -ge 1 ]] && ok "L.8c below_safety 过滤可用" || no "L.8c below_safety" "$(body | head -c 160)"
+
+c=$(atab POST "/agent/v1/tools/inventory.query_stock" '{"keyword":"不存在物料XYZ"}'); cc=$(jget code)
+SUM=$(jget data summary); ITEMS=$(jget data data items | python3 -c 'import sys,json;print(len(json.loads(sys.stdin.read()) or []))' 2>/dev/null)
+[[ ( "$c" == 200 || "$c" == 201 ) && "$ITEMS" == "0" && "$SUM" == *"未查询到"* ]] \
+  && ok "L.9 无数据 → 空数组 + 友好摘要（§11.11.2）" || no "L.9 空数据路径" "HTTP $c items=$ITEMS summary=$SUM"
+
+c=$(atab POST "/agent/v1/tools/bom.check_kit_rate" '{"product":"苹果礼盒","demand":100}'); cc=$(jget code)
+[[ ( "$c" == 200 || "$c" == 201 ) && "$(jget data data kitRate)" == "60" && "$(jget data data maxSets)" == "60" ]] \
+  && ok "L.10 check_kit_rate：5kg×1.05 损耗 → 齐套率 60%" || no "L.10 齐套率" "HTTP $c $(body | head -c 220)"
+c=$(atab POST "/agent/v1/tools/bom.explain_shortage" '{"product":"苹果礼盒","demand":100}')
+[[ "$(jget data data items 0 shortage)" == "205" && "$(jget data data items 0 code)" == "M-APPLE-ORG" ]] \
+  && ok "L.11 explain_shortage：有机苹果缺 205kg" || no "L.11 缺料" "$(body | head -c 200)"
+
+c=$(atab POST "/agent/v1/tools/inventory.adjust" '{"sku":"M-APPLE-ORG","warehouse":"WH-SH","delta":-10,"reason":"冒烟","idempotency_key":"x1"}'); cc=$(jget code)
+NAUD=$(ps "select count(*) from audit_logs where tenant_id=$ID2 and action='agent.tool.inventory.adjust' and detail->>'status'='denied_scope'")
+[[ "$c" == 403 && "$cc" == 4032 && "$NAUD" -ge 1 ]] \
+  && ok "L.12 只读 token 打 inventory.adjust → 403/4032 且已写审计（$NAUD 条）" || no "L.12 高危拒绝" "HTTP $c code=$cc audit=$NAUD"
+
+c=$(atab GET /agent/v1/resources/stock/M-APPLE-ORG); cc=$(jget code)
+[[ "$c" == 200 && "$(jget data data total)" == "320" ]] && ok "L.13 resources/stock 快照 320kg" || no "L.13 资源" "HTTP $c $(body | head -c 160)"
+
+MCP_DIR="$(cd "$(dirname "$0")/../../apps/mcp-server" 2>/dev/null && pwd)"
+if [[ -n "$MCP_DIR" && -d "$MCP_DIR/node_modules/@modelcontextprotocol" ]]; then
+  (cd "$MCP_DIR" && npm run build --silent >/dev/null 2>&1 && AGENT_TOKEN="$AGENT_TOK" npm run selftest --silent) >/tmp/mcp-selftest.log 2>&1
+  if grep -q "SELFTEST OK" /tmp/mcp-selftest.log; then ok "L.14 stdio MCP 自测通过（SDK Client 全流程）"; else no "L.14 stdio 自测" "$(tail -3 /tmp/mcp-selftest.log | tr '\n' ' ')"; fi
+else
+  ok "L.14 stdio MCP 自测跳过（apps/mcp-server 未装依赖；上线前跑 npm i && npm run selftest）"
+fi
+
+# 配额：把 agent_calls 硬限设到当前用量 → 下一次调用 4033（升级引导同 P3 口径）
+USED=$(ps "select quantity from usage_daily where tenant_id=$ID2 and meter='agent_calls' and day=current_date")
+c=$(api PUT "/platform/tenants/$ID2/quotas/agent_calls" "$PT" '{"hardLimit":1,"softLimit":1,"period":"day"}'); cc=$(jget code)
+[[ "$c" == 200 && "$cc" == 0 ]] && ok "L.15 平台设 agent_calls 日硬限=1（当前日用量 $USED）" || no "L.15 设配额" "HTTP $c $(body | head -c 160)"
+c=$(atab POST "/agent/v1/tools/whoami" '{}'); cc=$(jget code)
+[[ "$c" == 403 && "$cc" == 4033 ]] && ok "L.16 超 agent_calls 硬限 → 403/4033（计量护栏）" || no "L.16 配额拒绝" "HTTP $c code=$cc"
+api DELETE "/platform/tenants/$ID2/quotas/agent_calls" "$PT" >/dev/null
+
+c=$(atab GET /agent/v1/whoami); [[ "$c" == 200 ]] && ok "L.17a 撤销前 whoami 正常" || no "L.17a 撤销前" "HTTP $c"
+TID=$(api GET "/agents/$CID/tokens" "$PAT" >/dev/null; jget data 0 id)
+c=$(api POST "/agents/$CID/tokens/$TID/revoke" "$PAT"); cc=$(jget code)
+[[ "$c" == 201 && "$cc" == 0 ]] && ok "L.17b 撤销 token（id=$TID）" || no "L.17b 撤销" "HTTP $c $(body | head -c 160)"
+c=$(atab GET /agent/v1/whoami); [[ "$c" == 401 && "$(jget code)" == 401 ]] \
+  && ok "L.18 撤销后调用 → 401（§11.11.2 token 生命周期）" || no "L.18 撤销生效" "HTTP $c"
+
+c=$(api GET /agent/v1/whoami "$BAT"); [[ "$c" == 401 ]] \
+  && ok "L.19 租户 JWT 打 /agent/v1 → 401（形态即拒，不查库）" || no "L.19 JWT 隔离" "HTTP $c"
+
+c=$(api POST "/agents/$CID/tokens" "$PAT" '{"scopes":["inventory:stock:read"]}'); AGENT_TOK2=$(jget data token)
+c=$(api POST "/agents/$CID/status" "$PAT" '{"status":"disabled"}'); cc=$(jget code)
+c=$(curl -s -o "$TMP" -w '%{http_code}' "$BASE/agent/v1/whoami" -H "Authorization: Bearer $AGENT_TOK2")
+[[ "$c" == 403 ]] && ok "L.20 停用客户端 → 存量 token 立即 403" || no "L.20 停用" "HTTP $c $(body | head -c 160)"
+
 echo
 echo "== 通过 $pass / 失败 $fail"
 if (( fail == 0 )); then echo "P0 验收通过（docs/11 §11.11.1）"; else echo "存在失败项，见上面 [FAIL]"; fi

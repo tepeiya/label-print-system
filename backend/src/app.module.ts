@@ -18,6 +18,8 @@ import { AiTemplateModule } from './ai-template/ai-template.module';
 import { BackupModule } from './backup/backup.module';
 import { SaasModule } from './saas/saas.module';
 import { BillingModule } from './billing/billing.module';
+import { InventoryModule } from './inventory/inventory.module';
+import { AgentModule } from './agent/agent.module';
 import { SnakeNamingStrategy } from './snake-naming.strategy';
 import { JWT_SECRET } from './common/config';
 
@@ -63,7 +65,7 @@ function redisConnection() {
     BullModule.forRoot({ connection: redisConnection() }),
     AuthModule, TemplateModule, SerialModule, FormulaModule, BarcodeModule,
     PrinterModule, PrintModule, DataSourceModule, AuditModule, UserAdminModule, AiTemplateModule, BackupModule,
-    SaasModule, BillingModule,
+    SaasModule, BillingModule, InventoryModule, AgentModule,
   ],
 })
 export class AppModule {}
