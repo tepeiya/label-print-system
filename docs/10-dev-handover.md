@@ -1303,6 +1303,25 @@ npx esbuild --format=esm --outfile=/dev/null web/js/api.js
 - `src/resources.ts` 暴露 `labelflow://templates/{id}`、`labelflow://inventory/stock/{ref}`（转调 `GET /agent/v1/resources/:kind/:id`，与工具链同一套 scope 检查）；`src/prompts.ts` 给出 D8 要求的 3 个开箱即用场景 `inventory.health_check` / `bom.daily_kit_report` / `print.label_from_description`。
 - `CallTool` 对 `need_approval` / `idempotent_replay` **不判为错误**，把 summary 原样转文本给模型 —— 模型看到的就是「已建审批单 #13，5 分钟内带 approval_id 重试」。
 - 自检：`npm run selftest`（stdio，原三条断言）+ `npm run selftest:http`（`StreamableHTTPClientTransport` 拉起 `dist/http.js`，断言 tools≥10、含 query_stock/submit_job、三个 prompt 名、resources/list 不报错 → `SELFTEST HTTP OK`）。验收 M.22 在 `dist/http.js` + `selftest:http` 脚本存在时自动跑，否则跳过（与 L.14 同策略）。
+- 启动方式只有 `npm run start:http` / `node dist/http.js`（**没有** `npm start -- http` 这种 argv 分派，避免动 stdio 入口的无参行为）。
+
+**MCP SDK 1.32.2 的坑（踩过的，别再踩）**
+
+- `transport.onclose/onerror` 必须在 `server.connect(transport)` **之前**赋值：`Protocol.connect` 会链式包裹旧 handler，事后赋值会把 SDK 自己的钩子覆盖掉。
+- `transport.close()` 只触发 `onclose`，**不触发** `onsessionclosed`（后者只在 DELETE 路径里调）—— 空闲 sweeper 和 SIGTERM 清理必须挂 `onclose`，否则会话表静默泄漏。
+- `client.close()` 不发 DELETE；显式结束会话要用 `transport.terminateSession()`，且必须在 `close()` **之前**调用（它复用 `_abortController.signal`，close 后 signal 已 abort，DELETE 发不出去）。
+- `transport.sessionId` 构造后是 undefined，只有走到 initialize 分支才赋值；会话表靠 `onsessioninitialized`（写响应头之前同步回调）登记。同一对 Server+Transport **不能复用**：对已初始化会话再 initialize 返回 400 "Server already initialized"。
+- 每会话只允许一条 GET SSE 流，第二条 → **409**；SDK 客户端 `connect()` 已经占住它，所以手工 GET 探针必然 409，断言要写 200|409。
+- POST 的校验顺序是 Accept(须同时含 json 与 event-stream → 406) → Content-Type(→415) → 读 body(→400 -32700) → schema(→400) → `_closed`(→404) → **才**判 initialize / 校会话。「畸形 JSON + 错误会话号」是 400 不是 404。每次 GET/DELETE/POST 都校 `MCP-Protocol-Version`，裸 curl 探针要显式带 `MCP-Protocol-Version: 2025-03-26`。
+- 预解析 body 必须**读到流结束**再 `handleRequest(req,res,parsedBody)`（内部按转换后的 Web Request 用 WeakMap 关联），body 半态会挂。
+- `inspector --cli` 0.14.2 的 `createTransport` 只认 `stdio|sse`，URL 一律按旧版 SSE 处理，**连不上 `/mcp`**；HTTP 要么用 GUI 选 Streamable HTTP，要么跑 `selftest:http`。
+- 接口层坑：后端把 `need_approval / approval_id / idempotent_replay` 放在 **`ToolResult.data` 那一层**（controller 判 202 也是 `result.data.need_approval`），外层信封只有 `{code,message,data:ToolResult}`。只查 `env.data.need_approval` → 提示永远不触发。`readResource` 的 `contents[]` 是 `{text}|{blob}` 联合，TS 不收窄。
+
+**这层的三个取舍（要改前先读）**
+
+- `ListResources` 每次现调 `templates.search` + `inventory.query_stock`（各 20 条）**且无缓存** → 计入后端计量/审计/限流；已按会话 scope 做门禁（本会话没有该工具就不调，避免注定 403 的调用）。嫌贵可改 TTL 缓存或只回资源模板。
+- 会话与 token 的绑定强度：initialize 之后的请求**允许不带** `Authorization`（会话号即凭据），带了才比对、不一致 401。改成「每请求必带」更严，但部分客户端只在 initialize 发 auth。
+- 默认值是拍的：`SESSION_IDLE_MS=1800000`（30min 空闲回收）、`MAX_BODY_BYTES=1048576`。HTTP 模式**不使用** `AGENT_TOKEN` env（每会话自带 token），只共用 `AGENT_API_BASE`，多后端要另开口子。
 
 ### 10.21.8 P5 明确没做（别当成已完成）
 

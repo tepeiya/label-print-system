@@ -116,10 +116,12 @@ curl -s -X POST $H/mcp -H "Authorization: Bearer $T" -H "Mcp-Session-Id: $Sid" \
 
 ## 能力：tools / resources / prompts
 
-- **tools**：由后端 `GET /agent/v1/tools` 动态下发。P5 清单（15 个，随 scope 变化）：
+- **tools**：由后端 `GET /agent/v1/tools` 动态下发，只含该 token scope 覆盖到的工具。
+  目录共 17 个（3 元工具 + 9 只读 + 5 写/高危）；本文验收 token 给了 8 条 scope，实测列出 15 个：
   whoami / list_modules / describe_capabilities + templates.search/get/create/update +
   inventory.query_stock/list_low_stock/list_batches/list_expiring +
-  bom.check_kit_rate/explain_shortage + print.submit_job/get_status。
+  bom.check_kit_rate/explain_shortage + print.submit_job/get_status
+  （`inventory.adjust`/`inventory.transfer` 需另给 `inventory:stock:adjust|transfer` 才出现）。
   高危工具无 `approval_id` 时后端返回 **202 + `need_approval`**，本服务**不当错误**：
   `summary` 原样转成文本，紧跟一句「这不是错误：已转入审批，approval_id=…，批准后带它重试」，
   完整 JSON 放最后。`idempotent_replay`（幂等命中）与 `approval_consumed`（审批已核销）同理。
@@ -163,7 +165,7 @@ curl -s -X POST $H/mcp -H "Authorization: Bearer $T" -H "Mcp-Session-Id: $Sid" \
 
 ```bash
 B=http://127.0.0.1:3200/api/v1
-# 1) 租户管理员登录（p3b3 是 P0 验收租户；账号口令见 backend/.env 或 docs/10 §10.20）
+# 1) 租户管理员登录（本地验收租户与口令见 backend/scripts/p0-acceptance.sh、docs/10 §10.19/§10.20）
 JWT=$(curl -s -X POST $B/auth/login -H 'Content-Type: application/json' \
   -d '{"username":"<租户管理员>","password":"<口令>","tenantCode":"<租户码>"}' | jq -r .data.accessToken)
 # 2) 建 Agent + 签 token（scope 按需给；expiresInDays 必填）
