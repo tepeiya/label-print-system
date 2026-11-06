@@ -12,12 +12,13 @@ import { Public } from '../common/public.decorator';
 import { AgentTokenGuard } from './agent-token.guard';
 import { AgentCtx } from './agent.service';
 import { ToolsService } from './tools.service';
+import { PromptsService } from './prompts.service';
 
 @Controller('agent/v1')
 @Public()
 @UseGuards(AgentTokenGuard)
 export class AgentV1Controller {
-  constructor(private tools: ToolsService) {}
+  constructor(private tools: ToolsService, private prompts: PromptsService) {}
 
   /** Agent 身份 + scope + 可访问模块（§11.11.2 验收项） */
   @Get('whoami')
@@ -46,6 +47,15 @@ export class AgentV1Controller {
     const result = await this.tools.call(req.agentCtx, tool, args ?? {});
     if (result?.data?.need_approval === true) res.status(202);
     return result;
+  }
+
+  /**
+   * 租户 Prompt 库（P6.5）：系统默认 + 租户覆盖的合并结果，只含 enabled。
+   * MCP server 用它渲染 prompts/list / prompts/get；一次拉全量（3–20 条），不做分页。
+   */
+  @Get('prompts')
+  listPrompts(@Request() req: { agentCtx: AgentCtx }) {
+    return this.prompts.forAgent(req.agentCtx.tenantId);
   }
 
   /** 只读资源（labelflow://templates/{id}、labelflow://inventory/stock/{ref}） */

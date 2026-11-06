@@ -6,14 +6,17 @@
 #       N RLS 兜底 + 租户数据导出/硬删（P6.1/P6.3）+ Agent 前端入口（P5.5）
 #       O 白标（P6.4/D6）：品牌清洗 + 域名 TXT 校验 + Host→租户解析 + 平台强校验
 #       P 独立库租户（P6.2/D2）：数据源注册/结构自检/按库导出/注销闸门（真连库部分需 D2_DSN）
+#       Q Prompt 库（P6.5/D8）：系统默认/租户覆盖/参数渲染/停用过滤/删除回落/审计
 # P6 段要真删数据，用的是自建的靶租户（${T_CODE}p6 / ${T_CODE}p7），段尾自清理，不碰 A/B/M 的租户。
+# Q 段用 M 段的 PRO 租户（agent 模块在套餐里），提示词行段尾按 tenant 清空。
 #
 # 前提：
 #   1) PG 已按顺序建表：docs/03-database.sql → seed.sql → saas_p0.sql → saas_p0_roles.sql
 #      → saas_p2_platform.sql → saas_p3_billing.sql → saas_p4_agent.sql → saas_p5_agent_tools.sql
 #      → saas_p6_rls.sql → saas_p6_tenant_data.sql → saas_p6_branding.sql → saas_p6_dedicated.sql
+#      → saas_p6_prompts.sql
 #      （N 段两条都必需，缺前者 N.1 判失败，缺后者 N.4 直接 500；O 段缺 saas_p6_branding.sql 会 O.2 直接 403/500；
-#        P 段缺 saas_p6_dedicated.sql 会 P.1 判失败）
+#        P 段缺 saas_p6_dedicated.sql 会 P.1 判失败；Q 段缺 saas_p6_prompts.sql 会整段 404/500）
 #   2) 后端在跑：npx tsc -p tsconfig.json && node -r reflect-metadata dist/src/main.js
 #      想要 N.6 断言 rlsActive=true，后端必须带 DB_RLS_USER/DB_RLS_PASSWORD 启动（见 docs/10 §10.22.4）
 #      O 段的域名校验走 dev 逃生口，后端还要带 BRANDING_DEV_VERIFY=1（且 NODE_ENV≠production）
@@ -1082,6 +1085,151 @@ else
     echo "  （D2 靶租户 $ID8 在共享库/独立库的残留已清理；数据源 $D2_KEY 已注销）"
   fi
 fi
+
+
+# ---------------------------------------------------------------------------
+# Q. P6.5 Prompt 库（D8）：系统默认 + 租户覆盖 + 参数渲染 + Agent 下发
+#    用 M 段的 PRO 租户（$ID2 / $PAT / $AGENT_TOK）；BASIC 没有 agent 模块，不适合主场景。
+#    系统提示词不会被修改：PUT 同名只建「租户覆盖行」，DELETE 即回落默认。
+#    自定义靶提示词 qa.* 段尾统一删除；覆盖行也在段内删除，不污染其它段。
+# ---------------------------------------------------------------------------
+echo
+echo "-- Q. Prompt 库（P6.5）"
+
+# $TMP 里是列表时按 name 取值；找不到输出空
+pget() { python3 -c '
+import json,sys
+try: d=json.load(open(sys.argv[1]))
+except Exception: print(""); sys.exit(0)
+for x in (d.get("data") or []):
+    if x.get("name")==sys.argv[2]: print(x.get(sys.argv[3])); break
+' "$TMP" "$1" "$2"; }
+plist() { python3 -c '
+import json,sys
+try: d=json.load(open(sys.argv[1]))
+except Exception: print(""); sys.exit(0)
+print(" ".join(x.get("name","") for x in (d.get("data") or [])))
+' "$TMP"; }
+pcount() { python3 -c '
+import json,sys
+try: d=json.load(open(sys.argv[1]))
+except Exception: print(-1); sys.exit(0)
+print(len(d.get("data") or []))
+' "$TMP"; }
+
+# Q.1 菜单入口（sys:prompt:manage 只给 admin / tenant_admin）
+c=$(api GET /auth/me "$PAT")
+Q_MENU=$(python3 -c '
+import json,sys
+try: d=json.load(open(sys.argv[1]))
+except Exception: print("no"); sys.exit(0)
+def walk(ns):
+    for n in ns:
+        if n.get("path")=="/prompts": return True
+        if walk(n.get("children") or []): return True
+    return False
+print("yes" if walk((d.get("data") or {}).get("menus") or []) else "no")
+' "$TMP")
+check "Q.1 /auth/me 菜单含 /prompts（PRO 租户）" "$Q_MENU" "yes"
+
+# Q.2 viewer 无权管理（403/4032）
+c=$(api GET /agent-prompts "$VT"); cc=$(jget code)
+[[ "$c" == 403 && "$cc" == 4032 ]] && ok "Q.2 viewer 无 sys:prompt:manage → 403/4032" || no "Q.2 viewer 越权" "HTTP $c code=$cc"
+
+# Q.3 开箱即用：3 条系统提示词，全部 source=system
+c=$(api GET /agent-prompts "$PAT"); N=$(pcount)
+[[ "$c" == 200 && "$N" == "3" ]] && ok "Q.3a 默认 3 条系统提示词" || no "Q.3a 系统清单" "HTTP $c count=$N $(body | head -c 160)"
+SRCS=$(python3 -c '
+import json,sys
+d=json.load(open(sys.argv[1])); print(sorted({x.get("source") for x in d.get("data") or []}))
+' "$TMP")
+check "Q.3b 未改动时全部 source=system" "$SRCS" "['system']"
+
+# Q.4 新建自定义提示词（带参数 + 默认值）
+c=$(api PUT /agent-prompts/qa.daily_standup "$PAT" '{
+  "title":"验收：每日站会话术",
+  "description":"P6.5 验收自定义提示词",
+  "content":"请汇总仓库「{{warehouse}}」今天需要关注的事项，临期口径 {{days}} 天。",
+  "arguments":[{"name":"warehouse","title":"仓库","default":"全部可见仓库"},{"name":"days","title":"临期天数","default":"30"}],
+  "sortOrder":900
+}'); cc=$(jget code); SRC=$(jget data source)
+[[ ( "$c" == 200 || "$c" == 201 ) && "$cc" == 0 && "$SRC" == "custom" ]] \
+  && ok "Q.4 新建自定义提示词 qa.daily_standup（source=custom）" || no "Q.4 新建自定义" "HTTP $c $(body | head -c 200)"
+
+# Q.5 名字不合法 → 400
+c=$(api PUT /agent-prompts/Bad_Name "$PAT" '{"title":"坏名字","content":"这一段的正文足够长了。","arguments":[]}'); cc=$(jget code)
+[[ "$c" == 400 ]] && ok "Q.5 非法提示词名（大写/下划线）→ 400" || no "Q.5 名字校验" "HTTP $c code=$cc $(body | head -c 160)"
+
+# Q.6 正文里的占位符没声明 → 400（拼错不能静默留空）
+c=$(api PUT /agent-prompts/qa.bad_arg "$PAT" '{"title":"未声明参数","content":"请检查 {{warehous}} 的库存情况。","arguments":[{"name":"warehouse"}]}'); MSG=$(jget message)
+[[ "$c" == 400 && "$MSG" == *warehous* ]] && ok "Q.6 未声明占位符 → 400 且点出参数名" || no "Q.6 占位符校验" "HTTP $c msg=$MSG"
+
+# Q.7 正文超长 → 400（DTO 与 DB 双重上限 20000）
+BIG=$(python3 -c "print('x'*20001)")
+c=$(api PUT /agent-prompts/qa.too_long "$PAT" "{\"title\":\"超长正文\",\"content\":\"$BIG\",\"arguments\":[]}")
+[[ "$c" == 400 ]] && ok "Q.7 正文超过 20000 字符 → 400" || no "Q.7 正文上限" "HTTP $c $(body | head -c 120)"
+
+# Q.8 缺标题 → 400
+c=$(api PUT /agent-prompts/qa.no_title "$PAT" '{"content":"这一段的正文足够长了。","arguments":[]}')
+[[ "$c" == 400 ]] && ok "Q.8 缺 title → 400" || no "Q.8 标题必填" "HTTP $c $(body | head -c 160)"
+
+# Q.9 预览：参数传入值覆盖默认，渲染结果与正文一致
+c=$(api POST /agent-prompts/qa.daily_standup/preview "$PAT" '{"arguments":{"warehouse":"WH-SH","days":"45"}}'); TXT=$(jget data text); LEN=$(jget data length)
+[[ "$c" == 200 && "$TXT" == *WH-SH* && "$TXT" == *45* && "$LEN" -ge 20 ]] \
+  && ok "Q.9 预览渲染参数（WH-SH / 45，$LEN 字符）" || no "Q.9 预览" "HTTP $c len=$LEN text=$(echo "$TXT" | head -c 120)"
+
+# Q.10 同名覆盖系统提示词：source=custom + overridden=true，系统原文仍在列表里可回落
+c=$(api PUT /agent-prompts/inventory.health_check "$PAT" '{
+  "title":"库存巡检（验收覆盖）",
+  "description":"覆盖系统同名提示词",
+  "content":"这是租户覆盖版：巡检「{{warehouse}}」，临期口径 {{days}} 天。",
+  "arguments":[{"name":"warehouse","default":"全部可见仓库"},{"name":"days","default":"30"}],
+  "enabled":false
+}'); OV=$(jget data overridden); SRC=$(jget data source)
+[[ ( "$c" == 200 || "$c" == 201 ) && "$OV" == "True" && "$SRC" == "custom" ]] \
+  && ok "Q.10 覆盖 inventory.health_check（overridden=true，先置停用）" || no "Q.10 覆盖系统" "HTTP $c $(body | head -c 200)"
+
+# Q.11 管理列表仍能看到被停用的覆盖行（否则用户没法再打开）
+c=$(api GET /agent-prompts "$PAT"); EN=$(pget inventory.health_check enabled); T=$(pget inventory.health_check title)
+[[ "$c" == 200 && "$EN" == "False" && "$T" == "库存巡检（验收覆盖）" ]] \
+  && ok "Q.11 管理列表保留停用覆盖行（enabled=false）" || no "Q.11 停用可见" "HTTP $c enabled=$EN title=$T"
+
+# Q.12 Agent 侧只下发启用项：被停用的系统覆盖消失，自定义仍在
+c=$(atab GET /agent/v1/prompts); NAMES=$(plist)
+[[ "$c" == 200 && "$NAMES" != *inventory.health_check* && "$NAMES" == *qa.daily_standup* ]] \
+  && ok "Q.12 GET /agent/v1/prompts 过滤 enabled=false（含 qa.daily_standup）" || no "Q.12 Agent 清单" "HTTP $c names=$NAMES"
+
+# Q.13 恢复启用后 Agent 立刻能看到（同会话无需重启，后端是实时合并）
+c=$(api PUT /agent-prompts/inventory.health_check "$PAT" '{
+  "title":"库存巡检（验收覆盖）","content":"这是租户覆盖版：巡检「{{warehouse}}」，临期口径 {{days}} 天。",
+  "arguments":[{"name":"warehouse","default":"全部可见仓库"},{"name":"days","default":"30"}],"enabled":true
+}'); c=$(atab GET /agent/v1/prompts); NAMES=$(plist)
+[[ "$c" == 200 && "$NAMES" == *inventory.health_check* ]] && ok "Q.13 重新启用后 Agent 清单恢复该条" || no "Q.13 重新启用" "HTTP $c names=$NAMES"
+
+# Q.14 删除覆盖行 → 回落系统默认（revertedToSystem=true，标题变回内置）
+c=$(api DELETE /agent-prompts/inventory.health_check "$PAT"); RV=$(jget data revertedToSystem)
+c2=$(api GET /agent-prompts "$PAT"); SRC=$(pget inventory.health_check source); T=$(pget inventory.health_check title)
+[[ ( "$c" == 200 || "$c" == 201 ) && "$RV" == "True" && "$SRC" == "system" && "$T" == "库存健康巡检" ]] \
+  && ok "Q.14 删除覆盖 → 回落系统默认（$T）" || no "Q.14 回落" "HTTP $c rv=$RV src=$SRC title=$T"
+
+# Q.15 再删一次 → 404（没有租户行可删，系统行不可删）
+c=$(api DELETE /agent-prompts/inventory.health_check "$PAT")
+[[ "$c" == 404 ]] && ok "Q.15 无覆盖行时再删 → 404（系统行不可删）" || no "Q.15 二次删除" "HTTP $c $(body | head -c 160)"
+
+# Q.16 写操作留审计（save/delete）
+NSAVE=$(ps "select count(*) from audit_logs where tenant_id=$ID2 and action='agent.prompt.save'")
+NDEL=$(ps "select count(*) from audit_logs where tenant_id=$ID2 and action='agent.prompt.delete'")
+[[ "${NSAVE:-0}" -ge 3 && "${NDEL:-0}" -ge 1 ]] && ok "Q.16 审计：save=$NSAVE delete=$NDEL" || no "Q.16 审计" "save=$NSAVE delete=$NDEL"
+
+# Q.17 删除自定义提示词 → 彻底消失（不回落系统）
+c=$(api DELETE /agent-prompts/qa.daily_standup "$PAT"); RV=$(jget data revertedToSystem)
+c2=$(api GET /agent-prompts "$PAT"); NAMES=$(plist)
+[[ ( "$c" == 200 || "$c" == 201 ) && "$RV" == "False" && "$NAMES" != *qa.daily_standup* ]] \
+  && ok "Q.17 删除自定义 → 列表消失（revertedToSystem=false）" || no "Q.17 删除自定义" "HTTP $c rv=$RV"
+
+# 段尾清理：靶租户的提示词行全删（幂等，重跑干净）
+ps "delete from agent_prompts where tenant_id=$ID2" >/dev/null
+echo "  （Q 段提示词行已清理：tenant=$ID2）"
 
 echo
 echo "== 通过 $pass / 失败 $fail"

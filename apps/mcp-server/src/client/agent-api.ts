@@ -13,6 +13,21 @@ export interface AgentToolDto {
   inputSchema: Record<string, unknown>;
 }
 
+/** 租户 Prompt 库（P6.5，GET /agent/v1/prompts）：正文已在后端与租户覆盖合并，enabled 已过滤 */
+export interface AgentPromptDto {
+  name: string;
+  title: string;
+  description: string;
+  arguments: Array<{
+    name: string; title?: string; description?: string; required?: boolean; default?: string;
+  }>;
+  content: string;
+  enabled: boolean;
+  sortOrder: number;
+  source?: 'system' | 'custom';
+  overridden?: boolean;
+}
+
 export interface Envelope<T = any> {
   code: number;
   message: string;
@@ -59,6 +74,8 @@ export class AgentApiClient {
 
   whoami() { return this.req('GET', '/agent/v1/whoami'); }
   listTools() { return this.req<AgentToolDto[]>('GET', '/agent/v1/tools'); }
+  /** P6.5：系统默认 + 租户覆盖合并后的启用提示词（MCP prompts/list 的来源） */
+  listPrompts() { return this.req<AgentPromptDto[]>('GET', '/agent/v1/prompts'); }
   callTool(name: string, args: Record<string, unknown>) {
     return this.req('POST', `/agent/v1/tools/${encodeURIComponent(name)}`, args ?? {});
   }

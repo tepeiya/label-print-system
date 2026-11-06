@@ -1,9 +1,9 @@
 # 10. 开发交接文档（面向接手的 AI / 开发者）
 
 > 本文档目标：**任何 AI 或开发者读完本文即可无缝接手继续开发**，不需要再翻历史对话。
-> 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）** → **§10.19 P3 计费闭环（动账单/配额/计量前必读）** → **§10.20 P4 Agent/MCP（动 /agent/v1、agent token、库存只读模型前必读）** → **§10.21 P5 Agent 写工具与审批流（动 Agent 写路径/限流/幂等/MCP HTTP 前必读）** → **§10.22 P6.1 RLS 兜底（动数据库角色/连接、写任何原生 SQL 前必读）** → **§10.23 P6.3 租户数据导出与硬删 + Agent 前端入口（动 /platform/tenants/:id/export|purge、表清单口径前必读）** → **§10.24 P6.4 白标 D6 + P6.3 platform 前端（动 /branding、登录 Host 解析、主题注入前必读）**。
-> 最后更新：2026-11-06（P0–P5 已落地；**P6 已落 3/5 完整：P6.1 RLS + P6.3 导出/硬删 + P6.4 白标；P6.2 独立库租户完成阶段 A（注册 + 平台侧按库导出/删除），开通编排与业务读写接管未做**；
-> 本轮新增 **§10.25**；单测 209 条 / 验收 249 项（A–P 段）/ RLS 冒烟 22 项；P6 只剩 P6.2 二阶段、P6.5 Prompts 库）
+> 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）** → **§10.19 P3 计费闭环（动账单/配额/计量前必读）** → **§10.20 P4 Agent/MCP（动 /agent/v1、agent token、库存只读模型前必读）** → **§10.21 P5 Agent 写工具与审批流（动 Agent 写路径/限流/幂等/MCP HTTP 前必读）** → **§10.22 P6.1 RLS 兜底（动数据库角色/连接、写任何原生 SQL 前必读）** → **§10.23 P6.3 租户数据导出与硬删 + Agent 前端入口（动 /platform/tenants/:id/export|purge、表清单口径前必读）** → **§10.24 P6.4 白标 D6 + P6.3 platform 前端（动 /branding、登录 Host 解析、主题注入前必读）** → **§10.25 P6.2 独立库租户阶段 A（动 datasource 注册/按库导出前必读）** → **§10.26 P6.5 Prompt 库（动 /agent-prompts、MCP prompts、Agent 下发模板前必读）**。
+> 最后更新：2026-11-06（P0–P5 已落地；**P6 已落 5/5：P6.1 RLS + P6.3 导出/硬删 + P6.4 白标 + P6.5 Prompt 库；P6.2 独立库租户完成阶段 A（注册 + 平台侧按库导出/删除），开通编排与业务读写接管未做**；
+> 本轮新增 **§10.26**；单测 217 条 / 验收 267 项（A–Q 段）/ RLS 冒烟 22 项；P6 只剩 P6.2 阶段 B（见 §10.25.8））
 >
 > ⚠️ **2026-11-05 历史瘦身**：`.pnpm-store`（232 MB pnpm 包缓存，被 `95b4970` 误提交）已从
 > `feat/dev-base` 的**全部历史**中移除，`.git` 从 54 MB 降到 1.4 MB。
@@ -876,10 +876,10 @@ docs/03-database.sql → backend/scripts/seed.sql → backend/scripts/saas_p0.sq
 ### 10.15.6 测试与验收覆盖
 
 ```bash
-cd backend && npm test                       # 209 条（原 26 → P0 +89 → P1 +2 → 校验 +8 → P2 +5 → P3 +12 → P4 +18 → P5 +20 → P6.3 +9 → P6.4 +13 → P6.2 +7）
+cd backend && npm test                       # 217 条（原 26 → P0 +89 → P1 +2 → 校验 +8 → P2 +5 → P3 +12 → P4 +18 → P5 +20 → P6.3 +9 → P6.4 +13 → P6.2 +7 → P6.5 +8）
 # O 段（白标）要后端带 BRANDING_DEV_VERIFY=1；N 段要 DB_RLS_USER（两者缺一按对应断言判失败并给提示）
 # P 段真连独立库要传 D2_DSN（指向一个已跑完 docs/03 + saas_*.sql 的库）；不传则只跑控制面校验并 SKIP P.13+
-DB_RLS_USER=labelflow_app D2_DSN='postgres://user:pw@127.0.0.1:5432/labelflow_d2' T_CODE=p6o1 T2_CODE=p6o1pro bash backend/scripts/p0-acceptance.sh  # 249 项断言（A–P 段），期望「通过 249 / 失败 0」（重跑换新 T_CODE/T2_CODE）
+DB_RLS_USER=labelflow_app D2_DSN='postgres://user:pw@127.0.0.1:5432/labelflow_d2' T_CODE=p6q1 T2_CODE=p6q1pro bash backend/scripts/p0-acceptance.sh  # 267 项断言（A–Q 段），期望「通过 267 / 失败 0」（重跑换新 T_CODE/T2_CODE）
 bash backend/scripts/p6-rls-smoke.sh         # 22 项：RLS 兜底专用冒烟（必须用 labelflow_app DSN 才有效，见 §10.22.3）
 
 # 前置 DDL（顺序敏感；saas_* 都幂等可重跑）：
@@ -889,6 +889,7 @@ bash backend/scripts/p6-rls-smoke.sh         # 22 项：RLS 兜底专用冒烟�
 #   → saas_p6_tenant_data.sql（放宽 tenant_backups.kind CHECK，缺它导出必 500 / 23514）
 #   → saas_p6_branding.sql（tenant_domains 补列 + sys:branding:manage，缺它 O 段整段红）
 #   → saas_p6_dedicated.sql（tenants.data_source_key + 2 CHECK + 部分唯一索引，缺它 P.1 判失败）
+#   → saas_p6_prompts.sql（agent_prompts + tenant_isolation + sys:prompt:manage，缺它 Q 段整段红）
 ```
 
 - 单测分布（本轮新增）：`validate-ai-template` 23、`sql-executor` 14（含真实 PG 集成，PG 不可达自动 skip）、`saas-guards` 10、`menu.catalog` 12（P1 加了 AI 入口 + 菜单/路由一致性两条）、`data-scope` 7、`roles.guard` 7、`module-deps` 6、`permission-match` 8、`errors.filter` 4。
@@ -1531,7 +1532,7 @@ Nest 就不接管响应了——代价是这条路不再走拦截器，`Content-
 - ~~**P6.4 白标（D6）**~~ → **2026-11-05 已落地**，见 §10.24（`saas_p6_branding.sql` + `backend/src/saas/branding/` + `apps/console` 品牌页）。
 - ~~**P6.2 独立库租户（D2）**~~ → **2026-11-06 阶段 A 已落地**，见 §10.25：`tenants.data_source_key` DDL、数据源注册/诊断/注销、平台侧导出/硬删按库路由、provision 对 dedicated 明确 400；
   **仍缺**：开通编排（建库 → 跑 DDL → 迁移数据 → 切换 data_source_key）、业务读写接管（仓库仍绑默认 DataSource）、退订后库回收。
-- **P6.5 Prompts 库产品化**：MCP 侧 3 个开箱 prompt 已有（§10.21.7），租户侧「Prompt 库」CRUD/编辑/下发没有。
+- ~~**P6.5 Prompts 库产品化**~~ → **2026-11-06 已落地**，见 §10.26：系统默认在代码 + 租户覆盖表、`/agent-prompts` CRUD/预览、MCP `prompts/list|get` 改由后端动态下发（60s TTL + 静态兜底）、Console「Prompt 库」页。
 - ~~**platform 前端**：保留期看板、导出按钮、下载链接、purge 二次确认~~ → **2026-11-05 已落地**，见 §10.24.7（`apps/platform/src/views/TenantData.vue`）。
 - 家生子目前只处理「单层 FK 指向带 `tenant_id` 的表」；若以后出现孙表（A→B→`tenant_id`）需要扩 `plan()` 的递归。
 
@@ -1750,3 +1751,93 @@ env 入口：`DB_DEDICATED_DSNS='{"acme":"postgres://..."}'`，单条失败只�
 3. **退订回收**：`purge` 完独立库后决定保留/销毁；至少要有「库还在、租户已删」的巡检。
 4. **运维面**：每租户连接池上限（当前 `DB_DEDICATED_POOL` 全局默认 4）、SSL 参数、DSN 轮换、健康检查。
 5. **备份**：独立库的物理备份/恢复不在 `tenant_backups` 里；当前导出是逻辑 JSON gzip，不是 PITR。
+
+## 10.26 P6.5 Prompt 库（D8）（2026-11-06 落地）
+
+一句话：**系统提示词的权威副本在代码里，数据库只存「租户改过的 / 自己加的」；同名行 = 覆盖，删除 = 回落。**
+这不是「给每个租户 seed 三行文案」——那样产品每次改提示词都会留下 N 份互不一致的存量数据。
+
+### 10.26.1 范围与边界
+
+| 做了 | 没做（别按「已完成」理解） |
+| --- | --- |
+| 3 条开箱即用系统提示词（库存巡检 / 齐套日报 / 按描述打印） | 提示词版本历史与回滚（当前覆盖只有一行，改前请自行留档） |
+| 租户覆盖同名系统提示词、新增自定义、停用、删除回落 | 按角色/用户分提示词（当前是租户级一份） |
+| `{{arg}}` 占位符校验 + 默认值 + 必填 + 服务端预览 | 条件分支/循环/表达式（刻意不做，见 10.26.5） |
+| Console 管理页 + MCP `prompts/list|get` 动态下发 | 提示词效果统计（调用量/采纳率） |
+
+### 10.26.2 数据模型：代码默认 + 覆盖行
+
+- `backend/src/agent/prompt.defaults.ts`：`SYSTEM_PROMPTS`（name/title/description/arguments/content/sortOrder）。
+  改文案走代码评审，所有未覆盖的租户**自动吃到最新版本**。
+- `agent_prompts`：只存租户行。`UNIQUE(tenant_id, name)`，同一提示词一个租户最多一行。
+- 合并视图 `mergePromptList(SYSTEM_PROMPTS, tenantRows)`：
+  - 同名行覆盖系统行，**保留系统排序位**，`source=custom` + `overridden=true`；
+  - 租户独有行按 `sortOrder` 追加；
+  - `enabled=false` 仍出现在管理列表（否则用户没法再打开），但 Agent 侧过滤。
+- 删除租户行：系统同名 → `revertedToSystem=true`；自定义 → 彻底消失。系统行本身没有删除接口。
+
+### 10.26.3 DDL：`backend/scripts/saas_p6_prompts.sql`
+
+- `agent_prompts`：`tenant_id / name / title / description / content / arguments(jsonb) / enabled / sort_order / created_by / updated_by / created_at / updated_at`；
+- CHECK：name 形态（`^[a-z][a-z0-9_.-]{2,63}$`）、title ≥2、content 10–20000、`arguments` 必须是数组且 ≤12 项；
+- `ux_agentprompt_tenant_name` 唯一索引 + `ix_agentprompt_tenant`；
+- `ENABLE ROW LEVEL SECURITY` + `tenant_isolation`（`tenant_id = nullif(current_setting('app.tenant_id',true),'')::bigint`），
+  同时授 `labelflow_app` / `labelflow_platform`（本文件单独跑也成立，不依赖随后再跑 `saas_p6_rls.sql`）；
+- 权限点 `sys:prompt:manage`（module_code=`users`，与 `sys:*` 系列一致），只授 `admin` / `tenant_admin`
+  —— 改的是 Agent 对全公司说话的模板，属于租户级运营配置，不下放 manager/viewer。
+
+### 10.26.4 接口（`/agent-prompts`，`@RequireModule('agent')` + `@RequirePermission('sys:prompt:manage')`）
+
+| 路由 | 说明 |
+| --- | --- |
+| `GET /agent-prompts` | 合并视图（含被停用的覆盖行），数组而非分页（3–20 条量级） |
+| `GET /agent-prompts/:name` | 单条（编辑器回填） |
+| `PUT /agent-prompts/:name` | 新建自定义 / 覆盖同名系统；`name` 走 URL |
+| `DELETE /agent-prompts/:name` | 删除租户行；无行 → **404**（系统行不可删） |
+| `POST /agent-prompts/:name/preview` | 用参数渲染正文，缺必填 → 400；返回 `{name,title,source,text,length}` |
+| `GET /agent/v1/prompts` | Agent Token；只含 enabled，正文已合并租户覆盖（MCP 的唯一数据源） |
+
+审计：写操作 `agent.prompt.save` / `agent.prompt.delete`（detail 带 name/enabled/overridden/参数名，不落正文，
+避免把可能含业务话术的长文本复制进审计表）。
+
+### 10.26.5 校验与渲染口径（`prompt.calc.ts`，MCP 侧 `renderRemotePrompt` 必须一致）
+
+1. 正文里的 `{{name}}` 必须先在 `arguments` 里声明，否则 400 并点出参数名（拼错不能静默留空）。
+2. 声明了但正文没用：只提示 `unusedArgs`，不拦（改正文时忘删参数很常见）。
+3. 渲染优先级：**模型传值 > 参数 default > 空串**；`required` 且两者都没有 → 可读错误。
+4. **只做文本替换，不做表达式/条件分支**：提示词一旦能执行逻辑，就会变成第二个模板引擎，
+   还会把「参数没传」这类问题藏进分支里。条件语义用「默认值」表达。
+5. 参数名 `^[a-zA-Z_][a-zA-Z0-9_]{0,31}$`，最多 12 个；正文上限 20000 字符。
+6. ⚠️ 名字校验**不要先截断再套正则**：截断会把超长名字静默改成另一个合法名字，必须原样校验。
+
+### 10.26.6 MCP 侧变化（`apps/mcp-server`）
+
+- `client/agent-api.ts` 新增 `listPrompts()`（GET `/agent/v1/prompts`）。
+- `server.ts` 的 `ListPrompts/GetPrompt` 改为「先拿服务端清单，失败回落内置 `prompts.ts`」：
+  - 清单缓存 **60s TTL**：租户后台改完，正在跑的 MCP 会话最迟一分钟生效，不必重启客户端；
+  - 拉取失败时返回上次成功的缓存（没有就静态副本），后端抖一下不会让模型失去全部提示词；
+  - `prompts/get` 的渲染口径与后端 `prompt.calc.ts` 一致（默认值/必填/占位符替换）。
+- `prompts.ts` 的静态 `PROMPTS` 保留为**离线兜底副本**，正常运行时以服务端为准，两处文案不一致时以服务端为准。
+- `selftest.ts` / `selftest-http.ts` 增加：三名字仍在、`days=45` 渲染进正文、正文长度 ≥200。
+
+### 10.26.7 Console
+
+- 路由 `/prompts`（meta：module=`agent`、permission=`sys:prompt:manage`、icon=`ChatDotRound`），
+  菜单目录 `menu.catalog.ts` 的 agent 分组新增同名条目（两边必须一起改，守卫按 `/auth/me.menus` 放行）。
+- `views/PromptLibrary.vue`：列表（系统/自定义/覆盖系统标签）、启用开关、参数表编辑、正文编辑、
+  预览弹窗（按参数默认值预填，调 `POST .../preview`）。
+- 覆盖行操作叫「恢复默认」，自定义行叫「删除」；两者都走同一个 `DELETE`，文案不同但语义由后端判断。
+
+### 10.26.8 验证（全部实跑 2026-11-06）
+
+- `npm test` **217/0**（+8：`src/agent/__tests__/prompt.calc.test.ts`）。
+- `D2_DSN=… bash backend/scripts/p0-acceptance.sh` → **通过 267 / 失败 0**（A–Q 段；Q 段 +18）。
+  Q 段实测：菜单入口 → viewer 4032 → 系统 3 条 → 新建自定义 → 非法名/未声明占位符/超长/缺 title 四类 400 →
+  预览渲染（WH-SH / 45）→ 覆盖系统（overridden=true）→ 停用后管理列表仍可见、Agent 清单消失 →
+  重新启用即恢复 → 删除覆盖回落默认 → 二次删除 404 → 审计 save/delete → 删除自定义彻底消失。
+- `bash backend/scripts/p6-rls-smoke.sh` **22/0/0**；`npx tsc` 0 error；backend lint **0 error**；
+  `apps/console` `vue-tsc && vite build` 通过；MCP `npm run build` + `selftest` / `selftest:http` 通过
+  （`prompts/get(inventory.health_check, days=45)` 正文含 45）。
+- ⚠️ 新增实体必须**同时**加到 `src/entities/index.ts`（`app.module` 的 `ENTITIES` 只从那里批量注册）：
+  漏了会报 `EntityMetadataNotFoundError: No metadata for "AgentPrompt"`，接口表现是 500 而不是 400。

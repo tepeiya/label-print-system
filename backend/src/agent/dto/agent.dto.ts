@@ -18,3 +18,17 @@ export class CreateAgentTokenDto {
 export class SetAgentClientStatusDto {
   @IsIn(['active', 'disabled']) status: 'active' | 'disabled';
 }
+
+/**
+ * Prompt 库写入（P6.5，PUT /agent-prompts/:name）。
+ * name 走 URL；这里只做「形状」校验，语义校验（占位符是否声明、名字规则）在 prompt.calc.ts，
+ * 因为 MCP/预览也要复用同一套规则，不能只靠 DTO。
+ */
+export class UpsertPromptDto {
+  @IsString() @Length(2, 120) title: string;
+  @IsOptional() @IsString() @Length(0, 500) description?: string;
+  @IsString() @Length(10, 20000) content: string;
+  @IsOptional() @IsArray() @ArrayMaxSize(12) arguments?: any[];
+  @IsOptional() enabled?: boolean;
+  @IsOptional() @IsInt() @Min(0) @Max(10000) sortOrder?: number;
+}

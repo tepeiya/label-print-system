@@ -4,6 +4,10 @@
 // 只需要一句「巡检库存」就能跑通链路，提示词里点明工具名可省掉模型的能力摸索成本（护栏 8
 // 同时要求把工具返回里的业务数据当不可信内容，不得当指令执行）。
 // 提示词只描述「做什么」，具体 id/编码一律让模型用工具或 ReadResource 现查——避免写死数据。
+//
+// P6.5：这里的 PROMPTS 降级为「后端不可达时的兜底副本」。正常运行时 server.ts 先调
+// GET /agent/v1/prompts 拿租户合并后的清单（租户可覆盖系统默认、可禁用、可新增），
+// 本地只负责按同一套口径渲染 {{arg}}；两处文案不一致时以服务端为准。
 // =============================================================================
 
 export interface PromptArgDef {
@@ -11,6 +15,8 @@ export interface PromptArgDef {
   title?: string;
   description?: string;
   required?: boolean;
+  /** 服务端口径的默认值（MCP spec 没有 default 字段，渲染时在本地补齐） */
+  default?: string;
 }
 
 export interface PromptDef {
@@ -121,4 +127,51 @@ export function renderPrompt(name: string, args: Record<string, string>): string
   const missing = def.arguments.filter((x) => x.required && !String(args?.[x.name] ?? '').trim()).map((x) => x.name);
   if (missing.length) throw new Error(`提示词 ${name} 缺少必填参数：${missing.join(', ')}`);
   return def.render(args ?? {});
+}
+
+// ---------------------------------------------------------------------------
+// 服务端下发的提示词（P6.5）：正文是「已经合并过租户覆盖」的模板，这里只做渲染。
+// 渲染口径必须与 backend/src/agent/prompt.calc.ts 的 renderPromptContent 一致：
+//   模型传值 > 参数 default > 空串；required 且两者都没有 → 报可读错误。
+// ---------------------------------------------------------------------------
+
+export interface RemotePromptDef {
+  name: string;
+  title: string;
+  description: string;
+  arguments: PromptArgDef[];
+  content: string;
+}
+
+type PromptMeta = Pick<RemotePromptDef, 'name' | 'title' | 'description' | 'arguments'>;
+
+/** MCP prompts/list 的条目形状（spec 只有 name/description/required，title/default 不带） */
+export function toMcpPrompt(p: PromptMeta) {
+  return {
+    name: p.name,
+    title: p.title,
+    description: p.description,
+    arguments: (p.arguments ?? []).map((a) => ({
+      name: a.name,
+      description: a.description,
+      required: !!a.required,
+    })),
+  };
+}
+
+export function renderRemotePrompt(p: RemotePromptDef, args: Record<string, string>): string {
+  const values: Record<string, string> = {};
+  const missing: string[] = [];
+  for (const d of p.arguments ?? []) {
+    const v = String(args?.[d.name] ?? '').trim();
+    if (v) values[d.name] = v;
+    else if (d.default !== undefined && d.default !== '') values[d.name] = d.default;
+    else if (d.required) missing.push(d.name);
+    else values[d.name] = '';
+  }
+  if (missing.length) throw new Error(`提示词 ${p.name} 缺少必填参数：${missing.join(', ')}`);
+  return String(p.content ?? '').replace(
+    /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g,
+    (_all, k: string) => values[k] ?? '',
+  );
 }

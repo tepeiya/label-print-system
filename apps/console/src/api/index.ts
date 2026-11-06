@@ -363,4 +363,52 @@ export const apiApproveApproval = (id: number) => http.post(`/agents/approvals/$
 export const apiRejectApproval = (id: number, reason?: string) =>
   http.post(`/agents/approvals/${id}/reject`, reason ? { reason } : {});
 
+// ========== SaaS P6.5: Prompt 库 ==========
+// 契约见 backend/src/agent/prompts.controller.ts。
+// 列表是「系统默认 + 租户覆盖」的合并视图：source=system 表示还吃代码里的默认文案，
+// source=custom 表示该租户有自己的一行（overridden=true 表示覆盖了同名系统提示词）。
+// 删除租户行 = 回落系统默认（系统行本身没有删除接口）。
+
+export interface PromptArgument {
+  name: string;
+  title?: string;
+  description?: string;
+  required?: boolean;
+  /** 服务端渲染时补的默认值 */
+  default?: string;
+}
+
+export interface AgentPrompt {
+  name: string;
+  title: string;
+  description: string;
+  arguments: PromptArgument[];
+  content: string;
+  enabled: boolean;
+  sortOrder: number;
+  source: 'system' | 'custom';
+  overridden: boolean;
+  updatedAt: string | null;
+}
+
+export interface PromptPreview {
+  name: string;
+  title: string;
+  source: 'system' | 'custom';
+  text: string;
+  length: number;
+}
+
+export const apiListPrompts = (): Promise<AgentPrompt[]> => http.get('/agent-prompts');
+export const apiGetPrompt = (name: string): Promise<AgentPrompt> =>
+  http.get(`/agent-prompts/${encodeURIComponent(name)}`);
+export const apiSavePrompt = (
+  name: string,
+  data: { title: string; description?: string; content: string; arguments?: PromptArgument[]; enabled?: boolean; sortOrder?: number },
+): Promise<AgentPrompt> => http.put(`/agent-prompts/${encodeURIComponent(name)}`, data);
+export const apiDeletePrompt = (name: string): Promise<{ name: string; removed: boolean; revertedToSystem: boolean }> =>
+  http.delete(`/agent-prompts/${encodeURIComponent(name)}`);
+export const apiPreviewPrompt = (name: string, args: Record<string, string>): Promise<PromptPreview> =>
+  http.post(`/agent-prompts/${encodeURIComponent(name)}/preview`, { arguments: args });
+
 export default http;

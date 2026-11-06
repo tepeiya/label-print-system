@@ -36,8 +36,7 @@ export class AgentToken {
   @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
 }
 
-/** 高危操作审批单（§11.7.6：pending → approved(5 分钟一次性) → consumed / rejected / expired） */
-@Entity('agent_approvals')
+/** 高危操作审批单（§11.7.6：pending → approved(5 分钟一次性) → consumed / rejected / expired） */@Entity('agent_approvals')
 @Index('ix_agentappr_tenant_status', ['tenantId', 'status'])
 export class AgentApproval {
   @PrimaryGeneratedColumn() id: number;
@@ -75,4 +74,28 @@ export class ToolIdempotency {
   @Column({ type: 'jsonb', nullable: true }) result: Record<string, any> | null;
   @Column({ name: 'approval_id', type: 'bigint', nullable: true }) approvalId: number | null;
   @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
+}
+
+/**
+ * 租户级提示词覆盖 / 自定义（P6.5，docs/11 §11.7.5）。
+ * 系统默认在代码里（prompt.defaults.ts），本表只存「租户改过的或自己加的」：
+ * 同名行覆盖系统提示词，删除即回落默认；enabled=false 表示从 Agent 的 prompts/list 隐藏。
+ */
+@Entity('agent_prompts')
+@Index('ix_agentprompt_tenant', ['tenantId'])
+@Index('ux_agentprompt_tenant_name', ['tenantId', 'name'], { unique: true })
+export class AgentPrompt {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ name: 'tenant_id', type: 'bigint' }) tenantId: number;
+  @Column({ length: 64 }) name: string;
+  @Column({ length: 120 }) title: string;
+  @Column({ length: 500, default: '' }) description: string;
+  @Column('text') content: string;
+  @Column('jsonb', { default: () => "'[]'" }) arguments: any[];
+  @Column({ default: true }) enabled: boolean;
+  @Column({ name: 'sort_order', default: 100 }) sortOrder: number;
+  @Column({ name: 'created_by', type: 'bigint', nullable: true }) createdBy: number | null;
+  @Column({ name: 'updated_by', type: 'bigint', nullable: true }) updatedBy: number | null;
+  @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
+  @Column({ name: 'updated_at', type: 'timestamptz', default: () => 'now()' }) updatedAt: Date;
 }

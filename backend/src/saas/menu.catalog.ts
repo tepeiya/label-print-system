@@ -65,6 +65,8 @@ export const MENU_CATALOG: MenuNode[] = [
     children: [
       { key: 'agents', name: 'Agent 客户端', icon: 'Connection', path: '/agents', module: 'agent', permission: 'sys:agent:manage' },
       { key: 'agent-approvals', name: 'Agent 待确认', icon: 'CircleCheck', path: '/agent-approvals', module: 'agent', permission: 'sys:agent:approve' },
+      // Prompt 库（P6.5）：Agent 的「说话模板」，和客户端/Token 分开管理
+      { key: 'prompts', name: 'Prompt 库', icon: 'ChatDotRound', path: '/prompts', module: 'agent', permission: 'sys:prompt:manage' },
     ],
   },
   // 订阅页永远可见：租户被降级/停用时要能看到自己买了什么、怎么续费

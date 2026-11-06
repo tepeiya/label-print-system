@@ -62,9 +62,8 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '账单与用量', icon: 'Wallet', module: 'users', permission: 'sys:billing:read' },
       },
       // P5 Agent 接入（后端 AgentsController 类上 @RequireModule('agent')，写操作 sys:agent:manage）。
-      // ⚠️ backend/src/saas/menu.catalog.ts 里还没有这两条菜单，而下面的守卫要求
-      // path 出现在 /auth/me.menus 里才放行 —— 后端补目录前，这两页只能靠直接敲 URL 进来，
-      // 且会被守卫跳 /blocked。前端不改后端，先按现有约定把路由声明好。
+      // 菜单目录在 backend/src/saas/menu.catalog.ts 的 agent 分组，守卫要求 path
+      // 出现在 /auth/me.menus 里才放行（两边新增条目时要一起改）。
       {
         path: 'agents',
         component: () => import('@/views/Agents.vue'),
@@ -78,6 +77,13 @@ const routes: RouteRecordRaw[] = [
         path: 'agent-approvals',
         component: () => import('@/views/AgentApprovals.vue'),
         meta: { title: 'Agent 待确认', icon: 'CircleCheck', module: 'agent', permission: 'sys:agent:approve' },
+      },
+      // P6.5 Prompt 库：与 backend/src/saas/menu.catalog.ts 的 '/prompts' 对齐。
+      // 与 Agent 客户端分开：Token 是接入运维，Prompt 是「Agent 怎么说话」的运营配置。
+      {
+        path: 'prompts',
+        component: () => import('@/views/PromptLibrary.vue'),
+        meta: { title: 'Prompt 库', icon: 'ChatDotRound', module: 'agent', permission: 'sys:prompt:manage' },
       },
       // 未订阅 / 权限不足的统一落地页（§11.10「模块未订阅」）
       {

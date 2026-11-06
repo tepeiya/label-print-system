@@ -5,7 +5,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import {
-  AgentApproval, AgentClient, AgentToken, ToolIdempotency,
+  AgentApproval, AgentClient, AgentPrompt, AgentToken, ToolIdempotency,
 } from './agent.entity';
 import { Tenant } from '../entities/tenant.entity';
 import { Template } from '../entities/template.entity';
@@ -15,6 +15,8 @@ import { ToolsService } from './tools.service';
 import { ApprovalService } from './approval.service';
 import { IdempotencyService } from './idempotency.service';
 import { AgentRateService } from './agent-rate.service';
+import { PromptsService } from './prompts.service';
+import { PromptsController } from './prompts.controller';
 import { AgentsController } from './agents.controller';
 import { AgentV1Controller } from './agent-v1.controller';
 import { InventoryModule } from '../inventory/inventory.module';
@@ -27,15 +29,15 @@ import { PrintModule } from '../print/print.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([
-      AgentClient, AgentToken, AgentApproval, ToolIdempotency, Tenant, Template,
+      AgentClient, AgentToken, AgentApproval, ToolIdempotency, AgentPrompt, Tenant, Template,
     ]),
     InventoryModule, SaasModule, BillingModule, AuditModule, TemplateModule, PrintModule,
   ],
   providers: [
     AgentService, AgentTokenGuard, ToolsService,
-    ApprovalService, IdempotencyService, AgentRateService,
+    ApprovalService, IdempotencyService, AgentRateService, PromptsService,
   ],
-  controllers: [AgentsController, AgentV1Controller],
-  exports: [AgentService],
+  controllers: [AgentsController, AgentV1Controller, PromptsController],
+  exports: [AgentService, PromptsService],
 })
 export class AgentModule {}

@@ -14,7 +14,9 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { AgentApiClient, AgentApiError, AgentToolDto } from './client/agent-api.js';
 import { listVisibleResources, readResourceUri } from './resources.js';
-import { PROMPTS, renderPrompt } from './prompts.js';
+import {
+  PROMPTS, RemotePromptDef, renderPrompt, renderRemotePrompt, toMcpPrompt,
+} from './prompts.js';
 
 export interface LabelFlowServerOptions {
   /** 已取到的工具清单；不传则在第一次 tools/list 时向后端要（HTTP 模式会话建立时不阻塞） */
@@ -104,19 +106,58 @@ export function createLabelFlowServer(api: AgentApiClient, opts: LabelFlowServer
     return { contents: [{ uri: item.uri, mimeType: item.mimeType, text: item.text }] };
   });
 
-  // ---------------- prompts（§11.7.5 三个开箱即用场景） ----------------
-  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
-    prompts: PROMPTS.map((p) => ({
-      name: p.name,
-      title: p.title,
-      description: p.description,
-      arguments: p.arguments,
-    })),
-  }));
+  // ---------------- prompts（§11.7.5；P6.5 改为服务端下发 + 本地兜底） ----------------
+  // 服务端清单 = 系统默认 + 租户覆盖（已过滤 enabled）。60s TTL：租户在后台改完提示词，
+  // 正在跑的 MCP 会话最迟一分钟生效，不需要重启客户端。
+  // 拉取失败时用本文件 PROMPTS 兜底，并继续返回「上次成功」的缓存（没有就静态），
+  // 让「后端抖一下」不至于让模型失去全部提示词。
+  let promptCache: RemotePromptDef[] | null = null;
+  let promptCacheAt = 0;
+  let promptLoading: Promise<RemotePromptDef[] | null> | null = null;
+  const PROMPT_TTL_MS = 60_000;
+  const loadPrompts = async (): Promise<RemotePromptDef[] | null> => {
+    if (promptCache && Date.now() - promptCacheAt < PROMPT_TTL_MS) return promptCache;
+    if (!promptLoading) {
+      promptLoading = api.listPrompts()
+        .then((r) => {
+          promptCache = ((r.data ?? []) as RemotePromptDef[]).filter((p) => (p as any).enabled !== false);
+          promptCacheAt = Date.now();
+          return promptCache;
+        })
+        .catch((e) => {
+          log('prompts 拉取失败，回落内置文案：', (e as Error)?.message ?? e);
+          return promptCache;
+        })
+        .finally(() => { promptLoading = null; });
+    }
+    return promptLoading;
+  };
+
+  server.setRequestHandler(ListPromptsRequestSchema, async () => {
+    const remote = await loadPrompts();
+    if (remote) return { prompts: remote.map(toMcpPrompt) };
+    return { prompts: PROMPTS.map(toMcpPrompt) };
+  });
 
   server.setRequestHandler(GetPromptRequestSchema, async (req) => {
     const name = String(req.params?.name ?? '');
     const args = (req.params?.arguments ?? {}) as Record<string, string>;
+    const remote = await loadPrompts();
+    if (remote) {
+      const def = remote.find((p) => p.name === name);
+      if (!def) throw new McpError(ErrorCode.InvalidParams, `未知提示词：${name}`);
+      let text: string;
+      try {
+        text = renderRemotePrompt(def, args);
+      } catch (e) {
+        throw new McpError(ErrorCode.InvalidParams, (e as Error).message);
+      }
+      return {
+        description: def.description,
+        messages: [{ role: 'user', content: { type: 'text', text } }],
+      };
+    }
+    // 后端不可达：用本地静态副本兜底（渲染函数自带默认值，如 days=30）
     let text: string;
     try {
       text = renderPrompt(name, args);
