@@ -5,22 +5,26 @@
 #       L Agent 只读（P4） · M Agent 写工具/幂等/审批/限流/审计/HTTP（P5）
 #       N RLS 兜底 + 租户数据导出/硬删（P6.1/P6.3）+ Agent 前端入口（P5.5）
 #       O 白标（P6.4/D6）：品牌清洗 + 域名 TXT 校验 + Host→租户解析 + 平台强校验
+#       P 独立库租户（P6.2/D2）：数据源注册/结构自检/按库导出/注销闸门（真连库部分需 D2_DSN）
 # P6 段要真删数据，用的是自建的靶租户（${T_CODE}p6 / ${T_CODE}p7），段尾自清理，不碰 A/B/M 的租户。
 #
 # 前提：
 #   1) PG 已按顺序建表：docs/03-database.sql → seed.sql → saas_p0.sql → saas_p0_roles.sql
 #      → saas_p2_platform.sql → saas_p3_billing.sql → saas_p4_agent.sql → saas_p5_agent_tools.sql
-#      → saas_p6_rls.sql → saas_p6_tenant_data.sql → saas_p6_branding.sql
-      （N 段两条都必需，缺前者 N.1 判失败，缺后者 N.4 直接 500；O 段缺 saas_p6_branding.sql 会 O.2 直接 403/500）
+#      → saas_p6_rls.sql → saas_p6_tenant_data.sql → saas_p6_branding.sql → saas_p6_dedicated.sql
+#      （N 段两条都必需，缺前者 N.1 判失败，缺后者 N.4 直接 500；O 段缺 saas_p6_branding.sql 会 O.2 直接 403/500；
+#        P 段缺 saas_p6_dedicated.sql 会 P.1 判失败）
 #   2) 后端在跑：npx tsc -p tsconfig.json && node -r reflect-metadata dist/src/main.js
 #      想要 N.6 断言 rlsActive=true，后端必须带 DB_RLS_USER/DB_RLS_PASSWORD 启动（见 docs/10 §10.22.4）
 #      O 段的域名校验走 dev 逃生口，后端还要带 BRANDING_DEV_VERIFY=1（且 NODE_ENV≠production）
+#      P 段真连独立库要额外传 D2_DSN（指向一个已跑完 docs/03 + saas_*.sql 的库），不传则只跑控制面校验
 #   3) 默认租户 admin/admin123 可登录（首次启动由 main.ts 种子写入）
 #
 # 用法：
 #   bash backend/scripts/p0-acceptance.sh
 #   BASE=http://host:3200/api/v1 T_CODE=p0acc bash backend/scripts/p0-acceptance.sh
 #   PSQL="psql -h ... -p 5433 -U labelflow -d labelflow" 可覆盖库连接
+#   D2_DSN='postgres://user:pw@host:5432/db' 可让 P 段真连一个独立库（省略则 SKIP 该项）
 #
 # 每次跑用独立租户（BASIC + PRO 各一个），只增不改已有数据；重跑换 T_CODE 即可。
 # =============================================================================
@@ -909,6 +913,175 @@ check "O.45 viewer 菜单不含 /branding" "$HASV" "False"
 # 段尾清理：域名表整段清空（重跑不撞唯一约束），品牌配置留着无害
 ps "delete from tenant_domains where tenant_id in ($ID, $ID2)" >/dev/null
 echo "  （白标靶域名 $ID/$ID2 已清理；tenants.branding 保留不影响后续段）"
+
+# ---------------------------------------------------------------------------
+# P. P6.2 独立库租户（D2）：数据源注册 / 结构自检 / 按库导出 / 注销闸门
+# 依赖：backend/scripts/saas_p6_dedicated.sql（tenants.data_source_key + 2 CHECK + 1 唯一索引）
+# 控制面（校验/注册拒绝/provision 拒绝/未注册 key 的 503）总是跑；
+# 真连库的部分需要 D2_DSN 指向一个**已跑完 docs/03 + backend/scripts/saas_*.sql** 的库，否则 SKIP。
+#   D2_DSN='postgres://user:pw@127.0.0.1:5432/labelflow_d2' bash backend/scripts/p0-acceptance.sh
+# 注意：D2_DSN 绝不能指向共享库本身，否则「路由到独立库」等于没路由。
+echo
+echo "-- P. P6.2 独立库租户（数据源注册 / 按库导出 / 注销）"
+
+D2_DSN="${D2_DSN:-}"
+D2_KEY="${D2_KEY:-${T_CODE}d2}"
+P8_CODE="${T_CODE}p8"
+
+# P.1 DDL 就位（列 + 2 约束 + 唯一索引）
+PCOL=$(ps "select count(*) from information_schema.columns where table_schema='public' and table_name='tenants' and column_name='data_source_key'")
+PCON=$(ps "select count(*) from pg_constraint where conname in ('tenants_data_source_key_shape','tenants_data_source_key_format')")
+PIDX=$(ps "select count(*) from pg_indexes where schemaname='public' and indexname='ux_tenants_data_source_key'")
+check "P.1 saas_p6_dedicated.sql 已应用（列 1 / 约束 2 / 唯一索引 1）" "$PCOL/$PCON/$PIDX" "1/2/1"
+
+# P.2/P.3 门禁：只有平台运营身份能看/管数据源
+check "P.2 平台 GET /platform/datasources" "$(api GET /platform/datasources "$PT")" "200"
+check "P.3 租户 admin 访问数据源清单 → 403" "$(api GET /platform/datasources "$PAT")" "403"
+
+# P.4~P.6 入参闸门（不碰网络）
+check "P.4 key=default 保留给共享库 → 400" \
+  "$(api POST /platform/datasources "$PT" '{"key":"default","url":"postgres://u:p@127.0.0.1:5432/x"}')" "400"
+check "P.5 非 postgres 协议 → 400" \
+  "$(api POST /platform/datasources "$PT" '{"key":"p6bad","url":"mysql://h/db"}')" "400"
+check "P.6 缺 url → 400" "$(api POST /platform/datasources "$PT" '{"key":"p6bad"}')" "400"
+
+# P.7/P.8 先连库、再自检、最后才落表：连不上必须 503 且不在注册表里
+c=$(api POST /platform/datasources "$PT" '{"key":"p6d2-dead","url":"postgres://u:p@127.0.0.1:1/dead"}')
+check "P.7 连不上的 DSN → 503（不吞成注册成功）" "$c" "503"
+api GET /platform/datasources "$PT" >/dev/null
+DEAD=$(python3 -c "import json,sys; d=json.load(open('$TMP')); print(any(i.get('key')=='p6d2-dead' for i in d.get('data',{}).get('items',[])))" 2>/dev/null || echo err)
+check "P.8 失败的数据源没进注册表" "$DEAD" "False"
+
+# P.9/P.10 provision 拒绝：编排没做时「建了租户却读共享库」比不做更糟
+c=$(api POST /platform/tenants "$PT" "{\"code\":\"${P8_CODE}x\",\"name\":\"P6 D2 拒绝靶\",\"type\":\"dedicated\",\"dataSourceKey\":\"$D2_KEY\",\"adminUsername\":\"${P8_CODE}x_admin\",\"adminPassword\":\"$T_PASS\"}")
+check "P.9 provision type=dedicated → 400（开通编排未实现）" "$c" "400"
+check "P.10 共享租户带 dataSourceKey → 400" \
+  "$(api POST /platform/tenants "$PT" "{\"code\":\"${P8_CODE}y\",\"name\":\"P6 D2 拒绝靶\",\"dataSourceKey\":\"$D2_KEY\",\"adminUsername\":\"${P8_CODE}y_admin\",\"adminPassword\":\"$T_PASS\"}")" "400"
+
+# P.11/P.12 引用未注册 key：导出必须 503，绝不回退共享库
+api POST /platform/tenants "$PT" "{\"code\":\"$P8_CODE\",\"name\":\"P6 D2 靶\",\"planCode\":\"BASIC\",\"adminUsername\":\"${P8_CODE}_admin\",\"adminPassword\":\"$T_PASS\"}" >/dev/null
+ID8=$(jget data tenantId)
+[[ -n "$ID8" ]] && ok "P.11 建靶租户 $P8_CODE（id=$ID8）" || no "P.11 建靶租户" "$(body | head -c 200)"
+ps "update tenants set type='dedicated', data_source_key='p6d2-ghost' where id=$ID8" >/dev/null
+c=$(api POST "/platform/tenants/$ID8/export" "$PT")
+check "P.12 未注册 key 的租户导出 → 503（不回退共享库）" "$c" "503"
+ps "update tenants set type='shared', data_source_key=null where id=$ID8" >/dev/null
+
+if [[ -z "$D2_DSN" ]]; then
+  echo "  [SKIP] P.13+ 需要 D2_DSN（指向已跑完 DDL 的独立库）；以上控制面校验已全部执行"
+else
+  # psd：在独立库上执行（DSN 是 URI，psql 直接吃；stderr 吞掉，失败由调用方判空）
+  psd() { psql "$D2_DSN" -tA -F'|' -c "$1" 2>/dev/null | tr -d '\n'; }
+
+  # P.13 目标库结构自检（脚本侧先确认 DSN 可用，别把环境问题记成产品 bug）
+  D2T=$(psd "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r'")
+  if [[ "${D2T:-0}" -lt 6 ]]; then
+    no "P.13 D2_DSN 目标库不像初始化过的库（public 下 ${D2T:-0} 张表）" \
+       "先在该库跑 docs/03-database.sql + backend/scripts/saas_*.sql；不要指向共享库"
+  else
+    ok "P.13 D2_DSN 目标库就绪（$D2T 张表）"
+
+    # 幂等：清掉上一轮可能在独立库/共享库留下的靶数据
+    psd "delete from tenant_backups where tenant_id=$ID8" >/dev/null
+    psd "delete from templates where tenant_id=$ID8" >/dev/null
+    psd "delete from audit_logs where tenant_id=$ID8" >/dev/null
+    psd "delete from tenants where id=$ID8 or code='$P8_CODE'" >/dev/null
+    ps "delete from tenant_backups where tenant_id=$ID8" >/dev/null
+    ps "delete from templates where tenant_id=$ID8" >/dev/null
+
+    # P.14 注册（成功说明：连得上 + 必备表齐全）
+    c=$(api POST /platform/datasources "$PT" "{\"key\":\"$D2_KEY\",\"url\":\"$D2_DSN\"}")
+    D2H=$(jget data host); D2DB=$(jget data database); MASK8=$(jget data maskedDsn)
+    [[ ( "$c" == 200 || "$c" == 201 ) && -n "$D2DB" ]] \
+      && ok "P.14 注册独立库 $D2_KEY → $D2H/$D2DB" || no "P.14 注册独立库" "HTTP $c $(body | head -c 240)"
+    case "$MASK8" in
+      postgres://*'***'@*) ok "P.15 响应里只有脱敏 DSN（$MASK8，密码不出进程）" ;;
+      *) no "P.15 maskedDsn 形状不对" "$MASK8" ;;
+    esac
+    check "P.16 注册已写平台审计" \
+      "$(ps "select count(*)>=1 from platform_audit_logs where action='platform.datasource.register' and detail->>'key'='$D2_KEY'")" "t"
+    api GET /platform/datasources "$PT" >/dev/null
+    LSRC=$(python3 -c "import json,sys; d=json.load(open('$TMP')); print(next((i.get('source') for i in d.get('data',{}).get('items',[]) if i.get('key')=='$D2_KEY'),''))" 2>/dev/null || echo err)
+    check "P.17 诊断面板列出该 key（source=api）" "$LSRC" "api"
+
+    # P.18 造两边的靶数据：独立库放「只应出现在独立库」的模板，共享库放「绝不该被导出」的模板
+    psd "insert into tenants(id, code, name, status, settings, type, plan_id, seat_limit, branding, data_source_key, created_at, updated_at)
+         values ($ID8, '$P8_CODE', 'P6 D2 靶', 1, '{}', 'dedicated', null, 5, '{}', '$D2_KEY', now(), now())" >/dev/null
+    psd "select setval('tenants_id_seq', greatest((select coalesce(max(id),1) from tenants), $ID8))" >/dev/null
+    psd "insert into templates(tenant_id, name, content) values ($ID8, 'p6d2-dedicated-only', '{\"page\":{\"width\":100,\"height\":60},\"elements\":[]}')" >/dev/null
+    ps "insert into templates(tenant_id, name, content) values ($ID8, 'p6d2-shared-only', '{\"page\":{\"width\":100,\"height\":60},\"elements\":[]}')" >/dev/null
+    ps "update tenants set type='dedicated', data_source_key='$D2_KEY' where id=$ID8" >/dev/null
+    check "P.18 两库各写入一条靶模板、租户已指向 $D2_KEY" \
+      "$(psd "select count(*) from templates where tenant_id=$ID8 and name='p6d2-dedicated-only'")/$(ps "select count(*) from templates where tenant_id=$ID8 and name='p6d2-shared-only'")" "1/1"
+
+    # P.19/P.20 导出：必须跑在独立库，且摘要如实说明隔离来自库边界
+    c=$(api POST "/platform/tenants/$ID8/export" "$PT")
+    BK8=$(jget data backupId); K8=$(jget data dataSourceKey); ISO8=$(jget data isolation); RLS8=$(jget data rlsActive)
+    [[ ( "$c" == 200 || "$c" == 201 ) && -n "$BK8" ]] && ok "P.19 独立库租户导出成功（backupId=$BK8）" || no "P.19 导出失败" "HTTP $c $(body | head -c 240)"
+    check "P.20 摘要标明 dataSourceKey / isolation=dedicated-db / rlsActive=false" "$K8/$ISO8/$RLS8" "$D2_KEY/dedicated-db/False"
+
+    # P.21 下载解包：内容必须来自独立库，绝不能混入共享库同 tenant_id 的行
+    GZ8=/tmp/p6_d2_$$.json.gz
+    curl -s --max-time 60 -o "$GZ8" -w '%{http_code}' -H "Authorization: Bearer $PT" \
+      "$BASE/platform/tenants/$ID8/exports/$BK8/download" > /tmp/p6_d2_$$.code
+    DLC8=$(cat /tmp/p6_d2_$$.code)
+    if [[ "$DLC8" == "200" ]] && gzip -dc "$GZ8" > /tmp/p6_d2_$$.json 2>/dev/null; then
+      R8=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); names=[t.get("name") for t in d["tables"].get("templates",[])]; print("%s|%s|%d|%d" % (d.get("dataSourceKey"), d.get("isolation"), "p6d2-dedicated-only" in names, "p6d2-shared-only" in names))' /tmp/p6_d2_$$.json 2>/dev/null || echo err)
+      check "P.21 包内容来自独立库（含 dedicated-only、0 条 shared-only，schema 头带 dataSourceKey）" \
+        "$R8" "$D2_KEY|dedicated-db|1|0"
+    else
+      no "P.21 下载/解包失败" "HTTP=$DLC8"
+    fi
+    check "P.22 导出件确实落在独立库（共享库 tenant_backups 无该租户记录）" \
+      "$(ps "select count(*) from tenant_backups where tenant_id=$ID8")/$(psd "select count(*) from tenant_backups where tenant_id=$ID8 and kind='export'")" "0/1"
+
+    # P.23 清单按库路由
+    api GET "/platform/tenants/$ID8/exports" "$PT" >/dev/null
+    LC8=$(python3 -c "import json,sys; d=json.load(open('$TMP')).get('data',{}); print('%s/%d' % (d.get('dataSourceKey'), len(d.get('items',[]))))" 2>/dev/null || echo err)
+    check "P.23 导出清单读独立库（dataSourceKey + 1 条）" "$LC8" "$D2_KEY/1"
+
+    # P.24/P.25 注销闸门：在用中拒绝；状态面板能看到使用方
+    c=$(api DELETE "/platform/datasources/$D2_KEY" "$PT")
+    check "P.24 仍有租户引用时注销 → 400（先迁走再删，避免线上 503）" "$c" "400"
+    api GET /platform/datasources "$PT" >/dev/null
+    USE8=$(python3 -c "import json,sys; d=json.load(open('$TMP')).get('data',{}); i=next((x for x in d.get('items',[]) if x.get('key')=='$D2_KEY'),{}); print('%s/%s' % (i.get('tenantsUsing'), '$P8_CODE' in (i.get('tenantCodes') or [])))" 2>/dev/null || echo err)
+    check "P.25 诊断面板显示 tenantsUsing=1 且列出租户 code" "$USE8" "1/True"
+
+    # P.26/P.27 库层约束：一个 key 一租户；dedicated 必须带 key（代码写错也拦得住）
+    if $PSQL -c "update tenants set type='dedicated', data_source_key='$D2_KEY' where id=$ID2" >/dev/null 2>&1; then
+      no "P.26 同一 key 绑第二个租户应被唯一索引拦下" "竟然更新成功，检查 ux_tenants_data_source_key"
+      ps "update tenants set type='shared', data_source_key=null where id=$ID2" >/dev/null
+    else
+      ok "P.26 一个 key 只服务一个租户（部分唯一索引拦住第二个）"
+    fi
+    if $PSQL -c "update tenants set type='dedicated', data_source_key=null where id=$ID8" >/dev/null 2>&1; then
+      no "P.27 dedicated 且 key 为空应被 CHECK 拦下" "竟然更新成功，检查 tenants_data_source_key_shape"
+    else
+      ok "P.27 dedicated 必须带非 default 的 key（CHECK 拦截）"
+    fi
+
+    # P.28/P.29 迁走 → 注销成功 → 状态与审计
+    ps "update tenants set type='shared', data_source_key=null where id=$ID8" >/dev/null
+    c=$(api DELETE "/platform/datasources/$D2_KEY" "$PT")
+    [[ ( "$c" == 200 || "$c" == 201 ) ]] && ok "P.28 租户迁走后注销 → $c" || no "P.28 注销失败" "HTTP $c $(body | head -c 200)"
+    check "P.29 注销已写平台审计" \
+      "$(ps "select count(*)>=1 from platform_audit_logs where action='platform.datasource.unregister' and detail->>'key'='$D2_KEY'")" "t"
+    api GET /platform/datasources "$PT" >/dev/null
+    GONE=$(python3 -c "import json,sys; d=json.load(open('$TMP')); print(any(i.get('key')=='$D2_KEY' for i in d.get('data',{}).get('items',[])))" 2>/dev/null || echo err)
+    check "P.30 注销后不再出现在注册表" "$GONE" "False"
+
+    # 段尾清理：两边靶数据都删（独立库用 psd）
+    psd "delete from tenant_backups where tenant_id=$ID8" >/dev/null
+    psd "delete from templates where tenant_id=$ID8" >/dev/null
+    psd "delete from audit_logs where tenant_id=$ID8" >/dev/null
+    psd "delete from tenants where id=$ID8" >/dev/null
+    ps "delete from tenant_backups where tenant_id=$ID8" >/dev/null
+    ps "delete from templates where tenant_id=$ID8" >/dev/null
+    ps "delete from tenants where id=$ID8" >/dev/null
+    rm -f "$GZ8" /tmp/p6_d2_$$.code /tmp/p6_d2_$$.json
+    echo "  （D2 靶租户 $ID8 在共享库/独立库的残留已清理；数据源 $D2_KEY 已注销）"
+  fi
+fi
 
 echo
 echo "== 通过 $pass / 失败 $fail"

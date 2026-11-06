@@ -116,7 +116,7 @@ export class BrandingService {
   }
 
   /** 全量覆盖式写入（前端每次提交完整表单）；返回清洗后的实际落库值 + 被丢弃的键 */
-  async setBranding(tenantId: number, input: any, actor?: { id?: number; username?: string }) {
+  async setBranding(tenantId: number, input: any, _actor?: { id?: number; username?: string }) {
     const t = await this.mustTenant(tenantId);
     const { branding, dropped, errors } = sanitizeBranding(input);
     if (errors.length) throw new BadRequestException({ message: errors[0], errors });

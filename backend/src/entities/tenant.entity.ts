@@ -11,6 +11,12 @@ export class Tenant {
   // ---- SaaS P0 扩展（docs/11 §11.5.2；DDL 见 backend/scripts/saas_p0_roles.sql）----
   // status 仍是 SMALLINT 开关（1 启用 / 0 禁用），订阅生命周期放 subscriptions.status
   @Column({ name: 'type', type: 'varchar', length: 20, default: 'shared' }) type: 'shared' | 'dedicated';
+  /**
+   * P6.2 D2：独立库标识（shared 租户为 null）。**只存标识，不存 DSN**——
+   * 连接串只在进程内存（env DB_DEDICATED_DSNS 或 POST /platform/datasources），
+   * 库被拖走也拿不到其它租户的数据库密码。
+   */
+  @Column({ name: 'data_source_key', type: 'varchar', length: 64, nullable: true }) dataSourceKey: string | null;
   // 显式 type 是必须的：TS 联合类型（number | null）反射出来是 Object，
   // TypeORM 猜不到列类型会在启动时报 DataTypeNotSupportedError
   @Column({ name: 'plan_id', type: 'bigint', nullable: true }) planId: number | null;

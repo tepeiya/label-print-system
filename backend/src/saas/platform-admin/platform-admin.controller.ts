@@ -4,6 +4,7 @@ import { Public } from '../../common/public.decorator';
 import { PlatformJwtGuard } from './platform-jwt.guard';
 import { PlatformAdminService } from './platform-admin.service';
 import { TenantDataService } from './tenant-data.service';
+import { DedicatedDataSourceService } from './dedicated.service';
 import { PlatformAuditService } from './platform-audit.service';
 import { BrandingService } from '../branding/branding.service';
 import { AddModuleDto, CreateInvoiceDto, CreatePaymentDto, FeatureFlagDto, IssueInvoiceDto, PlatformLoginDto, ProvisionTenantDto, UpsertPlanDto, UpsertQuotaDto } from '../dto/platform.dto';
@@ -27,6 +28,7 @@ export class PlatformAdminController {
     private subSvc: SubscriptionService,
     private modSvc: ModulesService,
     private dataSvc: TenantDataService,
+    private dsSvc: DedicatedDataSourceService,
     private brandingSvc: BrandingService,
     private platformAudit: PlatformAuditService,
   ) {}
@@ -214,6 +216,28 @@ export class PlatformAdminController {
   purgeTenant(@Param('id') id: string, @Request() req: any, @Body() body: { confirm?: string; force?: boolean }) {
     if (!/^\d+$/.test(String(id))) throw new BadRequestException('tenant id 必须是数字');
     return this.dataSvc.purgeTenant(+id, req.platformUser, body ?? {});
+  }
+
+  // ---------- 独立库数据源（P6.2 D2）：注册 / 诊断 / 注销 ----------
+
+  /** 已注册独立库（脱敏）+ env 错误 + 被引用但未注册的 key（这类租户查询会 503） */
+  @Get('datasources')
+  listDataSources() { return this.dsSvc.status(); }
+
+  /**
+   * 注册/更新独立库连接。会先连库 + 自检 public 下的必备表，不合格直接拒（不吞成「注册成功」）。
+   * ⚠️ DSN 只在进程内存；审计只记脱敏形式。
+   */
+  @Post('datasources')
+  registerDataSource(@Body() body: { key?: string; url?: string }, @Request() req: any) {
+    if (!body?.key || !body?.url) throw new BadRequestException('key 与 url 必填');
+    return this.dsSvc.register(body.key, body.url, req.platformUser);
+  }
+
+  /** 注销；仍有租户引用该 key 时 400（先迁走再注销，避免线上 503） */
+  @Delete('datasources/:key')
+  unregisterDataSource(@Param('key') key: string, @Request() req: any) {
+    return this.dsSvc.unregister(key, req.platformUser);
   }
 
   // ---------- 白标（D6）：平台侧强制校验域名 ----------

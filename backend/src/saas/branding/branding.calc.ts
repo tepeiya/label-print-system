@@ -110,6 +110,7 @@ export function sanitizeBranding(input: any): BrandingSanitizeResult {
       branding[key] = raw;
     } else {
       // appName / loginNotice：纯文本，限长 + 去尖括号，前端一律用文本节点渲染
+      // eslint-disable-next-line no-control-regex -- 就是要删掉 C0 控制字符（换行/制表/空字节）
       const text = raw.replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 200);
       if (!text) { errors.push(`${key} 不能为空`); continue; }
       branding[key] = text;

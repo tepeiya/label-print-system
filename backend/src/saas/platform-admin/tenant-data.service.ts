@@ -42,10 +42,25 @@ interface TablePlan {
 @Injectable()
 export class TenantDataService {
   private readonly logger = new Logger(TenantDataService.name);
-  /** 表结构基本不变，进程内缓存一次即可；平台重启或迁移后自动重取 */
-  private planCache: TablePlan | null = null;
+  /** 表结构基本不变；**按库**缓存（独立库可能是另一套迁移进度，不能混用清单） */
+  private readonly planCache = new Map<string, TablePlan>();
 
   constructor(private readonly tdsm: TenantDataSourceManager, private readonly audit: PlatformAuditService) {}
+
+  private poolFor(key: string) { return this.tdsm.get({ dataSourceKey: key }); }
+
+  /** 租户的库归属：只看目录库（共享库）的 tenants.data_source_key，空=default */
+  private async routingKey(tenantId: number): Promise<string> {
+    const rows: any[] = await this.poolFor('default').query(
+      'select data_source_key from public.tenants where id = $1', [tenantId]);
+    if (!rows.length) throw new NotFoundException('租户不存在');
+    return (rows[0].data_source_key as string) || 'default';
+  }
+
+  /** 独立库租户只钉库，不切 RLS 连接（隔离来自库边界）；共享租户照旧走 RLS 角色 */
+  private scopeOpts(key: string) {
+    return key === 'default' ? {} : { dataSource: this.poolFor(key) };
+  }
 
   /**
    * 表清单从 **pg_catalog** 现取（进程内缓存一次），并且用**主连接**取。两个都是踩出来的：
@@ -56,9 +71,10 @@ export class TenantDataService {
    * ② 结构元数据不是租户数据，本来就该走平台侧连接，不该带 `app.tenant_id` GUC。
    * 副作用是「表没授权给运行角色」时数据读取会**直接 permission denied 炸出来**，而不是被静默跳过——这正是想要的行为。
    */
-  private async plan(): Promise<TablePlan> {
-    if (this.planCache) return this.planCache;
-    const pool = this.tdsm.get({ dataSourceKey: 'default' });
+  private async plan(key = 'default'): Promise<TablePlan> {
+    const cached = this.planCache.get(key);
+    if (cached) return cached;
+    const pool = this.poolFor(key);
     const tidRows: any[] = await pool.query(`
       select c.relname as t
       from pg_class c
@@ -88,36 +104,55 @@ export class TenantDataService {
     const multi = fkRows.filter((r) => r.ncol > 1).map((r) => `${r.child}(${r.ncol} 列)`);
     if (multi.length) this.logger.warn(`[plan] 跳过复合外键的家生子（只支持单列 FK）：${multi.join('、')}`);
 
-    this.planCache = { tenantTables, childTables: children, edges: fkRows.map((r) => ({ child: r.child, parent: r.parent })) };
-    this.logger.log(`租户数据表清单：${tenantTables.length} 张带 tenant_id + ${children.length} 张家生子（${children.map((c) => c.table).join('、') || '无'}）`);
-    return this.planCache;
+    const plan: TablePlan = {
+      tenantTables,
+      childTables: children,
+      edges: fkRows.map((r) => ({ child: r.child, parent: r.parent })),
+    };
+    this.planCache.set(key, plan);
+    this.logger.log(`租户数据表清单[${key}]：${tenantTables.length} 张带 tenant_id + ${children.length} 张家生子（${children.map((c) => c.table).join('、') || '无'}）`);
+    return plan;
   }
 
-  private async mustTenant(em: EntityManager, id: number): Promise<TenantRow> {
+  private async mustTenant(em: EntityManager, id: number, dbLabel = ''): Promise<TenantRow> {
     const rows: any[] = await em.query('select id, code, name, canceled_at from public.tenants where id = $1', [id]);
-    if (!rows.length) throw new NotFoundException('租户不存在');
+    if (!rows.length) {
+      throw new NotFoundException(dbLabel
+        ? `租户 ${id} 不存在于 ${dbLabel}（数据未迁移？检查 tenants.data_source_key 与目标库内容）`
+        : '租户不存在');
+    }
     return { id: Number(rows[0].id), code: rows[0].code, name: rows[0].name, canceledAt: rows[0].canceled_at ?? null };
   }
 
   /** D12 保留期看板：已退订租户 + 还剩几天 + 是否进入 7 天提醒窗口 */
   async retention(now = new Date()) {
-    // 平台级跨租户查询：走主连接（owner 或 BYPASSRLS 角色），不能带 app.tenant_id
-    const rows: any[] = await this.tdsm.get({ dataSourceKey: 'default' }).query(`
-      select t.id, t.code, t.name, t.canceled_at,
-             (select count(*) from public.users u where u.tenant_id = t.id)::int as users,
-             (select count(*) from public.templates tp where tp.tenant_id = t.id)::int as templates
+    // 平台级跨租户查询：目录库走主连接（owner 或 BYPASSRLS 角色），不能带 app.tenant_id。
+    // 计数按租户所属库分开取：独立库的 users/templates 不在共享库里，统一查主库会一律显示 0。
+    const rows: any[] = await this.poolFor('default').query(`
+      select t.id, t.code, t.name, t.canceled_at, t.data_source_key
       from public.tenants t where t.canceled_at is not null order by t.canceled_at asc`);
-    return {
-      retentionDays: RETENTION_DAYS,
-      items: rows.map((r) => {
-        const ret = retentionOf(r.canceled_at, now);
-        return {
-          tenantId: Number(r.id), code: r.code, name: r.name, canceledAt: r.canceled_at,
-          hardDeleteAt: ret.hardDeleteAt, daysLeft: ret.daysLeft, due: ret.due, warn: ret.warn,
-          users: r.users, templates: r.templates,
-        };
-      }),
-    };
+    const items = await Promise.all(rows.map(async (r) => {
+      const ret = retentionOf(r.canceled_at, now);
+      const key = (r.data_source_key as string) || 'default';
+      let users: number | null = null;
+      let templates: number | null = null;
+      let countsAvailable = true;
+      try {
+        const c: any[] = await this.poolFor(key).query(
+          `select (select count(*) from public.users u where u.tenant_id = $1)::int as users,
+                  (select count(*) from public.templates tp where tp.tenant_id = $1)::int as templates`, [r.id]);
+        users = Number(c[0]?.users ?? 0);
+        templates = Number(c[0]?.templates ?? 0);
+      } catch {
+        countsAvailable = false;        // 库连不上不要拖垮整块看板，明确标出来
+      }
+      return {
+        tenantId: Number(r.id), code: r.code, name: r.name, canceledAt: r.canceled_at,
+        hardDeleteAt: ret.hardDeleteAt, daysLeft: ret.daysLeft, due: ret.due, warn: ret.warn,
+        users, templates, countsAvailable, dataSourceKey: key,
+      };
+    }));
+    return { retentionDays: RETENTION_DAYS, items };
   }
 
   /**
@@ -125,9 +160,13 @@ export class TenantDataService {
    * 返回摘要（不含数据本体），下载走 /exports/:backupId/download。
    */
   async exportTenant(tenantId: number, actor: { id: number; username?: string }) {
+    // 先读目录库确定库归属：独立库租户的整段导出都必须跑在它自己的库上，
+    // 否则会把共享库里「同名 tenant_id」的空表当成客户数据导出去，还显示成功。
+    const key = await this.routingKey(tenantId);
     const { result, rlsActive } = await this.tdsm.withTenantScope(tenantId, async ({ em, rlsActive: on }) => {
-      const tenant = await this.mustTenant(em, tenantId);
-      const p = await this.plan();
+      const tenant = await this.mustTenant(em, tenantId, key === 'default' ? '' : `独立库 "${key}"`);
+      const p = await this.plan(key);
+      const isolation = key === 'default' ? (on ? 'rls' : 'app-only') : 'dedicated-db';
       const tables: Record<string, any[]> = {};
       const truncated: string[] = [];
       let rows = 0;
@@ -151,7 +190,7 @@ export class TenantDataService {
 
       const gz = gzipSync(Buffer.from(JSON.stringify({
         schemaVersion: 2, kind: 'export', tenantId, tenantCode: tenant.code, tenantName: tenant.name,
-        exportedAt: new Date().toISOString(), rlsActive: on, tables,
+        exportedAt: new Date().toISOString(), dataSourceKey: key, isolation, rlsActive: on, tables,
       }), 'utf-8'));
       const name = backupName(tenant.code, 'export');
       const rec: any[] = await em.query(
@@ -163,21 +202,22 @@ export class TenantDataService {
         tenantId, tenantCode: tenant.code, backupId: Number(rec[0].id), name,
         createdAt: rec[0].created_at, sizeBytes: gz.length,
         tableCount: Object.keys(tables).length, rowCount: rows, truncated,
-        rlsActive: on,
+        dataSourceKey: key, isolation, rlsActive: on,
       };
-    });
+    }, this.scopeOpts(key));
     await this.audit.write(actor, 'platform.tenant.export',
-      { tenantId, backupId: result.backupId, sizeBytes: result.sizeBytes, rowCount: result.rowCount, rlsActive },
+      { tenantId, backupId: result.backupId, sizeBytes: result.sizeBytes, rowCount: result.rowCount, dataSourceKey: key, rlsActive },
       'tenant', tenantId);
     return result;
   }
 
-  /** 导出件列表（平台侧看得全，包含租户自己手工备份的） */
+  /** 导出件列表（平台侧看得全，包含租户自己手工备份的；在租户自己的库里查） */
   async listBackups(tenantId: number) {
-    const rows: any[] = await this.tdsm.get({ dataSourceKey: 'default' }).query(
+    const key = await this.routingKey(tenantId);
+    const rows: any[] = await this.poolFor(key).query(
       `select id, name, kind, size_bytes, storage_key, created_by, created_at
        from public.tenant_backups where tenant_id = $1 order by id desc limit 100`, [tenantId]);
-    return { tenantId, items: rows.map((r) => ({
+    return { tenantId, dataSourceKey: key, items: rows.map((r) => ({
       id: Number(r.id), name: r.name, kind: r.kind, sizeBytes: r.size_bytes,
       storageKey: r.storage_key, createdBy: r.created_by, createdAt: r.created_at,
     })) };
@@ -185,7 +225,8 @@ export class TenantDataService {
 
   /** 下载导出件：返回 gzip 原文件（验收/运营用 gunzip 解）。同时留一条下载审计 */
   async downloadBackup(tenantId: number, backupId: number, actor: { id: number; username?: string }) {
-    const rows: any[] = await this.tdsm.get({ dataSourceKey: 'default' }).query(
+    const key = await this.routingKey(tenantId);
+    const rows: any[] = await this.poolFor(key).query(
       `select name, kind, size_bytes, data from public.tenant_backups where id = $1 and tenant_id = $2`, [backupId, tenantId]);
     if (!rows.length) throw new NotFoundException('导出件不存在');
     const raw = rows[0].data;
@@ -195,7 +236,7 @@ export class TenantDataService {
     else buffer = Buffer.from(String(raw), 'base64');
     if (!buffer.length) throw new BadRequestException('导出件数据为空（可能是历史手工备份未落 data）');
     await this.audit.write(actor, 'platform.tenant.export.download',
-      { tenantId, backupId, name: rows[0].name, kind: rows[0].kind }, 'tenant', tenantId);
+      { tenantId, backupId, name: rows[0].name, kind: rows[0].kind, dataSourceKey: key }, 'tenant', tenantId);
     return { filename: `${rows[0].name}.json.gz`, buffer, sizeBytes: Number(rows[0].size_bytes ?? buffer.length) };
   }
 
@@ -204,12 +245,13 @@ export class TenantDataService {
    * 顺序：闸门 → 自动落 purge-pre 快照 → 家生子先删 → 按外键拓扑删主表 → 逐表复查剩余。
    */
   async purgeTenant(tenantId: number, actor: { id: number; username?: string }, body: { confirm?: string; force?: boolean } = {}) {
+    const key = await this.routingKey(tenantId);
     const { result } = await this.tdsm.withTenantScope(tenantId, async ({ em, rlsActive: on }) => {
-      const tenant = await this.mustTenant(em, tenantId);
+      const tenant = await this.mustTenant(em, tenantId, key === 'default' ? '' : `独立库 "${key}"`);
       const gate = assertPurgeAllowed({ code: tenant.code, canceledAt: tenant.canceledAt, confirm: body.confirm, force: !!body.force });
       if (!gate.ok) throw new BadRequestException(gate.reason);
 
-      const p = await this.plan();
+      const p = await this.plan(key);
       // 1. 删之前自动落一份 purge-pre 快照（同一事务，复用带 GUC 的连接）
       const snapshot = await this.exportTenantInternal(em, tenant, p, actor, 'purge-pre', on);
 
@@ -236,13 +278,15 @@ export class TenantDataService {
       }
       if (cyclic.length) this.logger.warn(`[purge] 租户 ${tenantId} 存在外键环，按原顺序删除：${cyclic.join('、')}`);
       return {
-        tenantId, tenantCode: tenant.code, rlsActive: on,
+        tenantId, tenantCode: tenant.code, dataSourceKey: key,
+        isolation: key === 'default' ? (on ? 'rls' : 'app-only') : 'dedicated-db',
+        rlsActive: on,
         snapshot, deletedRows: deleted.reduce((s, d) => s + d.rows, 0),
         tables: deleted.length, detail: deleted, remaining, cyclic,
       };
-    });
+    }, this.scopeOpts(key));
     await this.audit.write(actor, 'platform.tenant.purge',
-      { tenantId, tenantCode: result.tenantCode, deletedRows: result.deletedRows, snapshot: result.snapshot?.backupId, rlsActive: result.rlsActive, force: !!body.force },
+      { tenantId, tenantCode: result.tenantCode, deletedRows: result.deletedRows, snapshot: result.snapshot?.backupId, dataSourceKey: key, rlsActive: result.rlsActive, force: !!body.force },
       'tenant', tenantId);
     return result;
   }

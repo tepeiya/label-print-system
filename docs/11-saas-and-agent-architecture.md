@@ -2,7 +2,7 @@
 
 > 目标：把当前「单租户内部系统」升级为**可对外销售、按模块订阅、支持权限分级与 AI 智能体接入**的 SaaS 平台。
 > **文档状态：v1.1 设计定稿（设计决策 D1–D12 已全部确认，见 §11.15），可直接作为编码依据。**
-> 最后更新：2026-11-04
+> 最后更新：2026-11-06
 
 ---
 
@@ -831,7 +831,7 @@ Agent 调用 print.submit_job
 | **P3 计费闭环**（2026-11-05 落地，细节 docs/10 §10.19） | 用量采集 + 配额 + 账单 + 支付（先手动登记）+ 发票 | 可出账、可对账（实测：p0-acceptance.sh K 段 19 项；发票开具与自动扣款未做，见 §10.19.5） | 2–3 周 |
 | **P4 Agent / MCP**（2026-11-05 落地，细节 docs/10 §10.20） | agent 表 + `/agent/v1` + stdio MCP + 只读工具 | Claude Desktop 可查库存/齐套（实测：6 个业务只读工具 + 3 元工具 + apps/mcp-server stdio；写工具/审批流/HTTP 传输属 P5） | 4–5 天 |
 | **P5 Agent 增强**（2026-11-05 落地，细节 docs/10 §10.21） | 写工具 + 幂等 + 限流 + 审计 + 审批流 + Streamable HTTP | SaaS 客户可接入自有 Agent（实测：p0-acceptance.sh M 段 31 项 + 验收 146/0；写工具 5 个全部有执行器、Streamable HTTP 一 token 一会话；**审批的 console 前端页与 Prompts 库产品化未做**，见 §10.21.8） | 1.5–2 周 |
-| **P6 加固**（🔶 2026-11-05 已落 3/5，细节 docs/10 §10.22 / §10.23 / §10.24） | RLS、独立库租户、租户导出/删除、白标、Prompts 库 | **已落**：P6.1 RLS 兜底（角色 + 39 张表策略 + fail-closed GUC + 22 项冒烟）、P6.3 租户数据导出/硬删（D12 三道闸门 + 表清单从 pg_catalog 现取）+ platform 保留期看板/导出/硬删页、P6.4 白标（D6：域名 TXT 校验 + 品牌清洗 + Host→租户解析 + 平台强校验工单通道）、P5.5 审批 console 前端入口闭合；**未做**：P6.2 独立库租户（D2，仅 `registerDedicated()` 注册表就位）、P6.5 Prompts 库产品化、白标的**真实 DNS 端到端与 ACME 证书自动化**；**主链路尚未切到 `labelflow_app` 角色**（切换条件 docs/10 §10.22.4，切时必须把公开解析改走平台角色连接） | 1–2 周 |
+| **P6 加固**（🔶 2026-11-06 已落 3/5 完整 + P6.2 阶段 A，细节 docs/10 §10.22 / §10.23 / §10.24 / §10.25） | RLS、独立库租户、租户导出/删除、白标、Prompts 库 | **已落**：P6.1 RLS 兜底（角色 + 39 张表策略 + fail-closed GUC + 22 项冒烟）、P6.3 租户数据导出/硬删（D12 三道闸门 + 表清单从 pg_catalog 现取）+ platform 保留期看板/导出/硬删页、P6.4 白标（D6：域名 TXT 校验 + 品牌清洗 + Host→租户解析 + 平台强校验工单通道）、P5.5 审批 console 前端入口闭合、**P6.2 阶段 A**（`data_source_key` + 平台数据源注册/诊断/注销 + 平台侧导出/硬删按库路由；provision 明确拒绝 dedicated）；**未做**：P6.2 二阶段（开通编排 + 业务读写接管 + 退订回收，清单 docs/10 §10.25.8）、P6.5 Prompts 库产品化、白标的**真实 DNS 端到端与 ACME 证书自动化**；**主链路尚未切到 `labelflow_app` 角色**（切换条件 docs/10 §10.22.4，切时必须把公开解析改走平台角色连接） | 1–2 周 |
 
 > P0+P1（约 1.5 周）即可跑通「按模块订阅 + 权限分级」的最小闭环；
 > P4（4–5 天）即可做出可演示的 Agent 能力。
@@ -850,7 +850,7 @@ Agent 调用 print.submit_job
       （后端裁剪逻辑见 `src/saas/menu.catalog.ts`；**前端已于 P1 接入**，
       `apps/console` 顶栏与路由守卫只读 `me.menus`，见 docs/10 §10.16）
 - [x] 现有 `admin/operator/sql/viewer` 映射后行为不变（回归测试 16 项 + 手工 8 项）
-      （实测：单测 202 条 + 验收脚本 219 项（A–O 段）+ RLS 冒烟 22 项；`sql` 登录后双码回显 `["sql","manager"]`）
+      （实测：单测 209 条 + 验收脚本 249 项（A–P 段）+ RLS 冒烟 22 项；`sql` 登录后双码回显 `["sql","manager"]`）
 
 ### 11.11.2 验收标准（P4）
 
@@ -959,7 +959,7 @@ SELECT COUNT(*) FROM user_roles WHERE role_id IS NULL;  -- 期望 0
 | # | 决策 | ✅ 结论（已锁定） | 落地要求 | 影响阶段 |
 | --- | --- | --- | --- | --- |
 | **D1** | 商业包装 | **套餐为主 + 模块加购** | 必须实现 `plans` / `plan_modules`；同时允许 `tenant_modules.source='addon'` 单独加购 | P0 建表，P2 运营后台 |
-| **D2** | 私有化部署 | **支持** | `tenants.type` 保留 `dedicated`；`TenantCtx` 增加 `dataSourceKey`；**P0 就要把字段和路由钩子留好**，P6 再真正接独立库 | P0 预留，P6 落地 |
+| **D2** | 私有化部署 | **支持** | `tenants.type` 保留 `dedicated`；`TenantCtx` 增加 `dataSourceKey`；**P0 就要把字段和路由钩子留好**，P6 再真正接独立库 | P0 预留；**P6.2 阶段 A 已落**（注册 + 平台侧按库导出/删除，docs/10 §10.25），业务读写接管仍待二阶段 |
 | **D3** | 首批客户规模 | **按 <50 租户启动**（阶段假设）；RLS 放 P6 | P0 只做应用层隔离，但**必须**在连接池执行 `SET app.tenant_id`（为 RLS 预留）；P6 补策略。若实际 >50，RLS 提前到 P2 | P0 预留，P6 完成 |
 | **D4** | 自助注册与试用 | **暂不开放** | 不做注册页/验证码；试用由运营在平台后台创建（`tenants.status='trial'` + `trial_ends_at`） | 全阶段 |
 | **D5** | 支付渠道 | **先人工登记**，V2 接微信/支付宝 | P3 只做账单 + 手工标记已付（`payments.provider='manual'`）；不做支付回调 | P3 |
@@ -1009,6 +1009,7 @@ SELECT COUNT(*) FROM user_roles WHERE role_id IS NULL;  -- 期望 0
 | 2026-11-05 | **P5 Agent 增强落地**（docs/10 §10.21）：5 个写/高危工具接执行器（templates.create/update、inventory.adjust/transfer、print.submit_job）+ 新增 `print.get_status`；`tool_idempotency` 表 + claim/finish/release 幂等（同键同参重放原结果、异参 409/4036）；`agent_approvals` 接线成完整审批流（pending→approved→consumed / rejected / expired，批准后 5 分钟一次性，args_hash 剔除 `approval_id` 后取指纹）；Agent 维度限流（Redis 固定窗口 + feature_flags `rollout.rpm`，Redis 故障退进程内）；`audit_logs.actor_type` 新列 + agent 调用结构化审计；租户侧 `/agents/approvals` 三件套 + 新权限码 `sys:agent:approve`；apps/mcp-server 增 **Streamable HTTP**（一 token 一会话）+ resources/prompts 声明。偏差：①`tool_idempotency` DDL 文档未给，自拟；②限流阈值复用 `feature_flags` 而非新表/环境变量；③`need_approval` 用 **HTTP 202 + 正常信封**承载（不是 4xx）；④写工具**强制** `idempotency_key`（§11.7.4 只建议）；⑤`print.estimate/wait_for_job/cancel_job`、`ai.*`、`alerts.*` 仍未注册；⑥审批只做后端 REST，console 前端「待确认」页留后续 | §11.11 P5 排期；D7/D8/D9 决议如此 |
 | 2026-11-05 | **P6 首批落地**（docs/10 §10.22 / §10.23）：`saas_p6_rls.sql` 建 `labelflow_app`（无 BYPASSRLS）/`labelflow_platform`（BYPASSRLS）两角色 + 39 张表 `tenant_isolation` 策略（`nullif(current_setting(...))` fail-closed，`bom_items` 走父表 EXISTS，DDL 内置覆盖度自检）；`withTenantScope()` 事务级 GUC + 连不上即降级并如实回报 `rlsActive=false`；租户数据导出（gzip 落 `tenant_backups kind=export`）与硬删（D12 三道闸门：confirm 逐字等于 code、90 天保留期、未退订需 force；删前自动 `purge-pre` 快照、逐表复查 `remaining`）；`apps/console` 补 Agent 客户端与「Agent 待确认」两页 + 菜单目录两条 + 审批列表补 `agentClientName`。偏差：①**RLS 目前只是第二道防线**，主链路仍以 owner 连库并默认绕过 RLS，未切换（条件 docs/10 §10.22.4）；②表清单必须走 `pg_catalog`——`information_schema` 按角色权限过滤，RLS 角色查不到 `bom_items` 外键会**静默漏一家子表**（已修，验收 N.8b 钉住）；③家生子只支持单列 FK，复合外键跳过并 warn；④删除路由必须 `@Res()` 不带 passthrough，否则 `ERR_HTTP_HEADERS_SENT` 直接崩进程；⑤`meta.permission` 仍是单串、不支持数组 OR | §11.11 P6 排期；D3/D12 决议如此 |
 | 2026-11-05 | **P6.4 白标（D6）+ P6.3 platform 前端落地**（docs/10 §10.24）：`saas_p6_branding.sql` 给 `tenant_domains` 补 `verify_token/verified_at/is_primary/created_by` + 格式 CHECK + 权限点 `sys:branding:manage`（只授 admin/tenant_admin）；`backend/src/saas/branding/`（纯函数 `branding.calc.ts` + entity + service + controller）实现「域名登记 → DNS TXT 校验（`_labelflow-verify.<domain> = labelflow-verify=<token>`）→ 仅 `verified` 域名参与 Host→租户解析」；品牌值只走 7 个白名单键（颜色 `#rgb/#rrggbb`、logo/favicon 必须 https 绝对地址、`customCssVars` 只许 `--小写变量: 值`、整包 ≤8 KiB），白名单外的键进 `dropped` 回报、值不合法整笔 400；登录侧 `login(username, password, tenantCode?, hostTenantCode?)` 允许「由域名决定租户」，**Host 命中的租户与显式 tenantCode 不一致直接 401**（防钓鱼入口）；平台侧 `GET platform/tenants/:id/domains` + `POST .../domains/:domainId/verify`（绕过 DNS 的工单通道，先核归属再写平台审计）；`apps/console` 增「品牌与域名」页（主题注入走 `--lf-brand`/`--el-color-primary` 派生色 + favicon + 标题），`apps/platform` 补 P6.3 的保留期看板/导出/下载/硬删二次确认页（`rlsActive` 三态徽标、三道闸门内联展示）。偏差：①**沙盒查不到真实 DNS**，TXT 比对只有单测 + 平台强校验通道覆盖，上线前必须拿真域名走一遍并把 `BRANDING_DEV_VERIFY` 明确关掉；②dev 逃生口需 `BRANDING_DEV_VERIFY=1` 且 `NODE_ENV≠production` 同时成立；③公开解析目前走默认（owner）连接，**主链路切 `labelflow_app` 时必须改走平台角色连接**，否则 fail-closed 让它恒定 0 行、白标静默失效；④不做 ACME 证书自动化 / 自定义字体 / 租户 CSS 文件 / 按套餐 gating；⑤一个租户多个已校验域名共用同一套品牌，`is_primary` 暂只作展示；⑥`meta.permission` 仍不支持数组 OR（沿用 §10.23.6 的既有限制） | §11.11 P6 排期；D6 决议如此 |
+| 2026-11-06 | **P6.2 独立库租户（D2）阶段 A 落地**（docs/10 §10.25）：`saas_p6_dedicated.sql` 给 `tenants` 加 `data_source_key`（只存标识、**DSN 永不落库**）+ 形状 CHECK（shared→空/default；dedicated→非空且非 default）+ 格式 CHECK + 部分唯一索引（一个 key 只服务一个租户）；`TenantDataSourceManager` 支持 `DB_DEDICATED_DSNS` 启动注册与 `POST/GET/DELETE /platform/datasources`（先连库 → `pg_catalog` 结构自检 → 才落注册表；连不上 503、半初始化库拒绝；注销时仍有租户引用则 400）；`withTenantScope(..., { dataSource })` 新增钉库模式并返回 `mode=rls/dedicated/app-only`，独立库如实 `rlsActive=false`；`TenantDataService` 的导出/下载/硬删/清单按目录库的 `data_source_key` 路由到独立库（表清单缓存按 key 隔离、返回与审计带 `dataSourceKey/isolation`），保留期计数也按库取；`provision` 对 `type='dedicated'` / 共享带 `dataSourceKey` 明确 400。偏差/未做：①**业务读写仓库仍绑默认 DataSource**，所以不接开通、不做「接管 API」，避免假隔离；②开通编排（建库/DDL/迁移/切换）、退订回收、每租户池配额、DSN 轮换、物理备份均未做，清单见 docs/10 §10.25.8；③`D2_DSN` 指向的库必须已跑完全部 DDL，验收脚本只做控制面 + 按库导出，不负责建库 | §11.11 P6 排期；D2 决议「P0 预留、P6 落地」的阶段 A |
 | 2026-11-04 | `GET /subscription` 响应新增 `moduleDetails`（名称/图标/说明/`isCore`），原 `modules`（code 数组）保持不变 | 设计稿没定义该字段；只回 code 的话订阅页只能把英文码当模块名显示。加字段而非改形状，验收脚本 E/F 段断言不受影响 |
 | 2026-11-04 | 修 `DELETE /backups/:id`：后端 `remove()` 原来标的是 `@Post(':id')`，与 docs/10 §10.3 的约定和前端调用都不一致 | 前端「删除备份」一直 404；顺带补 `@RequirePermission('backup:write')`（原先只有 `@Roles('admin')`，缺 L1 权限点判定） |
 | 2026-11-04 | `web/`（零构建原生前端，§11.10 未覆盖）同步改为权限点优先 + 角色兜底，并按订阅模块裁剪主标签页；**`features`（D7 灰度）在该前端无处挂载**，未接入 | 现网仍有用户直接用 `web/`；它读同一个 `/auth/me`，不做裁剪就会出现「前端能点、后端 403」。`web/index.html` 的 AI 视图没有透视矫正按钮，`ai.vision` 开关没有可挂的 UI，未做猜测性映射 |

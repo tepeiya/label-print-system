@@ -2,8 +2,8 @@
 
 > 本文档目标：**任何 AI 或开发者读完本文即可无缝接手继续开发**，不需要再翻历史对话。
 > 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）** → **§10.19 P3 计费闭环（动账单/配额/计量前必读）** → **§10.20 P4 Agent/MCP（动 /agent/v1、agent token、库存只读模型前必读）** → **§10.21 P5 Agent 写工具与审批流（动 Agent 写路径/限流/幂等/MCP HTTP 前必读）** → **§10.22 P6.1 RLS 兜底（动数据库角色/连接、写任何原生 SQL 前必读）** → **§10.23 P6.3 租户数据导出与硬删 + Agent 前端入口（动 /platform/tenants/:id/export|purge、表清单口径前必读）** → **§10.24 P6.4 白标 D6 + P6.3 platform 前端（动 /branding、登录 Host 解析、主题注入前必读）**。
-> 最后更新：2026-11-05（P0–P5 已落地，**P6 已落 P6.1 RLS 兜底 + P6.3 导出/硬删（含 platform 前端）+ P6.4 白标 + P5.5 审批前端入口**；
-> 本轮新增 **§10.22 / §10.23 / §10.24**；单测 202 条 / 验收 219 项（A–O 段）/ RLS 冒烟 22 项；P6 只剩 P6.2 独立库租户、P6.5 Prompts 库）
+> 最后更新：2026-11-06（P0–P5 已落地；**P6 已落 3/5 完整：P6.1 RLS + P6.3 导出/硬删 + P6.4 白标；P6.2 独立库租户完成阶段 A（注册 + 平台侧按库导出/删除），开通编排与业务读写接管未做**；
+> 本轮新增 **§10.25**；单测 209 条 / 验收 249 项（A–P 段）/ RLS 冒烟 22 项；P6 只剩 P6.2 二阶段、P6.5 Prompts 库）
 >
 > ⚠️ **2026-11-05 历史瘦身**：`.pnpm-store`（232 MB pnpm 包缓存，被 `95b4970` 误提交）已从
 > `feat/dev-base` 的**全部历史**中移除，`.git` 从 54 MB 降到 1.4 MB。
@@ -876,9 +876,10 @@ docs/03-database.sql → backend/scripts/seed.sql → backend/scripts/saas_p0.sq
 ### 10.15.6 测试与验收覆盖
 
 ```bash
-cd backend && npm test                       # 202 条（原 26 → P0 +89 → P1 +2 → 校验 +8 → P2 +5 → P3 +12 → P4 +18 → P5 +20 → P6.3 +9 → P6.4 +13）
+cd backend && npm test                       # 209 条（原 26 → P0 +89 → P1 +2 → 校验 +8 → P2 +5 → P3 +12 → P4 +18 → P5 +20 → P6.3 +9 → P6.4 +13 → P6.2 +7）
 # O 段（白标）要后端带 BRANDING_DEV_VERIFY=1；N 段要 DB_RLS_USER（两者缺一按对应断言判失败并给提示）
-DB_RLS_USER=labelflow_app T_CODE=p6o1 T2_CODE=p6o1pro bash backend/scripts/p0-acceptance.sh  # 219 项断言（A–O 段），期望「通过 219 / 失败 0」（重跑换新 T_CODE/T2_CODE）
+# P 段真连独立库要传 D2_DSN（指向一个已跑完 docs/03 + saas_*.sql 的库）；不传则只跑控制面校验并 SKIP P.13+
+DB_RLS_USER=labelflow_app D2_DSN='postgres://user:pw@127.0.0.1:5432/labelflow_d2' T_CODE=p6o1 T2_CODE=p6o1pro bash backend/scripts/p0-acceptance.sh  # 249 项断言（A–P 段），期望「通过 249 / 失败 0」（重跑换新 T_CODE/T2_CODE）
 bash backend/scripts/p6-rls-smoke.sh         # 22 项：RLS 兜底专用冒烟（必须用 labelflow_app DSN 才有效，见 §10.22.3）
 
 # 前置 DDL（顺序敏感；saas_* 都幂等可重跑）：
@@ -887,6 +888,7 @@ bash backend/scripts/p6-rls-smoke.sh         # 22 项：RLS 兜底专用冒烟�
 #   → saas_p6_rls.sql（角色 + 39 张表策略，缺它 N.1 直接判失败）
 #   → saas_p6_tenant_data.sql（放宽 tenant_backups.kind CHECK，缺它导出必 500 / 23514）
 #   → saas_p6_branding.sql（tenant_domains 补列 + sys:branding:manage，缺它 O 段整段红）
+#   → saas_p6_dedicated.sql（tenants.data_source_key + 2 CHECK + 部分唯一索引，缺它 P.1 判失败）
 ```
 
 - 单测分布（本轮新增）：`validate-ai-template` 23、`sql-executor` 14（含真实 PG 集成，PG 不可达自动 skip）、`saas-guards` 10、`menu.catalog` 12（P1 加了 AI 入口 + 菜单/路由一致性两条）、`data-scope` 7、`roles.guard` 7、`module-deps` 6、`permission-match` 8、`errors.filter` 4。
@@ -1527,8 +1529,8 @@ Nest 就不接管响应了——代价是这条路不再走拦截器，`Content-
 ### 10.23.8 P6 明确没做（别当成已完成）
 
 - ~~**P6.4 白标（D6）**~~ → **2026-11-05 已落地**，见 §10.24（`saas_p6_branding.sql` + `backend/src/saas/branding/` + `apps/console` 品牌页）。
-- **P6.2 独立库租户（D2）**：只有 `registerDedicated()` 注册表 + 未注册即 503 的兜底；
-  缺 `tenants.data_source_key` DDL、缺按租户开通独立库的编排、缺迁移/备份的独立库版本。
+- ~~**P6.2 独立库租户（D2）**~~ → **2026-11-06 阶段 A 已落地**，见 §10.25：`tenants.data_source_key` DDL、数据源注册/诊断/注销、平台侧导出/硬删按库路由、provision 对 dedicated 明确 400；
+  **仍缺**：开通编排（建库 → 跑 DDL → 迁移数据 → 切换 data_source_key）、业务读写接管（仓库仍绑默认 DataSource）、退订后库回收。
 - **P6.5 Prompts 库产品化**：MCP 侧 3 个开箱 prompt 已有（§10.21.7），租户侧「Prompt 库」CRUD/编辑/下发没有。
 - ~~**platform 前端**：保留期看板、导出按钮、下载链接、purge 二次确认~~ → **2026-11-05 已落地**，见 §10.24.7（`apps/platform/src/views/TenantData.vue`）。
 - 家生子目前只处理「单层 FK 指向带 `tenant_id` 的表」；若以后出现孙表（A→B→`tenant_id`）需要扩 `plan()` 的递归。
@@ -1659,3 +1661,92 @@ removeDomain → 删行 + 立刻 invalidateHostCache(domain)
 - `logoUrl/faviconUrl` 是第三方 https 地址，页面没配 CSP——真上线白标建议同时给 `img-src` 白名单（目前只有 URL 格式校验这一层）。
 - 白标**不影响订阅**：`sys:branding:manage` 是权限点，没做「按套餐收费才给白标」的 gating；要做就照 §11.10 的模块/配额口径加，而不是在 controller 里写 if。
 - 一个租户多个已校验域名都会解析到同一套品牌（`is_primary` 目前只作展示与将来回调用）；主域名切换不改变解析结果。
+
+## 10.25 P6.2 独立库租户（D2）阶段 A（2026-11-06 落地）
+
+一句话：**这一阶段只回答「这个租户的数据在哪个库」，并把平台侧的导出/硬删/保留期切过去；
+业务读写仍然只打共享库**——所以 provision 明确拒绝 `type='dedicated'`，避免做出「以为隔离了其实没隔离」的假象。
+
+### 10.25.1 范围与边界（先读，避免按「已完成」理解）
+
+| 能力 | 状态 | 说明 |
+|------|------|------|
+| `tenants.data_source_key` 标识 + 形状/唯一约束 | ✅ | `backend/scripts/saas_p6_dedicated.sql`（幂等） |
+| 独立库注册 / 诊断 / 注销（平台 API） | ✅ | `POST/GET/DELETE /platform/datasources`，平台审计 `platform.datasource.*` |
+| 平台侧导出 / 下载 / 硬删 / 保留期按库路由 | ✅ | `TenantDataService` 先读目录库拿 key，再钉到该库事务 |
+| 未注册 key 的租户请求 | ✅ 503 | `TenantDataSourceManager.get()` 不回退共享库 |
+| 开通独立库租户（建库 / 跑 DDL / 迁移 / 切换） | ❌ | provision 对 `type='dedicated'` / 带 `dataSourceKey` 一律 400（带下一步指引） |
+| 业务读写接管（Repository / 事务路由） | ❌ | 仍是默认 `DataSource`；见 §10.25.8 的必做清单 |
+| 退订后库回收 / 连接池配额 / DSN 轮换 | ❌ | 运维手工 |
+
+### 10.25.2 DDL：`backend/scripts/saas_p6_dedicated.sql`
+
+- `tenants.data_source_key VARCHAR(64)`（**只存标识，不存 DSN**）。
+- `tenants_data_source_key_shape`：`shared → 空或 'default'`；`dedicated → 非空且 ≠ 'default'`。
+  ⚠️ 改 routing 时必须**同时**改 `type` 和 `data_source_key`，只改一个会被 CHECK 拦下（P 段实跑踩过）。
+- `tenants_data_source_key_format`：`^[a-z][a-z0-9-]{1,63}$`（与 `validateKey` 同口径）。
+- `CREATE UNIQUE INDEX ux_tenants_data_source_key ... WHERE data_source_key IS NOT NULL`：
+  **一个 key 只服务一个租户**。两个租户共用 key 意味着「硬删 A 会顺手删 B」，必须在库里拦死。
+- 自检 DO 块：列 1 / 约束 2 / 唯一索引 1，缺一直接 `RAISE`。
+
+### 10.25.3 注册流程：先连、再自检、最后才落注册表
+
+`TenantDataSourceManager.registerFromUrl()` 的顺序是刻意的（`env` 启动与平台接口共用）：
+
+1. `validateKey` + `isPostgresUrl` + `dsnTarget`（**拆不出库名就拒**）；
+2. `buildDedicated()` 建池并 `initialize()`（`connectTimeoutMS=5000`，失败抛 `ServiceUnavailableException` → 503）；
+3. `inspectSchema()`：用 **`pg_catalog`** 数 `public` 下的表（`information_schema` 会按角色权限静默漏表，见 §10.23.2），
+   必查 `tenants/users/templates/tenant_backups/tenant_modules/audit_logs`；
+4. 只有 2、3 都过了才 `dedicated.set(key, ds)`；半初始化的库会 `destroy()` 后抛错。
+
+env 入口：`DB_DEDICATED_DSNS='{"acme":"postgres://..."}'`，单条失败只记日志（对应租户 503），不阻断进程启动。
+错误会通过 `GET /platform/datasources` 的 `envErrors` 原样透出，别让运维去翻日志。
+
+### 10.25.4 路由：目录库决定去哪个库，数据只在那个库读写
+
+- `TenantDataService.routingKey(tenantId)` **只查共享目录库**的 `tenants.data_source_key`（空 = default）。
+- 表清单缓存从「进程内一份」改成 **按 key 一份**（`planCache: Map<string, TablePlan>`）：
+  独立库可能停在不同迁移版本，混用清单会导出/删除错表。
+- `withTenantScope(tenantId, fn, { dataSource })` 新增「钉库」模式：
+  - 返回 `mode: 'rls' | 'dedicated' | 'app-only'`；独立库**如实报 `rlsActive=false`**（隔离来自库边界，不冒充 RLS）；
+  - 事务里仍然 `set_config('app.tenant_id', …, true)`，同一套 DDL 复制过去后 RLS 照样生效（纵深防御）。
+- 导出摘要与快照头新增 `dataSourceKey` / `isolation`，审计明细同步带 `dataSourceKey`：
+  「这包数据从哪个库导的」必须可追溯，否则合规审计说不清。
+- 保留期看板的 `users/templates` 计数按租户所属库分开取；独立库连不上时标 `countsAvailable=false`，不让整块看板 500。
+
+### 10.25.5 安全：DSN 永不落库
+
+- 落库的只有 `data_source_key`；DSN 只在进程内存（env 或平台接口传入）。
+- 接口返回值、平台审计、日志统一 `maskDsn()` → `postgres://user:***@host:port/db`。
+- 注销前检查引用：仍有租户使用该 key → **400**（先迁走再注销，避免线上 503）。
+- `GET /platform/datasources` 额外列 `missing`：**租户表里写着、但本进程没有连接池的 key**——
+  这是「后台看不出为什么 503」的最常见现场，必须显式暴露。
+
+### 10.25.6 两个实现细节（容易写反）
+
+1. **独立库连接池不要挂实体**：`entities: []`、只跑带参原生 SQL。挂了实体就会随默认库一起加载元数据，
+   两边迁移进度不一致时先炸的是进程启动，而不是那条本该 503 的业务请求。
+2. **不要用 URL 解析后再拼连接串**：密码里带 `@` / `:` 会被转义错。`dsnTarget()` 只用于诊断展示，
+   真正连接始终用原始 DSN（`new DataSource({ url })`）。
+
+### 10.25.7 验证（全部实跑 2026-11-06）
+
+- `npm test` **209/0**（+7：`src/saas/__tests__/dedicated.calc.test.ts`）。
+- `D2_DSN=… bash backend/scripts/p0-acceptance.sh` → **通过 249 / 失败 0**（A–P 段；219 → P 段 +30）。
+  P 段实测：DDL 就位 → 非平台身份 403 → key/协议/缺参 400 → **连不上 503 且不入注册表** →
+  provision dedicated / 共享带 key 均 400 → 未注册 key 导出 503 → 注册（脱敏 + 审计 + 面板）→
+  两库各写一条靶模板 → 导出摘要 `dataSourceKey/isolation=dedicated-db/rlsActive=false` →
+  下载解包**只含独立库标记、0 条共享库标记** → 导出件落独立库（共享库 0 条）→ 清单读独立库 →
+  在用中注销 400 → 面板 `tenantsUsing=1` → 唯一索引/CHECK 双拦截 → 迁走后注销 200 + 审计 + 面板消失。
+- `D2_DSN` 未提供时 P.13+ 打印 `[SKIP]`，控制面校验（P.1–P.12）照常执行。
+- `bash backend/scripts/p6-rls-smoke.sh` **22/0/0**；`npx tsc -p tsconfig.json` 0 error。
+- 沙盒里用 `CREATE DATABASE labelflow_d2` + `pg_dump --schema-only` 克隆 schema 造的靶库；
+  **绝不能把 `D2_DSN` 指向共享库本身**，否则「路由到独立库」等于没路由。
+
+### 10.25.8 阶段 B 必做清单（不要按当前状态对外承诺「独立库已交付」）
+
+1. **业务读写接管**：Repository 代理 / 事务路由到 `tdsm.get(ctx)`；这一步不做，客户业务数据仍写在共享库。
+2. **开通编排**：建库 → 跑全部 DDL → 迁移租户行及业务数据 → 校验行数 → 切 `data_source_key` → 回滚预案。
+3. **退订回收**：`purge` 完独立库后决定保留/销毁；至少要有「库还在、租户已删」的巡检。
+4. **运维面**：每租户连接池上限（当前 `DB_DEDICATED_POOL` 全局默认 4）、SSL 参数、DSN 轮换、健康检查。
+5. **备份**：独立库的物理备份/恢复不在 `tenant_backups` 里；当前导出是逻辑 JSON gzip，不是 PITR。

@@ -47,6 +47,19 @@ export class ProvisionTenantDto {
   @IsOptional()
   @IsString()
   adminEmail?: string;
+
+  /**
+   * P6.2 D2：独立库租户。当前只做到「路由 + 平台侧按库导出/删除」，
+   * 开通编排（建库/迁移/接管业务读写）未实现 → provision 对 dedicated 明确 400。
+   */
+  @IsOptional()
+  @IsIn(['shared', 'dedicated'])
+  type?: 'shared' | 'dedicated';
+
+  @IsOptional()
+  @IsString()
+  @Length(2, 64, { message: 'dataSourceKey 长度 2–64' })
+  dataSourceKey?: string;
 }
 
 /** 加购单模块（D1：自动补齐前置模块） */

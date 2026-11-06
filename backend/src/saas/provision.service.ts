@@ -29,6 +29,8 @@ export interface ProvisionTenantDto {
   adminPassword: string;
   adminDisplayName?: string;
   adminEmail?: string;
+  type?: 'shared' | 'dedicated';
+  dataSourceKey?: string;
 }
 
 @Injectable()
@@ -51,6 +53,19 @@ export class ProvisionService {
     if (!TENANT_CODE_RE.test(code)) throw new BadRequestException('租户 code 需为小写字母开头的 a-z0-9-，长度 2–60');
     if (!dto.adminUsername?.trim()) throw new BadRequestException('管理员用户名不能为空');
     if (!dto.adminPassword || dto.adminPassword.length < 8) throw new BadRequestException('管理员密码至少 8 位');
+
+    // P6.2 D2：独立库的「开通编排」没做（建库 / 跑 DDL / 搬运数据 / 业务读写接管），
+    // 这里必须硬拒，不能先建一个 type='dedicated' 的租户让所有业务查询落到共享库——
+    // 那就是「以为隔离了其实没隔离」，比不做更糟。
+    if (dto.type === 'dedicated') {
+      throw new BadRequestException(
+        '独立库租户暂不支持在开通接口创建：请先用 POST /platform/datasources 注册 dataSourceKey，' +
+        '再按 docs/11 §11.11 P6.2 的二阶段（建库 → 跑 DDL → 迁移租户行 → 切换 routing）人工编排',
+      );
+    }
+    if (dto.dataSourceKey) {
+      throw new BadRequestException('共享库租户不能指定 dataSourceKey（独立库编排未实现）');
+    }
 
     const tenants = this.dataSource.getRepository(Tenant);
     if (await tenants.findOne({ where: { code } })) {
@@ -75,6 +90,7 @@ export class ProvisionService {
         code,
         status: 1,
         type: 'shared',
+        dataSourceKey: null,
         planId: plan.id,
         seatLimit: dto.seats ?? 5,
         trialEndsAt: endsAt,
@@ -161,7 +177,7 @@ export class ProvisionService {
   async listTenants() {
     // 平台侧跨租户查询：走 TenantDataSourceManager，P6 会在这里换成 BYPASSRLS 的独立账号
     const rows: any[] = await this.tdsm.get({ dataSourceKey: 'default' }).query(`
-      SELECT t.id, t.code, t.name, t.type, t.status, t.seat_limit, t.trial_ends_at, t.canceled_at,
+      SELECT t.id, t.code, t.name, t.type, t.data_source_key, t.status, t.seat_limit, t.trial_ends_at, t.canceled_at,
              s.status AS subscription_status, p.code AS plan_code, p.name AS plan_name,
              (SELECT count(*) FROM tenant_modules tm WHERE tm.tenant_id = t.id
                 AND tm.status IN ('active','trial')) AS module_count,
@@ -176,6 +192,7 @@ export class ProvisionService {
       code: r.code,
       name: r.name,
       type: r.type,
+      dataSourceKey: r.data_source_key ?? null,
       enabled: r.status === 1,
       plan: r.plan_code ? { code: r.plan_code, name: r.plan_name } : null,
       subscriptionStatus: r.subscription_status ?? null,
