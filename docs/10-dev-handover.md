@@ -4,7 +4,9 @@
 > 阅读顺序建议：§10.1 速览（**先看 §10.1.5 交付状态总表：做完的 / 没做的都在里面**） → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）** → **§10.19 P3 计费闭环（动账单/配额/计量前必读）** → **§10.20 P4 Agent/MCP（动 /agent/v1、agent token、库存只读模型前必读）** → **§10.21 P5 Agent 写工具与审批流（动 Agent 写路径/限流/幂等/MCP HTTP 前必读）** → **§10.22 P6.1 RLS 兜底（动数据库角色/连接、写任何原生 SQL 前必读）** → **§10.23 P6.3 租户数据导出与硬删 + Agent 前端入口（动 /platform/tenants/:id/export|purge、表清单口径前必读）** → **§10.24 P6.4 白标 D6 + P6.3 platform 前端（动 /branding、登录 Host 解析、主题注入前必读）** → **§10.25 P6.2 独立库租户阶段 A（动 datasource 注册/按库导出前必读）** → **§10.26 P6.5 Prompt 库（动 /agent-prompts、MCP prompts、Agent 下发模板前必读）**。
 > 最后更新：2026-11-06（P0–P5 已落地；**P6 五个子项全部动手：P6.1 RLS + P6.3 导出/硬删 + P6.4 白标 + P6.5 Prompt 库四项完整；P6.2 独立库租户只完成阶段 A（注册 + 平台侧按库导出/删除），开通编排与业务读写接管未做**；
 > 本轮新增 **§10.26**；单测 217 条 / 验收 267 项（A–Q 段）/ RLS 冒烟 22 项；P6 只剩 P6.2 阶段 B（见 §10.25.8）。
-> **接手先读 §10.1.5「交付状态总表」：已完成 14 项、未完成按 🔴/🟡/⚪ 分级列全。**）
+> 同日另交付**设计器 Vue 化**（§10.7.2）：`web/` 的 render/interactions/store 已搬进 `apps/console`，Designer 页的 iframe 删除，
+> `web/` 转为老版本独立客户端；Playwright 18 项 E2E 全绿。
+> **接手先读 §10.1.5「交付状态总表」：已完成 15 项、未完成按 🔴/🟡/⚪ 分级列全。**）
 >
 > ⚠️ **2026-11-05 历史瘦身**：`.pnpm-store`（232 MB pnpm 包缓存，被 `95b4970` 误提交）已从
 > `feat/dev-base` 的**全部历史**中移除，`.git` 从 54 MB 降到 1.4 MB。
@@ -29,7 +31,7 @@ LabelFlow —— 专业级标签设计与打印系统。核心能力：
 
 | 项 | 值 |
 | --- | --- |
-| 前端 | Vue 3 后台 `http://localhost:5173`（`apps/console/` · pnpm dev）；设计器 iframe 嵌入 `http://localhost:5180`（`web/serve.mjs`） |
+| 前端 | Vue 3 后台 `http://localhost:5173`（`apps/console/` · pnpm dev）——**设计器已在 Console 内原生 Vue 实现**，不再依赖 iframe |
 | 后端 | `http://localhost:3200/api/v1` |
 | 数据库 | PostgreSQL `localhost:5433`，库/用户/密码均 `labelflow` |
 | Redis | `localhost:6380` |
@@ -54,10 +56,11 @@ DB_PORT=5433 REDIS_URL=redis://localhost:6380 JWT_SECRET=dev-secret PORT=3200 \
 SQL_SECRET_KEY=3a9f1b2c4d5e6f7890abcdef1234567890abcdef1234567890abcdef123456789 \
 nohup node -r reflect-metadata dist/src/main.js > /tmp/labelflow-backend.log 2>&1 &
 
-# 前端：两套并行（Vue 3 后台 + 原生 DOM 设计器 iframe）
+# 前端：一套 Vue 3 后台（设计器已 Vue 化，直接跑在 5173 里）
 # —— 开发态：Vite dev server 5173 自动代理 /api 到后端
 cd apps/console && pnpm dev
-# —— 同时起原生设计器（Vue 3 的 Designer 页用 iframe 嵌入这个）
+
+# —— 原生 DOM 版（web/）现在是「老版本独立客户端」，只在需要对照行为时单独起：
 node web/serve.mjs 5180
 
 # —— 生产部署：Vue 3 构建产物托管到 NestJS 静态目录
@@ -106,7 +109,8 @@ curl -s http://localhost:3200/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 | 11 | **P6.3 导出/硬删（D12）** | gzip JSON 导出落 `tenant_backups`、硬删三道闸门、`purge-pre` 快照、表清单走 `pg_catalog`、保留期看板 | `saas/platform-admin/tenant-data.service.ts` | 验收 N 段 |
 | 12 | **P6.4 白标（D6）** | 域名 TXT 校验、仅 verified 参与 Host 解析、品牌 7 白名单键 + CSS 变量、平台强校验通道 | `saas/branding/`、`scripts/saas_p6_branding.sql` | 验收 O 段 24 项 |
 | 13 | **P6.5 Prompt 库（D8）** | 系统默认在代码、租户覆盖/自定义、`/agent-prompts` CRUD+预览、MCP 动态下发、Console 页面 | `agent/prompt.*`、`scripts/saas_p6_prompts.sql`、`views/PromptLibrary.vue` | 验收 Q 段 18 项 + 单测 8 条 |
-| 14 | **质量基线** | 单测 217、验收 267、RLS 冒烟 22、lint 0 error、console 构建、MCP 双 selftest | 命令见 §10.1.4 / §10.15.6 | 2026-11-06 全绿 |
+| 14 | **设计器 Vue 化** | render/interactions/store 三件套搬进 Console：12 类元素 WYSIWYG、手势（拖动/八向缩放/旋转/框选/平移/吸附）、标尺参考线、四页签检查器、撤销重做、快捷键、模板库与版本弹窗、打印预览；iframe 已删除 | `apps/console/src/views/designer/`、`views/Designer.vue` | Playwright 18 项 E2E 全绿（0 JS 错误）+ `pnpm build`/`lint` 0 问题，见 §10.7.2 |
+| 15 | **质量基线** | 单测 217、验收 267、RLS 冒烟 22、lint 0 error、console 构建、MCP 双 selftest | 命令见 §10.1.4 / §10.15.6 | 2026-11-06 全绿 |
 
 #### B. 未完成清单（按「会挡住什么」排序）
 
@@ -206,7 +210,7 @@ P6.1 §10.22 · P6.3 §10.23 · P6.4 §10.24 · P6.2 §10.25 · **P6.5 §10.26**
 
 | 层 | 选型 | 说明 |
 | --- | --- | --- |
-| 前端（后台） | Vue 3 + TS + Vite + Element Plus + Pinia | `apps/console/`；pnpm build 出包后托管到 NestJS 静态目录；设计器用 iframe 嵌入旧版 |
+| 前端（后台） | Vue 3 + TS + Vite + Element Plus + Pinia | `apps/console/`；pnpm build 出包后托管到 NestJS 静态目录；设计器已 Vue 化（见 §10.7.2） |
 | 前端（设计器） | 原生 HTML5 + CSS + ES Modules | `web/` 目录；DOM 拖拽（非 Canvas/Konva），后续逐步 Vue 化 |
 | 后端 | NestJS 10 + TypeScript（commonjs） | 单进程；队列 Worker 在同一进程内 |
 | ORM | TypeORM 0.3 + SnakeNamingStrategy | `synchronize: false`，DDL 走 `docs/03-database.sql` |
@@ -458,15 +462,65 @@ apps/console/src/
     ├── PrintJobs.vue          打印任务列表
     ├── Backups.vue            备份中心（P2 新增）
     ├── Templates.vue          引导页（模板管理在设计器里）
-    └── Designer.vue           iframe 嵌入 /designer.html（原生版）
+    ├── Designer.vue           设计器宿主页（2026-11-06 起为原生 Vue 实现，iframe 已删除）
+    └── designer/              设计器本体，见 §10.7.2
 ```
 
-> 设计器目前用 iframe 嵌入原生版本（见下），后续逐步 Vue 化：
-> `render.js#renderElement` → `<DesignerElement>` 组件
-> `interactions.js` → `useDrag()` 组合式
-> `store.js` → Pinia store
+### 10.7.2 Vue 化设计器（apps/console/src/views/designer/ —— 2026-11-06）
 
-### 10.7.2 原生 DOM 设计器（web/ —— 老版本，iframe 嵌入）
+> 原生版（`web/`）的三个大件按 `render.js → 组件` / `interactions.js → 组合式` / `store.js → Pinia`
+> 搬进了 Console，模板 JSON 语义、mm 坐标、快照式撤销重做、WYSIWYG 表现与原生版**逐项对齐**；
+> `web/` 保留为老版本独立客户端，行为口径以它为准（改设计器时先看它，再看这里）。
+
+```
+apps/console/src/views/designer/
+├── types.ts                   元素/页面/变量 schema（对齐 web/js/model.js，唯一事实来源不变）
+├── model.ts                   TOOLS / createElement() / defaultTemplate() —— 逐字段照搬原生
+├── store.ts                   Pinia(options)：template + 选中 + 历史栈（HISTORY_LIMIT 80）
+├── designer.css               全套样式端口（--d-* 变量，类名与原生版一致）
+├── useShortcuts.ts            窗口级快捷键（Ctrl+Z/Y/A/D/C/V/X/S/G、方向键、Delete、Enter）
+├── useAutosave.ts             400ms 防抖写 localStorage
+├── useTemplateIO.ts           保存/另存为/打开/导入导出（走 §10.5 的 /templates 契约）
+├── useGestures.ts             Pointer 手势：选中/拖动/八向缩放/旋转/框选/平移/吸附/参考线
+├── engine/                    无框架依赖的纯函数层（可单测、可被打印复用）
+│   ├── util.ts                MM2PX / r2 / clamp / deepClone（JSON 往返，见下方坑）
+│   ├── context.ts             buildContext() + 白名单公式求值器
+│   ├── barcode.ts             bwip-js 4.11.4 SVG（scale 4）+ 编码自检
+│   ├── render.ts              元素尺寸/样式计算，等价 render.js
+│   └── print.ts               buildPrintHtml()：@page + 拼版 + parseData（JSON/CSV/TSV）
+└── components/
+    ├── DesignerToolbar.vue    名称、脏标记、#id vN、撤销重做、缩放、标尺、层级、复制删除、导入导出保存
+    ├── DesignerToolbox.vue    左侧元素库（12 类，落点居中 + clamp）
+    ├── DesignerCanvas.vue     视口/页面/元素/覆盖层（选中框、手柄、框选、文本编辑器）
+    ├── DesignerElement.vue    单元素渲染 = render.js#renderElement 的声明式版
+    ├── DesignerRulers.vue     标尺 + 从标尺拖出参考线
+    ├── InspectorPanel.vue     四页签容器（属性/页面/图层/变量）+ COMMIT_KEY 事务
+    ├── PropsPanel.vue         按类型分支的属性表单
+    ├── PagePanel.vue          页面尺寸/介质/拼版/校准
+    ├── LayersPanel.vue        图层列表 + 排序 + 锁定/隐藏
+    ├── VariablesPanel.vue     变量定义与校验
+    ├── fields/                FInput / FSelect / FColor / FNumber … 通用字段（focus 快照、blur 提交）
+    ├── TemplateLibraryDialog.vue  模板库：列表/搜索/收藏/打开/复制/导出/删除 + 版本对比/载入/回滚
+    └── PrintPreviewDialog.vue     打印预览：数据源 + 份数/流水号 + srcdoc iframe
+```
+
+**三条实现纪律（改这里之前先读）**
+
+1. **类名与 `data-*` 是手势层契约**：`.lf-el[data-id]`、`[data-page]`、`[data-handle]`、`[data-guide-id]`
+   不能改名——`useGestures` 直接对真实 DOM 做命中测试（和原生版一样），改了静默失效。
+2. **历史粒度统一**：手势用 `snapshot()` → 松手 `commitSnapshot(before)`；表单用 `COMMIT_KEY` 的
+   `begin()/end()`（focus 打快照、change/blur 提交）；标尺拖新参考线用 `addGuideSilent` + 一次提交。
+   任何「拖动过程中每帧 push 历史」的写法都会把 HISTORY_LIMIT 撑爆并毁掉撤销体验。
+3. **`deepClone` 必须走 JSON 往返**：Pinia 的 `template` 是 reactive Proxy，`structuredClone(proxy)`
+   会抛 `DataCloneError`，表现为「拖不动 + 撤销全废」且只在浏览器里报错。原生版用 `structuredClone`
+   是因为它的数据是普通对象，这里不能照抄。
+
+**验证口径**：Playwright 18 项 E2E（登录 → 打开 `/designer` → 加元素 → 撤销/重做 → 拖动 → 缩放 →
+属性回写 → 一维码 SVG → 标尺拖参考线 → 保存出版本 → 模板库列表/缩略图/打开 → 打印预览含 `@page`）
+全绿，0 条 JS 错误；`pnpm build` + `pnpm lint` 0 问题。已知差异：Console 侧不引 SheetJS，
+Excel 数据文件仍在原生版/后端解析，预览弹窗只吃 JSON/CSV/TSV。
+
+### 10.7.3 原生 DOM 设计器（web/ —— 老版本独立客户端）
 
 | 文件 | 职责 |
 | --- | --- |
@@ -497,7 +551,7 @@ apps/console/src/
 | RBAC 四档角色 + 守卫 | ✅ | admin/operator/sql/viewer |
 | 模板 CRUD / 复制 / 收藏 / 搜索 / 版本快照 / 回滚 | ✅ | 版本表已用 |
 | 模板缩略图自动生成 | ✅ | `thumbnail-renderer.ts`（sharp + SVG composite，图形/条码/二维码全可见，服务端保存模板时自动渲染） |
-| 设计器（12 类元素、标尺/网格/参考线、撤销重做、快捷键、复制粘贴） | ✅ | 原生实现 |
+| 设计器（12 类元素、标尺/网格/参考线、撤销重做、快捷键、复制粘贴） | ✅ | 原生实现 + **Console 内 Vue 版（§10.7.2，2026-11-06）** |
 | 变量 / 公式引擎（自研 AST + 循环依赖） | ✅ | `core/formula-engine.ts` |
 | 流水号（行锁 + 号段预分配） | ✅ | 有并发测试 |
 | 条码/二维码（前端渲染 + 服务端出图） | ✅ | bwip-js（前端 vendor 打包） |
@@ -1035,9 +1089,9 @@ bash backend/scripts/p6-rls-smoke.sh         # 22 项：RLS 兜底专用冒烟�
 > 目标（docs/11 §11.10 / §11.4.6）：**前端不再硬编码菜单**，路由、菜单、按钮、页签一律按
 > L1 权限点 + L2 订阅模块判定；被拦时给「模块未订阅 → 升级引导」而不是空白页或裸 403。
 >
-> 本轮同时改两套前端：`apps/console`（Vue 3 + Element Plus，要构建）和 `web/`（零构建原生 DOM，
-> 设计器 iframe 就走这套）。两套读的是同一个 `/auth/me`，只改一套会出现「console 里看不到的入口，
-> 在设计器里照样能点」。
+> 本轮同时改两套前端：`apps/console`（Vue 3 + Element Plus，要构建，设计器 Vue 版在这里）和
+> `web/`（零构建原生 DOM，老版本独立客户端）。两套读的是同一个 `/auth/me`，只改一套会出现
+> 「console 里看不到的入口，在原生设计器里照样能点」。
 
 ### 10.16.1 代码地图
 

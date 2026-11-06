@@ -11,6 +11,8 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // 预览/反向代理会带自己的 Host 头，Vite 默认只允许 localhost
+    allowedHosts: true,
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:3200',
