@@ -1,9 +1,10 @@
 # 10. 开发交接文档（面向接手的 AI / 开发者）
 
 > 本文档目标：**任何 AI 或开发者读完本文即可无缝接手继续开发**，不需要再翻历史对话。
-> 阅读顺序建议：§10.1 速览 → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）** → **§10.19 P3 计费闭环（动账单/配额/计量前必读）** → **§10.20 P4 Agent/MCP（动 /agent/v1、agent token、库存只读模型前必读）** → **§10.21 P5 Agent 写工具与审批流（动 Agent 写路径/限流/幂等/MCP HTTP 前必读）** → **§10.22 P6.1 RLS 兜底（动数据库角色/连接、写任何原生 SQL 前必读）** → **§10.23 P6.3 租户数据导出与硬删 + Agent 前端入口（动 /platform/tenants/:id/export|purge、表清单口径前必读）** → **§10.24 P6.4 白标 D6 + P6.3 platform 前端（动 /branding、登录 Host 解析、主题注入前必读）** → **§10.25 P6.2 独立库租户阶段 A（动 datasource 注册/按库导出前必读）** → **§10.26 P6.5 Prompt 库（动 /agent-prompts、MCP prompts、Agent 下发模板前必读）**。
-> 最后更新：2026-11-06（P0–P5 已落地；**P6 已落 5/5：P6.1 RLS + P6.3 导出/硬删 + P6.4 白标 + P6.5 Prompt 库；P6.2 独立库租户完成阶段 A（注册 + 平台侧按库导出/删除），开通编排与业务读写接管未做**；
-> 本轮新增 **§10.26**；单测 217 条 / 验收 267 项（A–Q 段）/ RLS 冒烟 22 项；P6 只剩 P6.2 阶段 B（见 §10.25.8））
+> 阅读顺序建议：§10.1 速览（**先看 §10.1.5 交付状态总表：做完的 / 没做的都在里面**） → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）** → **§10.19 P3 计费闭环（动账单/配额/计量前必读）** → **§10.20 P4 Agent/MCP（动 /agent/v1、agent token、库存只读模型前必读）** → **§10.21 P5 Agent 写工具与审批流（动 Agent 写路径/限流/幂等/MCP HTTP 前必读）** → **§10.22 P6.1 RLS 兜底（动数据库角色/连接、写任何原生 SQL 前必读）** → **§10.23 P6.3 租户数据导出与硬删 + Agent 前端入口（动 /platform/tenants/:id/export|purge、表清单口径前必读）** → **§10.24 P6.4 白标 D6 + P6.3 platform 前端（动 /branding、登录 Host 解析、主题注入前必读）** → **§10.25 P6.2 独立库租户阶段 A（动 datasource 注册/按库导出前必读）** → **§10.26 P6.5 Prompt 库（动 /agent-prompts、MCP prompts、Agent 下发模板前必读）**。
+> 最后更新：2026-11-06（P0–P5 已落地；**P6 五个子项全部动手：P6.1 RLS + P6.3 导出/硬删 + P6.4 白标 + P6.5 Prompt 库四项完整；P6.2 独立库租户只完成阶段 A（注册 + 平台侧按库导出/删除），开通编排与业务读写接管未做**；
+> 本轮新增 **§10.26**；单测 217 条 / 验收 267 项（A–Q 段）/ RLS 冒烟 22 项；P6 只剩 P6.2 阶段 B（见 §10.25.8）。
+> **接手先读 §10.1.5「交付状态总表」：已完成 14 项、未完成按 🔴/🟡/⚪ 分级列全。**）
 >
 > ⚠️ **2026-11-05 历史瘦身**：`.pnpm-store`（232 MB pnpm 包缓存，被 `95b4970` 误提交）已从
 > `feat/dev-base` 的**全部历史**中移除，`.git` 从 54 MB 降到 1.4 MB。
@@ -77,6 +78,127 @@ curl -s http://localhost:3200/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 #            "modules":[...],"permissions":[37 条],"menus":[...],"features":{...},"dataScopes":[...]}}
 # 更完整的登录要带租户码：-d '{"username":"admin","password":"admin123","tenantCode":"default"}'
 ```
+
+---
+
+### 10.1.5 交付状态总表（2026-11-06，交接以本节为准）
+
+> 结论先说：**P0–P5 六个阶段已完整交付；P6 的五个子项里，P6.1 / P6.3 / P6.4 / P6.5 四项完整**。
+> **P6.2 独立库只交付了阶段 A**（注册 + 平台侧按库导出/删除），**阶段 B（开通编排 / 业务读写接管 / 退库回收）未做**——
+> 这是目前唯一挡在「私有化独立库」对外承诺前面的东西，清单见 B1。
+> 下面「未完成」按「会挡住什么」排序，不按工作量排序；标 🔴 的会挡住对外承诺，标 🟡 的是上线前必须处理，
+> 标 ⚪ 的是功能缺口（不影响已交付主线）。
+
+#### A. 已完成（每一项都有可重跑的验证，不是「写完了」）
+
+| # | 阶段 / 能力 | 交付内容 | 关键落点 | 验证 |
+| --- | --- | --- | --- | --- |
+| 1 | 基础产品 | 模板/版本/收藏、原生设计器、变量公式、流水号、条码二维码、打印队列（BullMQ + SSE）、ZPL/TSPL、Excel/CSV/SQL 数据源、审计、备份恢复、AI 生成模板（透视矫正/单元素重算/文本生模板/切分）、PWA | `backend/src/{template,print,datasource,backup,ai-template}`、`web/`、`apps/console` | 单测 + 手工/历史验收，见 §10.8 |
+| 2 | **P0 权限订阅底座** | tenants/plans/modules/subscriptions/permissions/feature_flags、ModuleGuard/PermissionGuard、`/auth/me` 五件套、单事务开通 | `backend/src/saas/`、`scripts/saas_p0*.sql` | 验收 A–H 段 |
+| 3 | **P1 前端动态化** | 菜单只读 `/auth/me.menus`、路由守卫、`v-permission`/`v-module`、未订阅落地页、订阅页 | `apps/console/src/{router,layouts,views,store}` | 验收 D–G 段 + menu.catalog 单测 |
+| 4 | **P2 平台运营后台** | 平台 JWT scope、租户开通/停用/加购、套餐配置、平台审计、`apps/platform` | `backend/src/saas/platform-admin/`、`apps/platform` | 验收 I–J 段 |
+| 5 | **P3 计费闭环** | 用量采集、配额软/硬限、账单/行项/收款/作废、发票登记、租户账单页 | `backend/src/billing/` | 验收 K 段 19 项 |
+| 6 | **P4 Agent/MCP 只读** | agent 表、`/agent/v1`、stdio MCP、6 只读工具 + 3 元工具、resources | `backend/src/agent/`、`apps/mcp-server` | 验收 L 段 20 项 + MCP selftest |
+| 7 | **P5 Agent 增强** | 5 个写/高危工具、幂等表、审批流（202 need_approval）、Agent 维度限流、`actor_type=agent` 审计、Streamable HTTP | 同上 + `scripts/saas_p5_agent_tools.sql` | 验收 M 段 31 项 |
+| 8 | **P5.5 审批前端** | Agent 客户端 / Token / 待确认三页、参数摘要组件 | `apps/console/src/views/{Agents,AgentApprovals}.vue` | 验收 N 段菜单断言 |
+| 9 | **P6.1 RLS 兜底** | `labelflow_app`（无 BYPASSRLS）/`labelflow_platform`、39 张表 `tenant_isolation`、事务级 GUC、fail-closed | `scripts/saas_p6_rls.sql`、`common/tenant-data-source.manager.ts` | `p6-rls-smoke.sh` 22/0 |
+| 10 | **P6.2 独立库阶段 A** | `tenants.data_source_key`、数据源注册/诊断/注销、平台侧导出/硬删按库路由、provision 拒绝 dedicated | `scripts/saas_p6_dedicated.sql`、`saas/platform-admin/dedicated.*` | 验收 P 段 30 项（真连库需 `D2_DSN`） |
+| 11 | **P6.3 导出/硬删（D12）** | gzip JSON 导出落 `tenant_backups`、硬删三道闸门、`purge-pre` 快照、表清单走 `pg_catalog`、保留期看板 | `saas/platform-admin/tenant-data.service.ts` | 验收 N 段 |
+| 12 | **P6.4 白标（D6）** | 域名 TXT 校验、仅 verified 参与 Host 解析、品牌 7 白名单键 + CSS 变量、平台强校验通道 | `saas/branding/`、`scripts/saas_p6_branding.sql` | 验收 O 段 24 项 |
+| 13 | **P6.5 Prompt 库（D8）** | 系统默认在代码、租户覆盖/自定义、`/agent-prompts` CRUD+预览、MCP 动态下发、Console 页面 | `agent/prompt.*`、`scripts/saas_p6_prompts.sql`、`views/PromptLibrary.vue` | 验收 Q 段 18 项 + 单测 8 条 |
+| 14 | **质量基线** | 单测 217、验收 267、RLS 冒烟 22、lint 0 error、console 构建、MCP 双 selftest | 命令见 §10.1.4 / §10.15.6 | 2026-11-06 全绿 |
+
+#### B. 未完成清单（按「会挡住什么」排序）
+
+**🔴 B1. P6.2 阶段 B：不做就不能对外承诺「独立库已交付」**
+
+| # | 缺口 | 现状 | 要做什么 / 验收口径 | 落点 |
+| --- | --- | --- | --- | --- |
+| 1 | 业务读写接管 | 所有 Repository 仍绑默认 DataSource，独立库只在**平台侧导出/硬删**里生效 | 按 `TenantCtx.dataSourceKey` 把业务事务路由到 `tdsm.get(ctx)`；验收：独立库租户建模板/打库存，共享库 0 行 | `common/tenant-data-source.manager.ts` 的所有注入点 |
+| 2 | 开通编排 | provision 对 `type=dedicated` 直接 400（防假隔离） | 建库 → 跑全量 DDL → 迁移租户行与业务数据 → 行数校验 → 切 `data_source_key` → 回滚预案；验收：一条命令开通且失败可回滚 | `saas/provision.service.ts` + 新脚本 |
+| 3 | 退库回收 | 注销要求「先迁走」，没有任何回收动作 | 硬删后决定保留/销毁独立库；至少一条巡检「库还在、租户已删」 | `tenant-data.service.ts` |
+| 4 | 运维面 | 只有全局 `DB_DEDICATED_POOL`（默认 4） | 每租户池上限、SSL 参数、DSN 轮换、健康检查 | `tenant-data-source.manager.ts` |
+| 5 | 备份 | 只有逻辑 JSON gzip，不是 PITR；独立库物理备份没有 | 独立库物理备份/恢复方案，或明确写入合同「只保证逻辑导出」 | 运维文档 |
+
+**🟡 B2. 上线前必须处理（不挡开发，但挡上线）**
+
+1. **主链路仍是 owner 连库**：RLS 目前只是第二道防线，`labelflow` 是 owner/超管会绕过策略。
+   切到 `labelflow_app` 的条件与顺序见 §10.22.4；切的时候必须同时把「按域名公开解析租户」改走平台角色连接，否则 fail-closed 会让白标静默失效。
+2. **弱口令/密钥**：`labelflow_app` / `labelflow_platform` 的口令是沙盒 dev 值，`JWT_SECRET` / `SQL_SECRET_KEY` / `DB_*` 必须走密钥管理；`BRANDING_DEV_VERIFY=1` 只能存在于 dev。
+3. **白标真实 DNS 未验证**：TXT 比对只有单测 + 平台强校验通道覆盖；上线前拿真域名走一遍并关掉逃生口，ACME 证书自动化未做。
+4. **定时任务缺失**：D12 的「到期前 7 天提醒」只有看板 `warn` 标记，没有消息/邮件；审批过期靠**读时判定**回写（无批量任务）；`tool_idempotency` 没有 TTL 清理（长跑会一直攒行）。
+5. **消息/通知基建缺失**：续费、逾期、审批待办都没有站内信/邮件/飞书通道（P3/P5 的共同前置）。
+6. **敏感数据**：Agent 护栏 7 的「工具返回字段脱敏」仍未做；`print`/`inventory` 返回的业务字段目前原样下发。
+
+**⚪ B3. 功能缺口（不影响已交付主线，按需排期）**
+
+- MCP 工具未注册：`print.estimate`、`print.wait_for_job`、`print.cancel_job`、`ai.*`、`alerts.*`（目录里没有条目，调用是 404，不是占位）。
+- 限流只有 Agent 维度（tenant+client+分钟），无 per-tool / per-token 细分，也没有 `X-RateLimit-*` 响应头（只有 `retry_after`）。
+- D10 反向 MCP（`external_mcp_servers`）只有表，不实现。
+- P6.5 Prompt：无版本历史/回滚、不按角色或用户分、无调用量/采纳率统计。
+- P3：税务发票开具、支付回调/自动扣款、退款红字冲正、续费提醒、按量计费、账单 PDF、多币种均未做（V1 口径见 §10.19.5）。
+- 数据源仅 `postgresql://`；MySQL/SQLServer 未实现。
+- 测试盲区：无 Nest 容器级 e2e、无前端测试、无打印 worker 测试；`web/js` 原生前端无 lint。
+- 白标：按套餐 gating、自定义字体/租户 CSS 文件、一个租户多域名分别品牌均未做（多域名共用一套）。
+
+**⚪ B4. 刻意不做 / 设计取舍（别当 bug 修）**
+
+- 系统提示词权威副本在代码，DB 只存租户覆盖；同名覆盖、删除回落（避免 N 份存量文案）。
+- `provision` 对 dedicated 明确 400：宁可拒绝，也不制造「以为隔离了」的假象。
+- MCP 提示词清单 60s TTL：改完最迟一分钟生效，不要求重启客户端。
+- 单测禁止 import TypeORM 实体/Nest module（`tsx` 不产装饰器元数据）：可测逻辑必须抽纯函数。
+- `meta.permission` 单值、家生子仅单层 FK、`bom_items` 走父表 EXISTS。
+- 独立库 DSN 永不落库，只存 `data_source_key`。
+
+#### C. 交接第一天：把环境跑起来
+
+```bash
+# 1) 数据库（沙盒里数据目录是 /tmp/pfdata，端口 5433；系统盘 cluster 14/main 是空的，别用错）
+su postgres -c "/usr/lib/postgresql/14/bin/pg_ctl -D /tmp/pfdata -o '-p 5433 -k /tmp' -l /tmp/pfdata.log start"
+redis-server --port 6380 --daemonize yes
+
+# 2) 建表顺序（全部幂等，可重跑）
+#    docs/03-database.sql → backend/scripts/seed.sql → saas_p0.sql → saas_p0_roles.sql
+#    → saas_p2_platform.sql → saas_p3_billing.sql → saas_p4_agent.sql → saas_p5_agent_tools.sql
+#    → saas_p6_rls.sql → saas_p6_tenant_data.sql → saas_p6_branding.sql → saas_p6_dedicated.sql
+#    → saas_p6_prompts.sql
+
+# 3) 后端
+cd backend && npx tsc -p tsconfig.json
+setsid env PORT=3200 DB_HOST=127.0.0.1 DB_PORT=5433 DB_USER=labelflow DB_PASS=labelflow DB_NAME=labelflow \
+  DB_RLS_USER=labelflow_app DB_RLS_PASSWORD=labelflow_app REDIS_PORT=6380 \
+  JWT_SECRET=<32+字符> SQL_SECRET_KEY=<60 hex> BRANDING_DEV_VERIFY=1 \
+  D2_DSN='postgres://labelflow:labelflow@127.0.0.1:5433/labelflow_d2' \
+  node -r reflect-metadata dist/src/main.js </dev/null >/tmp/api.log 2>&1 &
+
+# 4) 全量验收（每次换新的 T_CODE/T2_CODE，否则 A.1 撞租户唯一约束）
+cd /app/label-print-system && DB_RLS_USER=labelflow_app D2_DSN='...' T_CODE=hand1 T2_CODE=hand1pro \
+  bash backend/scripts/p0-acceptance.sh     # 期望「通过 267 / 失败 0」
+```
+
+账号：默认租户 `admin/admin123`；平台后台 `platform/platform#2026`；验收脚本自建租户的密码统一 `P0accept#2026`。
+
+#### D. 验收基线（2026-11-06 实跑，重跑数值应一致）
+
+| 命令 | 基线 | 覆盖 |
+| --- | --- | --- |
+| `cd backend && npm test` | **217 / 0** | 纯函数 + 守卫 + 校验 + 计费/Agent/P6 各 calc |
+| `bash backend/scripts/p0-acceptance.sh` | **267 / 0**（A–Q） | 权限订阅、平台、计费、Agent 读写/审批/限流、RLS、导出/硬删、白标、独立库、Prompt |
+| `bash backend/scripts/p6-rls-smoke.sh` | **22 / 0 / 0** | fail-closed、跨租户不可见、角色属性 |
+| `npm run lint`（backend） | 0 error / 13 warning（存量） | 新增文件 0 error |
+| `apps/console` `npm run build` | 通过 | vue-tsc + vite |
+| `apps/mcp-server` `npm run selftest[:http]` | 通过 | 工具/prompts/resources/会话回收 |
+
+细节索引：P0 §10.15 · P1 §10.16 · 校验 §10.17 · P2 §10.18 · P3 §10.19 · P4 §10.20 · P5 §10.21 ·
+P6.1 §10.22 · P6.3 §10.23 · P6.4 §10.24 · P6.2 §10.25 · **P6.5 §10.26**。
+
+#### E. 环境注意（沙盒特有，接手先看）
+
+- `github.com:443` 在本沙盒不可达；推送走 `api.github.com` 的 Git Data API（本地 commit 与远端内容一致，提交哈希不同）。
+- 沙盒重启后 PostgreSQL/Redis 都要手动拉起（见 C.1），API 必须重新 `npx tsc` 并重启。
+- 新增 TypeORM 实体必须同时加到 `backend/src/entities/index.ts`，否则运行时报
+  `EntityMetadataNotFoundError`（接口表现是 500 而不是 400）。
+- 验收脚本会真实建租户/删数据，只对自建靶租户操作；跑之前确认 `D2_DSN` **不是**共享库本身。
 
 ---
 
@@ -392,7 +514,7 @@ apps/console/src/
 ### 10.8.1 自动化测试（P0 后已不再是「只有 16 条」）
 
 ```bash
-cd backend && npm test     # 125 条全通过（core/__tests__ 16 + src/**/__tests__ 109，见 §10.15.6 分布）
+cd backend && npm test     # 217 条全通过（当前基线，分布见 §10.15.6；本节其余描述是 P0 时的状态）
 ```
 
 覆盖已补到：守卫链（Module/Permission/Roles）、`/auth/me` 菜单裁剪、模块依赖闭包、数据范围、
@@ -443,7 +565,7 @@ cd backend && npm test     # 125 条全通过（core/__tests__ 16 + src/**/__tes
    `sql-executor` 14 条（含引号内分号、注释走私、真实 PG 集成，PG 不可达自动 skip）、
    `validate-ai-template` 23 条（脏输入）、`menu.catalog` 12 条、`module-deps` 6 条、
    `data-scope` 7 条、`permission-match` 8 条、`errors.filter` 4 条。
-   `cd backend && npm test` → **125 条全通过**（原 `core/__tests__` 16 条 + `html-renderer` 10 条仍在）。
+   `cd backend && npm test` → **217 条全通过**（当前基线；当时是 125 条，P1–P6 陆续补到 217，见 §10.1.5）。
    ⚠️ 唯一没按原建议做的是 `datasource.service.testSql` 的 service 级测试：`npx tsx` 不产装饰器元数据，
    import 实体就 `ColumnTypeUndefinedError`，因此覆盖下沉到 executor 层，原因写在
    `src/datasource/__tests__/sql-executor.test.ts` 头注释。
@@ -472,8 +594,11 @@ cd backend && npm test     # 125 条全通过（core/__tests__ 16 + src/**/__tes
 
 ---
 
-## 10.10 未完成路线图
+## 10.10 未完成路线图（历史：单租户时代）
 
+> **⚠️ 本节是 2026-11-04 的旧规划，P0–P2 已完成，仅作背景保留。**
+> SaaS 化之后的「做完的 / 没做的」以 **§10.1.5 交付状态总表**为准，别再按本节排期。
+>
 > **⚠️ 重大规划变更**：项目将从「单租户内部系统」升级为 **SaaS 多租户 + 模块订阅 + MCP 智能体接入**。
 > 完整设计、DDL、权限模型、路线（P0–P6）见 **`docs/11-saas-and-agent-architecture.md`**（决策 D1–D12 已锁定）。
 > 做 SaaS 相关开发前**必须先读该文档 §11.15**，其中的硬性约束会改变本文档 §10.5.4 的角色定义（`sql` 角色将废弃）。
