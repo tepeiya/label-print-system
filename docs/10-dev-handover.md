@@ -102,7 +102,7 @@ curl -s http://localhost:3200/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 >
 > **✅ 2026-11-08 当晚更新（P7 轮次已落地，接手做打印相关开发前先读 §10.27）**：P7.2 的结论被复核推翻并重做
 > （ZPL 的 ITF / PDF417 指令用错、MicroQR 谎称原生），P7.3–P7.8 全部完成，新增能力以 `CAP_MATRIX` 为单一真源。
-> 本轮实跑基线刷新为：单测 **385 tests / 377 pass / 0 fail / 8 skip**（P7 前 219/212/0/7）、backend `tsc --noEmit` **0 error**、
+> 本轮实跑基线刷新为：单测 **388 tests / 380 pass / 0 fail / 8 skip**（P7 前 219/212/0/7）、backend `tsc --noEmit` **0 error**、
 > `bash backend/scripts/p7-acceptance.sh` **EXIT 0 / PASS 58 / FAIL 0 / SKIP 1**（唯一 SKIP 是 D 段：沙箱没起后端）、
 > `apps/console` `pnpm build` + `pnpm lint` **0 问题**。**但真机验证一项都没做**（沙箱没有打印机），待办见 §10.27.9。
 
@@ -212,7 +212,7 @@ cd /app/label-print-system && DB_RLS_USER=labelflow_app D2_DSN='...' T_CODE=hand
 
 | 命令 | 基线 | 覆盖 |
 | --- | --- | --- |
-| `cd backend && npm test` | **385 / 377 pass / 0 fail / 8 skip** | 含 P7 新增 166 条（gs1 49 / geometry 33 / golden 28 / epl 34 / caps-sync 22） |
+| `cd backend && npm test` | **388 / 380 pass / 0 fail / 8 skip** | 含 P7 新增 169 条（gs1 50 / geometry 33 / golden 30 / epl 34 / caps-sync 22） |
 | `npx tsc --noEmit -p tsconfig.json` | **0 error** | 含 `core/**` 生成器本体 |
 | `bash backend/scripts/p7-acceptance.sh` | **EXIT 0 / PASS 58 / FAIL 0 / SKIP 1**（见 §10.27.7；无 DB/无打印机的段落必须是 SKIP，不许假 PASS） | 三协议指令自洽、字节契约、GS1 转写、真实点阵解码回判 |
 | `apps/console` `pnpm build && pnpm lint` | **0 问题** | vue-tsc + vite + eslint |
@@ -2240,7 +2240,7 @@ ZPL `^GFA` → `]d2`、TSPL `BITMAP` → `]d2`、EPL `GW` → `]Q1`（QR 明文�
 - `microqrcode` 装 GTIN：bwip-js 对**任何** `^FNC1` 文本都报 `bwipp.qrcodeNoValidSymbol`（连 `(13)260101` 也一样）→ GS1 Micro QR 在本实现里出不了图。`gs1BwipText` 因此**显式抛错**给可读原因（「请改用 DATAMATRIX 或 QRCODE」），而不是等出图失败再兜底；同时它仍留在名单里，防止哪天被顺手删掉后退回「带括号的普通 Micro QR」这种错码。打印侧表现为 `[位图] … 该元素将被跳过（宁可不打，不打错码）`，预览侧表现为占位；
 - 括号 AI 结构解析不出来（尾随垃圾 / 空 AI / AI 前有多余字符）→ **抛错**，绝不退回字面括号。注意 `parseGs1` 只管结构不管长度，`(01)0425` 是能解析的，长度合法性由码制侧（bwip）拒。
 
-调用点：`core/barcode-renderer.ts` 的 `barcodeBwipOptions` / `qrcodeBwipOptions`（预览与位图通道共用同一份参数构造，所以预览不会再是另一种符号）。回归锁：`__tests__/gs1.test.ts`（49 条）+ `caps-sync.test.ts` 的转写口径段。
+调用点：`core/barcode-renderer.ts` 的 `barcodeBwipOptions` / `qrcodeBwipOptions`（预览与位图通道共用同一份参数构造，所以预览不会再是另一种符号）。回归锁：`__tests__/gs1.test.ts`（50 条）+ `caps-sync.test.ts` 的转写口径段。
 
 协议侧 GS1 语义现状（与上面不同，这是**指令层**）：
 
@@ -2313,26 +2313,26 @@ warning 前缀现在共 **13 类**，前端按前缀分类展示：core 侧 12 �
 
 | 文件 | 用例 | 锁什么 |
 | --- | --- | --- |
-| `core/__tests__/gs1.test.ts` | 49 | AI 定长表（含 42xx–46xx 归变长的修正）、`parseGs1`、三种转写输出（ZPL `>;`/`>8`、裸流 0x1D、bwip `^FNC1`）的分隔符条数互相等值、`^^` 转义、名单外 bcid 返回 undefined、结构解析失败抛错、`(00)/(01)/(02)` 的 Mod10 校验位、`barcode-renderer` 调用点只读源码扫描 |
+| `core/__tests__/gs1.test.ts` | 50 | AI 定长表（含 42xx–46xx 归变长的修正）、`parseGs1`、三种转写输出（ZPL `>;`/`>8`、裸流 0x1D、bwip `^FNC1`）的分隔符条数互相等值、`^^` 转义、名单外 bcid 返回 undefined、结构解析失败抛错、`(00)/(01)/(02)` 的 Mod10 校验位、`barcode-renderer` 调用点只读源码扫描 |
 | `core/__tests__/geometry.test.ts` | 33（1 skip） | 点距/X-dim 量化/固定比例/高度下限/静区整数点/旋转明文/档位重试（①自动上调 ②三档全奇必抛 ③上调必发 warning） |
-| `core/__tests__/golden.test.ts` | 28 | 三协议 × 码制指令快照逐字节比对（66 份 `.txt`）；`^GFA` 断言含「b==c、c==d×rows、c≠rows、hex 长度==2b、b%d==0、hex==synthFallback」并自带两条合成样本自检（防止结构断言沦为装饰） |
+| `core/__tests__/golden.test.ts` | 30 | 三协议 × 码制指令快照逐字节比对（66 份 `.txt`）；`^GFA` 断言含「b==c、c==d×rows、c≠rows、hex 长度==2b、b%d==0、hex==synthFallback」并自带两条合成样本自检（防止结构断言沦为装饰）；一维 ZPL 的 `^BY` 另做**由几何反算**的守卫（w==xDots、r==round(clamp(wide/x,2..3)×10)/10，固定比例恒 2，禁止原样下发用户值）+ 六种坏样本自证 |
 | `core/__tests__/epl.test.ts` | 34 | EPL 页头/类型码/校验位类型码/`GW` 宽高与载荷字节数/位极性翻转/数据字段永不省略/审计表↔类型码↔实际输出三方一致 |
 | `core/__tests__/caps-sync.test.ts` | 22 | 见 §10.27.1 的防漂移四类关系 + §10.27.5 的 Console GS1 副本一致性 |
 | `core/__tests__/golden/cases.ts` `update.ts` | — | 用例定义与快照重生成：`npx tsx core/__tests__/golden/update.ts` |
 
-- 本轮新增 **166 条**（49 + 33 + 28 + 34 + 22）。`npm test` 的 8 条 skip 是 7 条 PG 集成用例（本机无库）+ 1 条**刻意留的指针**：
+- 本轮新增 **169 条**（50 + 33 + 30 + 34 + 22）。`npm test` 的 8 条 skip 是 7 条 PG 集成用例（本机无库）+ 1 条**刻意留的指针**：
   「抽稀后偶数性/无损性」不能进单测（会拉进 sharp/bwip，违反纯函数红线），改由验收脚本 C 段实跑，用例里写明去向。
 
 - golden 的关键设计：位图段**不调 `raster.ts`**（bwip/sharp 出图非确定性，快照会天天变），而是塞一个手写确定点阵 `synthFallback()`（`cases.ts:97`），因此快照里的 `BITMAP`/`GW`/`^GFA` 头部与字节数可复现，而真实点阵正确性由 §10.27.2 的解码回判与真机清单负责。
 - 每份快照头部写明：`CAP_MATRIX_VERSION`、该码制在该协议下的 `status`、`planChannel` 的 `why`、该回归点一句话。所以快照红的时候先读头部就知道是「结论变了」还是「实现漂了」。
 - `backend/scripts/p7-acceptance.sh`（806 行）：P7 的离线验收脚本，四段 —— **A** typecheck + `npm test` 真实数字（不截断）、**B** golden 默认模式（不许写盘，另附「手改一份快照 → 必红 → 还原 → md5 一致」的可红性演示）、**C** 真实点阵往返（`raster.ts` 出图 → 独立重建 → `cv2.QRCodeDetector` / `zxingcpp` 解回，含 AIM 断言、`^GFA`/`BITMAP`/`GW` 三协议的字节自洽、PDF417 档位上调五组、RGBA 透明底陷阱正反两例）、**D** `POST /print/commands` 三协议冒烟。**没有后端/打印机/Python 依赖时必须 SKIP 而不能假 PASS**（D 段在本沙箱就是 SKIP）。
-- 本轮实跑基线（2026-11-08，沙箱）：`cd backend && npm test` → **385 tests / 377 pass / 0 fail / 8 skip**（P7 前基线 219/212/0/7，本轮 +166）；`npx tsc --noEmit -p tsconfig.json` → **0 error**；`bash backend/scripts/p7-acceptance.sh` → **EXIT 0，PASS 58 / FAIL 0 / SKIP 1**（前置 0/0/0 · A 5/0/0 · B 5/0/0 · C 48/0/0 · D 0/0/1），连续两次整跑计数一致；`cd apps/console && pnpm build && pnpm lint` → 均 exit 0。
+- 本轮实跑基线（2026-11-08，沙箱）：`cd backend && npm test` → **388 tests / 380 pass / 0 fail / 8 skip**（P7 前基线 219/212/0/7，本轮 +169）；`npx tsc --noEmit -p tsconfig.json` → **0 error**；`bash backend/scripts/p7-acceptance.sh` → **EXIT 0，PASS 58 / FAIL 0 / SKIP 1**（前置 0/0/0 · A 5/0/0 · B 5/0/0 · C 48/0/0 · D 0/0/1），连续两次整跑计数一致；`cd apps/console && pnpm build && pnpm lint` → 均 exit 0。
 - ⚠️ 写指令类单测的一条卫生要求：**读作业 buffer 不要用 `toString('ascii')`**（`engines.test.ts:155/167` 是既有写法，只因那两条用例的作业确实不含位图段才成立）。要看字节就用 `latin1` 或 `Buffer.compare`，否则将来给同一个用例加一个 `BITMAP`/`GW` 元素时，字节损坏会被悄悄吃掉。
 
 ### 10.27.8 复核命令（接手请先全跑一遍）
 
 ```bash
-cd backend && npm test                                   # 期望 385 / 377 / 0 fail / 8 skip
+cd backend && npm test                                   # 期望 388 / 380 / 0 fail / 8 skip
 npx tsc --noEmit -p tsconfig.json                       # 期望 0 error
 node --import tsx --test core/__tests__/caps-sync.test.ts   # 22 条：矩阵/前后端/GS1 漂移守卫
 npx tsx core/__tests__/golden/update.ts                  # 只有**故意**改结论时才跑，跑完 git diff 必须能解释

@@ -9,6 +9,10 @@
 // 所以它的正确性标准不是「等于真实符号宽度」，而是
 //   ① 结构公式可复现（下面每条都写了推导）；
 //   ② 估不出来时返回 0（绝不能猜一个数，猜错会把用户往不合理的高度上带）。
+// P7.8 裁决（d/e/f）：0 既表示「估不出来」又表示「算出来是 0」，这个歧义**刻意保留**——
+//   改成 null 会牵动 66 份 golden，而 `if (lenMm > 0)` 静默跳过 25% 建议正是「估不准就不提示、
+//   避免噪音」的设计。因此本文件把这些行为钉成**契约**（不是待修 bug），歧义与偏差只做注释说明，
+//   已知限制由实现侧写进 docs §10.27.4。
 //
 // 推导对照（模块 = 最窄单元，r = 宽窄比）：
 //   · CODE128：每字符 11 模块。符号 = 起始 11 + 数据 11n + 校验 11 + 终止 13
@@ -25,7 +29,8 @@
 //       少算 p−3 个模块（n=8、r=2.5 时实现 66 vs 精确 72.5）。
 //   · CODABAR：每字符 7 元素（4 条 3 空，2 宽）= 5 + 2r，同样未计字符间隔。
 //   · MSI：规范每字符 4 元素（4~8 模块）≈ 7 模块 + 间隔；实现给 12(n+2)+4r，
-//       明显偏大（n=5 时 94 vs 约 52），保守地抬高建议高度下限，属可改进项。
+//       明显偏大（n=5 时 94 vs 约 52），只会保守地抬高建议高度下限。
+//       P7.8 裁决 (e)：这类估算偏差不改行为（提示层，且偏保守方向安全），按已知限制写进文档。
 //   · CODE16K / PHARMACODE / 所有二维：无法用「字符数 × 固定模块」估 → 返回 0。
 // =============================================================================
 import { test } from 'node:test';
@@ -292,7 +297,9 @@ test('高度-没给 heightMm 时按 8mm 兜底换算成点数（≥1 点），�
 });
 
 test('高度-估不出符号长度的码制不猜长度，也不因此报高度提示', () => {
-  // PHARMACODE / CODE16K / 二维：estimateModules 返回 0 → 跳过 25% 判定
+  // PHARMACODE / CODE16K / 二维：estimateModules 返回 0 → 跳过 25% 判定。
+  // 「估不准就不提示」是刻意的（宁可不提醒，也不给一个会把用户带偏的建议值）；
+  // 这条静默通道与「算出来真是 0」共用同一个返回值，歧义只做注释说明、不改 null（裁决 d/f）。
   for (const sym of ['PHARMACODE', 'CODE16K', 'QRCODE', 'DATAMATRIX']) {
     assert.equal(estimateModules(sym, 'ABC'), 0, `${sym} 不该被猜长度`);
     const g = computeGeometry({ sym, dpi: 203, moduleWidthMm: 0.25, heightMm: 0.5, content: 'ABC' });
@@ -347,7 +354,9 @@ test('估算-ratio 传 NaN 时 modules 为 NaN、长度被吞成 0（如实记�
   // Math.max(1.5, Math.min(3.5, NaN)) = NaN —— 钳位对 NaN 不设防，estimateModules 直接返回 NaN；
   // estimateSymbolLengthMm 的 `mods > 0` 判定把 NaN 归入「估不出来 → 返回 0」，
   // 于是 NaN 宽窄比与真估不出来的码制（PHARMACODE/二维）在提示层不可区分。
-  // 后果有限（只影响 25% 高度建议，不影响指令数值），属可改进项：应在钳位前判 Number.isFinite。
+  // 后果有限（只影响 25% 高度建议，不影响指令数值）。P7.8 裁决 (e)：这个 0 的歧义**只写注释/文档**，
+  // 不把返回值改成 null —— 提示层的「没有建议」和「建议为 0」在本系统里行为一致，而改动会牵动 66 份 golden。
+  // （若将来真要区分，先改提示层判据再动返回值，别让返回值单独变成 null。）
   assert.ok(Number.isNaN(estimateModules('CODE39', 'AB', NaN)));
   assert.equal(estimateSymbolLengthMm('CODE39', 'AB', 0.5, NaN), 0);
   assert.equal(estimateSymbolLengthMm('PHARMACODE', 'AB', 0.5), 0, '同类静默路径的对照组');

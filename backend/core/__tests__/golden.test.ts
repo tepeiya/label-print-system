@@ -523,6 +523,9 @@ function checkBy(where: string, cmds: string, geo: { xDots: number; wideDots: nu
   const { w, r, h, rRaw } = byLine(where, cmds);
   assert.equal(w, geo.xDots, `${where}：^BY 第 1 段必须等于量化后的模块点数 ${geo.xDots}，实得 ${w}`);
   assert.ok(h >= 10 && h <= 3200, `${where}：^BY 第 3 段（高度）超出 ZPL 合法范围：${h}`);
+  // 先判写法（ZPL 只吃 2.0–3.0、0.1 步长），再判取值口径
+  assert.ok(/^[23](?:\.\d)?$/.test(rRaw), `${where}：宽窄比必须是 ZPL 允许的 2.0–3.0/0.1 步长写法，实得 ${rRaw}`);
+  assert.ok(r >= 2 && r <= 3, `${where}：宽窄比 ${r} 超出 ZPL 手册的 2.0–3.0`);
   // 用户请求值只有在「恰好等于打印机真正会打的比例」时才允许原样下发
   const eff = geo.fixedRatio ? 1 : geo.wideDots / geo.xDots;
   const expected = geo.fixedRatio ? 2 : Math.round(Math.min(3, Math.max(2, eff)) * 10) / 10;
@@ -532,8 +535,6 @@ function checkBy(where: string, cmds: string, geo: { xDots: number; wideDots: nu
   if (!geo.fixedRatio && Math.abs(eff - BY_REQUESTED_RATIO) > 1e-9) {
     assert.notEqual(r, BY_REQUESTED_RATIO, `${where}：${eff.toFixed(4)}:1 落不到 2.5 的整数倍，不得把用户值原样下发`);
   }
-  assert.ok(/^[23](?:\.\d)?$/.test(rRaw), `${where}：宽窄比必须是 ZPL 允许的 2.0–3.0/0.1 步长写法，实得 ${rRaw}`);
-  assert.ok(r >= 2 && r <= 3, `${where}：宽窄比 ${r} 超出 ZPL 手册的 2.0–3.0`);
 }
 
 test('回归点-ZPL ^BY 宽窄比 = 由几何 wideDots/xDots 反算（2.7 不是笔误，也不能写回用户的 2.5）', () => {
@@ -551,20 +552,19 @@ test('回归点-ZPL ^BY 宽窄比 = 由几何 wideDots/xDots 反算（2.7 不是
   assert.ok(Math.abs(itfGeo.wideDots / itfGeo.xDots - 2.6666667) < 1e-6);
 });
 
-test('回归点-ZPL ^BY 判据可失败：用户值直发 / 超步长小数 / 模块宽与几何脱钩，三种坏样本都要炸', () => {
+test('回归点-ZPL ^BY 判据可失败：用户值直发 / 超步长小数 / 越界 / 模块宽与几何脱钩，坏样本都要炸', () => {
   const geo = { xDots: 3, wideDots: 8, fixedRatio: false }; // 正常值应得 ^BY3,2.7,96
   checkBy('好样本', '^FO10,8^BY3,2.7,96^BVN,N,96', geo);
-  const badUser = /^FO\d+,\d+\^BY3,2\.5,96/.source + '^BVN,N,96';
-  assert.throws(() => checkBy('坏样本-直发用户值', badUser, geo),
+  assert.throws(() => checkBy('坏样本-直发用户值', '^FO10,8^BY3,2.5,96^BVN,N,96', geo),
     /宽窄比应为 2\.7|落不到 2\.5 的整数倍/, '把 2.5 原样下发必须判失败');
-  assert.throws(() => checkBy('坏样本-超步长', '^FO10,8^BY3,2.666667,96^BVN,N,96', geo),
-    /0\.1 步长|2\.0–3\.0/);
-  assert.throws(() => checkBy('坏样本-越界', '^FO10,8^BY3,1.5,96^BVN,N,96', geo), /应为 2\.7|2\.0–3\.0/);
+  assert.throws(() => checkBy('坏样本-超步长', '^FO10,8^BY3,2.666667,96^BVN,N,96', geo), /0\.1 步长/);
+  assert.throws(() => checkBy('坏样本-越界', '^FO10,8^BY3,3.5,96^BVN,N,96', geo), /超出 ZPL 手册的 2\.0–3\.0/);
   assert.throws(() => checkBy('坏样本-模块宽脱钩', '^FO10,8^BY4,2.7,96^BVN,N,96', geo), /第 1 段必须等于/);
+  assert.throws(() => checkBy('坏样本-高度越界', '^FO10,8^BY3,2.7,9^BVN,N,9', geo), /第 3 段（高度）/);
   // 固定比例码制：第 2 段落在最小合法值 2，且不得跟着几何里的 wideDots 跑
   checkBy('好样本-固定比例', '^FO10,8^BY3,2,96^BEN,N', { xDots: 3, wideDots: 3, fixedRatio: true });
-  assert.throws(() => checkBy('坏样本-固定比例', '^FO10,8^BY3,1,96^BEN,N', { xDots: 3, wideDots: 3, fixedRatio: true }),
-    /应为 2\b|2\.0–3\.0/);
+  assert.throws(() => checkBy('坏样本-固定比例', '^FO10,8^BY3,2.5,96^BEN,N', { xDots: 3, wideDots: 3, fixedRatio: true }),
+    /宽窄比应为 2（/);
 });
 
 // ---------------------------------------------------------------------------
