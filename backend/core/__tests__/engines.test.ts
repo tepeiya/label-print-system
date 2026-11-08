@@ -122,20 +122,47 @@ test('DPI-毫米转点阵', () => {
 
 // ----------------------------- 5. ZPL / TSPL 指令生成 -----------------------------
 test('ZPL-生成含头尾与内容', () => {
-  const zpl = generateZpl([{
+  const { text: zpl, warnings: zplWarn } = generateZpl([{
     type: 'text', xMm: 2, yMm: 2, text: 'Hello', fontHeightMm: 4,
   }, {
     type: 'barcode', xMm: 4, yMm: 10,
     barcode: { sym: 'CODE128', content: 'ABC123', moduleWidthMm: 0.25, wideRatio: 2.5, heightMm: 10, showText: true, textPosition: 'bottom', checksum: true },
   }], 300);
+  assert.equal(zplWarn.length, 0);
   assert.match(zpl, /\^XA/); assert.match(zpl, /\^XZ/);
   assert.match(zpl, /Hello/); assert.match(zpl, /ABC123/);
 });
 
+test('ZPL-不支持码制出 warning 不静默降级（P7.1）', () => {
+  const { text: zpl, warnings } = generateZpl([{
+    type: 'barcode', xMm: 4, yMm: 10,
+    // CODE16K 不在 SUPPORTED_ZPL_BARCODES 里
+    barcode: { sym: 'CODE16K', content: 'ABC123', moduleWidthMm: 0.25, wideRatio: 2.5, heightMm: 10, showText: true, textPosition: 'bottom', checksum: true },
+  }], 300);
+  assert.ok(warnings.length >= 1);
+  assert.match(warnings[0], /CODE16K|不支持/);
+  // 关键：不支持的码制**不应**再出 Code128 fallback 指令
+  assert.doesNotMatch(zpl, /\^BC/);
+});
+
 test('TSPL-生成 SIZE/PRINT', () => {
-  const buf = buildTspl([{ type: 'text', xMm: 2, yMm: 2, text: 'Hi', fontHeightMm: 4 }], 203, { widthMm: 60, heightMm: 40, gapMm: 2, copies: 1 });
-  const s = buf.toString('ascii');
+  const { buffer, warnings: tsplWarn } = buildTspl([{ type: 'text', xMm: 2, yMm: 2, text: 'Hi', fontHeightMm: 4 }], 203, { widthMm: 60, heightMm: 40, gapMm: 2, copies: 1 });
+  assert.equal(tsplWarn.length, 0);
+  const s = buffer.toString('ascii');
   assert.match(s, /SIZE/); assert.match(s, /PRINT/); assert.match(s, /Hi/);
+});
+
+test('TSPL-不支持码制出 warning 不静默降级（P7.1）', () => {
+  const { buffer, warnings } = buildTspl([{
+    type: 'barcode', xMm: 4, yMm: 10,
+    // CODE16K 不在 SUPPORTED_TSPL_BARCODES 里
+    barcode: { sym: 'CODE16K', content: 'ABC123', moduleWidthMm: 0.25, wideRatio: 2.5, heightMm: 10, showText: true, textPosition: 'bottom', checksum: true },
+  }], 203, { widthMm: 60, heightMm: 40, gapMm: 2, copies: 1 });
+  assert.ok(warnings.length >= 1);
+  assert.match(warnings[0], /CODE16K|不支持/);
+  const s = buffer.toString('ascii');
+  // 关键：不支持的码制**不应**再回落 '128'
+  assert.doesNotMatch(s, /BARCODE.*128/);
 });
 
 // ----------------------------- 6. 条码出图（真实 PNG） -----------------------------

@@ -42,13 +42,37 @@ function zplOrient(rot: number): 'N' | 'R' | 'I' | 'B' {
   return ({ 90: 'R', 180: 'I', 270: 'B' } as const)[rot as 90 | 180 | 270] ?? 'N';
 }
 
+// =============================================================================
+// ZPL II 支持的码制集合（不包括 QRCODE/MICROQR/DATAMATRIX/PDF417/AZTEC，
+// 它们走 qrcode 分支。不在这个集合里的一维码制会出现在 warnings 里，
+// 且不输出任何条码指令——**不再静默降级为 Code128**（违反 docs/05-api.md §8.3）。
+// =============================================================================
+const SUPPORTED_ZPL_BARCODES = new Set<string>([
+  'CODE128', 'GS1_128',
+  'CODE39', 'CODE93',
+  'EAN13', 'EAN8',
+  'UPC', 'UPC_E',
+  'ITF', 'ITF14',
+  'CODABAR',
+  'MSI',
+]);
+
+const SUPPORTED_ZPL_QRCODES = new Set<string>([
+  'QRCODE', 'MICROQR',
+  'DATAMATRIX', 'DATAMATRIX_RECT',
+  'PDF417',
+  'AZTEC',
+]);
+
 /**
  * 生成单个标签的完整 ZPL（不含作业头尾 ^XA/^XZ 由调用方包）。
- * @param els 已按数据行解析好的元素数组（含流水号已替换）
- * @param dpi 打印机 dpi
+ * @returns { text: string; warnings: string[] }
+ *   text     —— 完整 ZPL 指令串
+ *   warnings —— 不支持码制、参数异常等提示（不会抛异常，允许"能打多少打多少"）
  */
-export function generateZpl(els: ZplElement[], dpi: number): string {
+export function generateZpl(els: ZplElement[], dpi: number): { text: string; warnings: string[] } {
   const out: string[] = ['^XA', '^CI28', '^FH\\']; // 标签起始 + UTF-8 + 十六进制转义开关
+  const warnings: string[] = [];
 
   for (const e of els) {
     const x = mmToDots(e.xMm, dpi);
@@ -68,6 +92,11 @@ export function generateZpl(els: ZplElement[], dpi: number): string {
       }
       case 'barcode': {
         const b = e.barcode!;
+        const sym = zplSymKey(b.sym);
+        if (!SUPPORTED_ZPL_BARCODES.has(sym)) {
+          warnings.push(`ZPL 不支持一维码制 "${b.sym ?? ''}"，该元素已跳过输出；如需打印请改用 TSPL 或图像通道`);
+          break; // ⚠️ 关键：不 fallback Code128，让 warnings 暴露问题
+        }
         const bh = Math.max(1, mmToDots(b.heightMm, dpi));
         const byW = Math.max(1, mmToDots(b.moduleWidthMm, dpi));
         // ^BY 宽窄比有效范围 2.0~3.0，缺省 2.5（uC 未传时为 undefined 会产生 ^BY2,undefined）
@@ -77,12 +106,16 @@ export function generateZpl(els: ZplElement[], dpi: number): string {
         const human = b.showText ? 'Y' : 'N';
         const checksum = b.checksum === false ? 'N' : 'Y';
         out.push(`^FO${x},${y}^BY${byW},${ratio},${bh}`);
-        out.push(...zplBarcodeLine(b.sym, orient, bh, human, checksum, b.content));
+        out.push(...zplBarcodeLine(sym, orient, bh, human, checksum, b.content));
         break;
       }
       case 'qrcode': {
         const q = e.qrcode!;
         const key = String(q.sym ?? 'QRCODE').toUpperCase();
+        if (!SUPPORTED_ZPL_QRCODES.has(key)) {
+          warnings.push(`ZPL 不支持二维码制 "${q.sym ?? ''}"，该元素已跳过输出；如需打印请改用 TSPL 或图像通道`);
+          break;
+        }
         const content = esc(q.content);
         const moduleDots = mmToDots(q.moduleSizeMm ?? 0.4, dpi);
         // ZPL 放大系数 1-10（每个模块 dots）
@@ -140,7 +173,7 @@ export function generateZpl(els: ZplElement[], dpi: number): string {
   }
 
   out.push('^XZ'); // 标签结束
-  return out.join('\n');
+  return { text: out.join('\n'), warnings };
 }
 
 /** 码制归一化（前端使用 CODE128 / UPC_E / GS1_128 等大写标识） */
@@ -165,6 +198,10 @@ function zplSymKey(sym: string): string {
  *   ^BI o,h,f,g      Interleaved 2 of 5
  *   ^BK o,e,h,f,g    Codabar
  *   ^BM o,e,h,f,g    MSI
+ *
+ * ⚠️ 不支持的码制**不再统一回落 Code128**（违反 docs/05-api.md §8.3）。
+ * 调用方在调用本函数前必须先用 SUPPORTED_ZPL_BARCODES 过滤，
+ * 不支持的码制应出现在 warnings 里并跳过指令生成。
  */
 function zplBarcodeLine(
   sym: string, orient: 'N' | 'R' | 'I' | 'B', bh: number,
@@ -199,9 +236,10 @@ function zplBarcodeLine(
     case 'MSI':
       return [`^BM${orient},${checksum},${bh},${human},N^FD${fd}^FS`];
     case 'CODE128':
-    default:
-      // 其余（PHARMACODE / CODE16K 等）统一回落 Code128，避免输出空指令
       return [`^BC${orient},${bh},${human},N,${checksum}^FD${fd}^FS`];
+    default:
+      // ⚠️ 显式 throw 让调用方知道过滤漏掉了；生产代码不应走到这里
+      throw new Error(`zplBarcodeLine: 意外的码制 "${sym}"，调用方应先用 SUPPORTED_ZPL_BARCODES 过滤`);
   }
 }
 

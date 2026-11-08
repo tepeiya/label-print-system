@@ -82,29 +82,31 @@ export class RawTcpProvider implements PrinterProvider {
 
     let text: string;
     if (protocol === 'tspl') {
-      const parts = labels.map((f) => buildTsplJob(
-        f.tspl ?? [],
-        printer.dpi,
-        {
-          widthMm: printer.widthMm,
-          heightMm: printer.heightMm,
-          gapMm: printer.gapMm ?? 2,
-          copies: Math.max(1, copies),
-        },
-        printer.orientation,
-      ).toString('ascii'));
+      const parts = labels.map((f) => {
+        const out = buildTsplJob(
+          f.tspl ?? [],
+          printer.dpi,
+          {
+            widthMm: printer.widthMm,
+            heightMm: printer.heightMm,
+            gapMm: printer.gapMm ?? 2,
+            copies: Math.max(1, copies),
+          },
+          printer.orientation,
+        );
+        return out.buffer.toString('ascii');
+      });
       text = parts.join('');
       if (printer.density !== undefined && printer.density !== null) text = `DENSITY ${printer.density}\r\n` + text;
       if (printer.speed !== undefined && printer.speed !== null) text = `SPEED ${printer.speed}\r\n` + text;
       if (offX || offY) text = `OFFSET ${offX},${offY}\r\n` + text;
     } else {
       const frames = labels.map((f) => {
-        let zpl = generateZpl(f.zpl ?? [], printer.dpi);
+        const { text: raw } = generateZpl(f.zpl ?? [], printer.dpi);
         const head = `^LH${offX},${offY}`
           + (printer.density !== undefined && printer.density !== null ? `~SD${printer.density}` : '')
           + (printer.speed !== undefined && printer.speed !== null ? `^PR${printer.speed}` : '');
-        zpl = zpl.replace('^XA', `^XA${head}`);
-        return zpl;
+        return raw.replace('^XA', `^XA${head}`);
       });
       text = buildZplJob(frames, Math.max(1, copies));
     }

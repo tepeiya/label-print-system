@@ -98,6 +98,7 @@ export class PrintCommandsController {
     const speed = b.speed;
 
     const frames: string[] = [];
+    const genWarnings: string[] = [];
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const sysVars = {
@@ -108,17 +109,19 @@ export class PrintCommandsController {
       };
       const rendered = this.render.renderRow(tpl.elements ?? [], row, b.serialMap ?? {}, sysVars, i);
       if (protocol === 'zpl') {
-        const zpl = generateZpl(this.render.toZplElements(rendered), dpi);
-        let out = zpl.replace('^XA', `^XA^LH${offX},${offY}` + (density ? `~SD${density}` : '') + (speed ? `^PR${speed}` : ''));
+        const zplOut = generateZpl(this.render.toZplElements(rendered), dpi);
+        genWarnings.push(...zplOut.warnings);
+        let out = zplOut.text.replace('^XA', `^XA^LH${offX},${offY}` + (density ? `~SD${density}` : '') + (speed ? `^PR${speed}` : ''));
         out = out.replace('^XZ', `^PQ${copies}^XZ`);
         frames.push(out);
       } else {
-        const tspl = buildTsplJob(this.render.toTsplElements(rendered), dpi, {
+        const tsplOut = buildTsplJob(this.render.toTsplElements(rendered), dpi, {
           widthMm: b.widthMm ?? tpl.page.widthMm,
           heightMm: b.heightMm ?? tpl.page.heightMm,
           gapMm, copies,
         }, (tpl.page.orientation ?? 0) as any);
-        let text = tspl.toString('utf8');
+        genWarnings.push(...tsplOut.warnings);
+        let text = tsplOut.buffer.toString('utf8');
         if (density !== undefined) text = `DENSITY ${density}\r\n` + text;
         if (speed !== undefined) text = `SPEED ${speed}\r\n` + text;
         frames.push(text);
@@ -132,7 +135,8 @@ export class PrintCommandsController {
       labelCount: rows.length * copies,
       bytes: Buffer.byteLength(text, 'utf8'),
       dpi,
-      warnings: buildWarnings(protocol, tpl),
+      // 合并：生成器不支持码制警告 + 已有的协议层提示（TSPL 中文 / 二维码）
+      warnings: [...new Set([...genWarnings, ...buildWarnings(protocol, tpl)])],
     };
   }
 }

@@ -164,8 +164,8 @@ export class PrinterService {
       { type: 'text', xMm: 3, yMm: 3, text: 'LabelFlow Test', fontHeightMm: 4, fontWidthMm: 3, bold: true },
     ];
     const text = p === 'tspl'
-      ? buildTsplJob(els, printer.dpi, { widthMm: printer.labelWidthMm, heightMm: printer.labelHeightMm, gapMm: 2, copies: 1 }).toString('ascii')
-      : generateZpl(els, printer.dpi);
+      ? buildTsplJob(els, printer.dpi, { widthMm: printer.labelWidthMm, heightMm: printer.labelHeightMm, gapMm: 2, copies: 1 }).buffer.toString('ascii')
+      : generateZpl(els, printer.dpi).text;
     return { protocol: p, text };
   }
 }

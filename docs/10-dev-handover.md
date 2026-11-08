@@ -87,13 +87,18 @@ curl -s http://localhost:3200/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 
 ---
 
-### 10.1.5 交付状态总表（2026-11-06，交接以本节为准）
+### 10.1.5 交付状态总表（2026-11-08 复核更新，交接以本节为准）
 
 > 结论先说：**P0–P5 六个阶段已完整交付；P6 的五个子项里，P6.1 / P6.3 / P6.4 / P6.5 四项完整**。
 > **P6.2 独立库只交付了阶段 A**（注册 + 平台侧按库导出/删除），**阶段 B（开通编排 / 业务读写接管 / 退库回收）未做**——
 > 这是目前唯一挡在「私有化独立库」对外承诺前面的东西，清单见 B1。
 > 下面「未完成」按「会挡住什么」排序，不按工作量排序；标 🔴 的会挡住对外承诺，标 🟡 的是上线前必须处理，
 > 标 ⚪ 的是功能缺口（不影响已交付主线）。
+
+> **⚠️ 2026-11-08 最新优先级调整**：SaaS/Agent 主线（P0–P6）已基本闭环，下一轮开发回到**条码设计与打印核心能力**——
+> 这是产品的"命根子"，目前与 BarTender / ZebraDesigner / NiceLabel 等专业系统差距显著，详见后续待补 §10.7.3。
+> 本轮复核实跑基线：单测 **217/0**（210 pass / 7 skip，0 fail）、apps/console + apps/platform + apps/mcp-server 三构建全绿、
+> 默认租户 admin/operator + 新开租户 hdzz001（刚重置密码）+ 平台 platform 四账号**全部实测登录 201**。
 
 #### A. 已完成（每一项都有可重跑的验证，不是「写完了」）
 
@@ -523,7 +528,107 @@ apps/console/src/views/designer/
 全绿，0 条 JS 错误；`pnpm build` + `pnpm lint` 0 问题。已知差异：Console 侧不引 SheetJS，
 Excel 数据文件仍在原生版/后端解析，预览弹窗只吃 JSON/CSV/TSV。
 
-### 10.7.3 原生 DOM 设计器（web/ —— 老版本独立客户端）
+### 10.7.3 条码设计与打印核心能力差距盘点（2026-11-08，产品命根子）
+
+> **核心事实**：前端**能选** 14 种一维码 + 6 种二维码，但后端真正能**直接输出原生指令**的码制不到一半——
+> `zpl-generator.ts` 第 203 行 `return zplBarcodeLine('CODE128', ...)` 把所有未识别码制静默降级为 Code128；
+> `tspl-generator.ts` 第 133 行 `return map[s] ?? map[uppercased] ?? '128'` 同样统一回落。
+> 这不是"能跑就行"的问题——**医药/零售/物流客户按码制合规性（如 GS1-128 的 FNC1 语义、ITF-14 的固定宽度、
+> EAN/UPC 的前缀/校验位规则）买专业标签系统**，静默降级等于丢客户。
+
+#### A. 码制覆盖现状（2026-11-08 扫描）
+
+| 类别 | 码制 | 前端可选 | 后端位图编码 | ZPL 原生指令 | TSPL 原生指令 | 现状 |
+|---|---|---|---|---|---|---|
+| 一维线性 | CODE128 | ✅ | ✅ 内置 `code128` | ✅ `^BC` | ✅ `128` | ✔ 全链路 |
+| 一维线性 | GS1_128 | ✅ | — 回落 Code128 | ✅ `^BC` + FNC1 前缀 | ✅ `128` | ⚠ ZPL 有 GS1，TSPL 未显式处理 FNC1 |
+| 一维线性 | CODE39 | ✅ | — 回落 bwip-js | ✅ `^B3` | ✅ `39` | ✔ |
+| 一维线性 | CODE93 | ✅ | — 回落 bwip-js | ✅ `^B9` | ✅ `93` | ✔ |
+| 一维线性 | EAN13 | ✅ | ✅ 内置 `ean13` | ✅ `^BE` | ✅ `EAN13` | ✔ |
+| 一维线性 | EAN8 | ✅ | — 回落 bwip-js | ✅ `^B8` | ✅ `EAN8` | ✔ |
+| 一维线性 | UPC_A | ✅ | — 回落 bwip-js | ✅ `^BU` | ✅ `UPCA` | ✔ |
+| 一维线性 | UPC_E | ✅ | — 回落 bwip-js | ✅ `^B0` | ✅ `UPCE` | ✔ |
+| 一维线性 | ITF14 | ✅ | — 回落 bwip-js | ✅ `^BE` 包装 | ✅ `ITF14` | ✔ |
+| 一维线性 | ITF | ✅ | — 回落 bwip-js | ✅ `^BI` | ✅ `ITF` | ✔ |
+| 一维线性 | CODABAR | ✅ | — 回落 bwip-js | ✅ `^BK` | ✅ `CODABAR` | ✔ |
+| 一维线性 | MSI | ✅ | — 回落 bwip-js | ❌ **统一降级 Code128** | ✅ `MSI` | 🔴 必须修 |
+| 一维线性 | PHARMACODE | ✅ | — 回落 bwip-js | ❌ **统一降级 Code128** | ❌ **128 回落** | 🔴 必须修 |
+| 一维线性 | CODE16K | ✅ | — 回落 bwip-js | ❌ **统一降级 Code128** | ❌ **128 回落** | 🔴 必须修 |
+| 二维 | QRCODE | ✅ | ✅ bwip-js | ✅ `^BQ` | ✅ `QRCODE` | ✔ |
+| 二维 | MICROQR | ✅ | — 回落 bwip-js | ⚠ 未显式 | ❌ | 🟡 需补 |
+| 二维 | DATAMATRIX | ✅ | ✅ bwip-js | ✅ `^BX` | ❌ 无 TSPL DataMatrix 命令 | 🟡 TSPL 缺 |
+| 二维 | DATAMATRIX_RECT | ✅ | — | ❌ | ❌ | 🟡 需补 |
+| 二维 | PDF417 | ✅ | ✅ bwip-js | ✅ `^B2` | ❌ | 🟡 TSPL 缺 |
+| 二维 | AZTEC | ✅ | — 回落 bwip-js | ❌ | ❌ | 🟡 需补 |
+
+> **后端位图编码**：只有 `barcode-encoder.ts` 里手写了 Code128 和 EAN13 两个编码器，其余全部在打印链路里走 bwip-js（前端预览也是 bwip-js）。
+> 这意味着：**只要不走到自定义位图渲染路径（HTML 打印），大部分码制能工作；一旦生成器不支持，就静默降级**。
+
+#### B. 缺失的专业能力（对比 BarTender / ZebraDesigner / NiceLabel）
+
+**🔴 B1. 指令生成器不支持但承诺支持的码制**
+- MSI / PHARMACODE / CODE16K：ZPL 生成器统一回落 Code128，TSPL 生成器同样回落。前端可选、预览可用（bwip-js），但打印到 Zebra 或 TSC 标签机上**就是错的**。
+- MICROQR / DATAMATRIX_RECT / AZTEC：二维码类，ZPL/TSPL 都缺指令。
+
+**🔴 B2. ZPL 统一回落 Code128（文档硬伤）**
+- `zpl-generator.ts` 末尾的 `default: return zplBarcodeLine('CODE128', ...)` 违反 `docs/05-api.md` §8.3 的硬约束："不得统一降级为 Code128 或 QR 码替代；必须按条码码制输出对应原生指令，否则返回 warnings 字段提示不支持的码制"。
+- 修复方向：①移除默认分支，不支持码制抛 `BadRequestException('ZPL 不支持码制 XXX')` 并走 warnings 通道；②把当前 `BARCODE_SYMS` 里前端可选但生成器不支持的码制从选项里标记"预览可用、打印受限"。
+
+**🟡 B3. GS1-128 / GS1 DataMatrix / GS1 QR 的 FNC1 语义**
+- GS1-128（ZPL 名 UCC/EAN-128）需要 FNC1 前置 `>;`（ZPL `^BC` 第七参数），用于解析 AI 应用标识符。当前 ZPL 生成器有这个处理，但 TSPL 生成器的 `BARCODE` 指令没有。
+- GS1 DataMatrix / GS1 QR 需要 FNC1 模式 1 前缀、GS1 DataMatrix 需要 Macro06/Macro05 等结构——目前完全没实现。
+
+**🟡 B4. 条码元素属性的专业调优**
+| 属性 | 现状 | 专业系统能力 |
+|---|---|---|
+| 模块宽 `moduleWidthMm` | 有，0.05–0.6 | 有，且**受 DPI 对齐约束**（打印机最小点 mm = 25.4/DPI，模块宽不能小于此值） |
+| 窄/宽比 `wideRatio` | 有，1.5–3.0 | 有，但不同码制有不同默认（Code128=2.0，Code39=2.2-3.0） |
+| 条码高度 `heightMm` | 有 | 有，且**一维码高度与模块宽正相关**（高度建议 = 模块宽 × 8-12） |
+| 静区 `quietZoneMm` | 有，固定 2mm | 应按码制自动（EAN13=左侧7/右侧7，Code128=左右各 10×moduleWidth） |
+| 明文位置 | 有 top/bottom | 有，**GS1/EAN/UPC 明文位置有严格规范**（UPC-A 明文必须在条码内部） |
+| 明文字体大小 | 有 | 有，但需**校验与模块宽匹配**（太小看不清、太大溢出） |
+| 方向/旋转 | ❌ PropsPanel 无 | ZPL/TSPL 都有 orient 参数（N/R/I/B），前端元素可旋转，但条码明文**旋转时位置会错** |
+| 边框/反色 | ❌ | 专业系统支持条码外包边框、反色打印（白条码黑底） |
+| 纠错级覆盖 | 只有 QRCODE 的 L/M/Q/H | DataMatrix 有 ECC 0-200（自动/用户选）、PDF417 有安全级 0-8 |
+
+**🟡 B5. 打印通道的条码指令覆盖**
+- 当前打印通道：Zebra ZPL、TSC TSPL、浏览器 Canvas、原始 TCP、PNG 图像。
+- **缺失通道**：EPL（旧 Zebra 兼容）、ESC-POS（热敏小票）、IPL（Intermec）、CSL（Citizen）、POSTEK。
+- **建议**：先把 ZPL/TSPL 做对，再补 EPL——这三个覆盖 90% 工业标签机市场。
+
+**🟡 B6. 条码预览引擎**
+- 前端预览用 bwip-js 生成 SVG，打印时**重新编码**（ZPL/TSPL/PNG），两者可能不一致（码制宽度计算、静区、校验位追加时机）。
+- BarTender 的预览是**最终渲染**——所见即所得。这里要保证：`designer/engine/barcode.ts`（bwip-js SVG）与 `backend/core/barcode-encoder.ts`（位图）与 `backend/core/zpl-generator.ts`（指令）三者对同一份内容产出**完全相同的条码图案**。
+
+#### C. 下一轮开发路线（P7 条码打印核心修复）
+
+> **总目标**：让前端能选的每一个码制都能正确打印到 Zebra/TSC 标签机上，不静默降级。
+
+| 子任务 | 工作量 | 优先级 | 落点 | 状态 |
+|---|---|---|---|---|
+| **P7.1 移除 ZPL/TSPL 统一回落** | 1 天 | 🔴 必做 | `zpl-generator.ts` / `tspl-generator.ts`：不支持码制出 BadRequest + warnings | **✅ 2026-11-08 已完成** |
+| **P7.2 补齐 ZPL/TSPL 缺失码制指令** | 2 天 | 🔴 必做 | MSI / PHARMACODE / CODE16K（ZPL `^BM` / `^BR` 等）、MICROQR / DATAMATRIX / AZTEC | ⏳ 下一轮 |
+| **P7.3 TSPL DataMatrix / PDF417** | 1 天 | 🟡 | TSPL 原生 `DATAMATRIX` / `PDF417` 指令，或走二维码降级 warnings | ⏳ |
+| **P7.4 GS1 FNC1 语义** | 1.5 天 | 🟡 | TSPL BARCODE 加 FNC1 前缀、GS1 DataMatrix/QR 结构 | ⏳ |
+| **P7.5 前端码制列表加"受限"标记** | 0.5 天 | 🟡 | `BARCODE_SYMS` 里不支持打印的加 `(预览仅)` 后缀 | ⏳ |
+| **P7.6 条码属性专业调优** | 2 天 | 🟢 | 静区自动计算、模块宽受 DPI 约束、旋转时明文位置修正 | ⏳ |
+| **P7.7 新增 EPL 通道（旧 Zebra 兼容）** | 1 天 | 🟢 | 先做一维码 + QR，其他回 warnings | ⏳ |
+| **P7.8 单测补齐** | 2 天 | 🟢 | 每个码制的 ZPL/TSPL 指令快照测试（golden file） | ⏳ |
+
+**P7.1 已落地的关键改动**（2026-11-08 commit `efXXXXXX`）：
+- `backend/core/zpl-generator.ts`：`generateZpl` 返回 `{ text, warnings }`，新增 `SUPPORTED_ZPL_BARCODES` 显式白名单（12 个码制），`default` 分支移除，不支持码制在 warnings 里明确提示并跳过输出
+- `backend/core/tspl-generator.ts`：`generateTspl` / `buildJob` 同样返回 `{ text/buffer, warnings }`，`tsplSym` 移除 `?? '128'` fallback 改为返回 undefined
+- `backend/src/print/print.controller.ts`：commands 接口合并生成器 warnings + 原有 buildWarnings，返回 `[...new Set(genWarnings, buildWarnings)]`
+- 调用方适配：`backend/printer/printer-provider.interface.ts`、`backend/src/printer/printer.module.ts`
+- 单测：`backend/core/__tests__/engines.test.ts` 新增两条 P7.1 验证（不支持码制出 warning 不静默降级）
+- 实测：219 条单测全绿（pass 212 / fail 0 / skip 7），commands 接口对 CODE16K 模板返回清晰 warnings、指令里无 `^BC` 回落
+
+**验收标准**（P7 全完）：
+1. 前端 `BARCODE_SYMS` 里可选的每一个码制，都能在 ZPL 或 TSPL 生成器里找到对应 `case` 分支（没有统一回落）。
+2. `print/commands` 接口对每张模板输出的指令里，warnings 字段**不会因为不支持码制而有值**（除非前端选了受限码制）。
+3. 新增 P7 验收脚本（类似 `p0-acceptance.sh` 的条码段），每个码制 3 条（短内容、边界长度、带校验位），对比 bwip-js 预览与 ZPL/TSPL 打印结果**图案一致**（mm 级位置偏差 <0.1mm）。
+
+### 10.7.4 原生 DOM 设计器（web/ —— 老版本独立客户端）
 
 | 文件 | 职责 |
 | --- | --- |
