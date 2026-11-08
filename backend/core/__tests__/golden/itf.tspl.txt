@@ -1,0 +1,11 @@
+# golden —— ITF @ TSPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: 码型 "ITF"（不是 "ITF14"）
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 ITF / 内容 "12345670"
+# 通道派单: channel=native
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+BARCODE 80,64,"ITF",96,1,0,3,8,"12345670"
+
+--- warnings ---
+- [几何] ITF X-dim 由 0.400mm 量化为 0.375mm（3 点 × 0.125mm/点）

@@ -746,6 +746,19 @@
 .pp-table th { background: #f1f5f9; color: var(--d-text-2); position: sticky; top: 0; }
 .print-view { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .pp-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* 指令导出提示（/print/commands 的 warnings）：无提示时整块不渲染，不占位 */
+.pp-warns {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid #f0d3ab;
+  border-radius: 8px;
+  background: #fffbf2;
+}
+.pp-warn-title { display: flex; align-items: baseline; gap: 8px; font-size: 12px; font-weight: 700; color: #b45309; }
+.pp-warn { font-size: 11.5px; line-height: 1.6; color: #92400e; word-break: break-word; }
+.pp-warn-kind { color: #b45309; }
 .pp-frame {
   width: 100%;
   height: 62vh;

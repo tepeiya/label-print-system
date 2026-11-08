@@ -1,0 +1,14 @@
+# golden —— CODE16K @ ZPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: ZPL 的 ^BB 是 Codablock 不是 Code16K，不可混用 → 跳过 + warning，不得出现 ^BB/^BC
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=previewOnly —— 码制 CODE16K / 内容 "ABC-1234"
+# 通道派单: channel=none why=CODE16K @ ZPL → 仅预览；ZPL 有 ^BB Codablock 但不是 Code16K，不可混用；同 PHARMACODE，仅预览
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+^XA
+^CI28
+^FH\
+^XZ
+
+--- warnings ---
+- [码制] ZPL 无法原生输出 CODE16K：CODE16K @ ZPL → 仅预览；ZPL 有 ^BB Codablock 但不是 Code16K，不可混用；同 PHARMACODE，仅预览。该元素已跳过。建议：①打印指令改用 protocol=image 走 bwip-js PNG；②换成业务上等效的常见码制（如 PHARMACODE→CODE128、CODE16K→CODE128）

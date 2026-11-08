@@ -1,0 +1,18 @@
+# golden —— ITF @ EPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: 类型码 '2'，p6 宽条可设定；偶数位数据不触发「补 0」warning
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 ITF / 内容 "12345670"
+# 通道派单: channel=native
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+<CR>
+N<CR>
+q480<CR>
+Q320,16<CR>
+D8<CR>
+S2<CR>
+B80,64,0,2,3,8,96,B,"12345670"<CR>
+P1<CR>
+
+--- warnings ---
+- [几何] ITF X-dim 由 0.400mm 量化为 0.375mm（3 点 × 0.125mm/点）

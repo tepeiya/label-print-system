@@ -1,0 +1,15 @@
+# golden —— QRCODE @ ZPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: ^BQ 的 model 位必须是 2（手册无 Micro QR / 汉字模式），放大系数与纠错等级按参数位次给全；数据走 ^FDQA, 段
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 QRCODE / 内容 "https://labelflow.example/t/42"
+# 通道派单: channel=native
+# 位图段: 确定性合成点阵 synthFallback()（24×12 点 / 4 点每模块），不经 bwip/sharp
+
+--- commands ---
+^XA
+^CI28
+^FH\
+^FO80,64^BQN,2,4,M^FDQA,https://labelflow.example/t/42^FS
+^XZ
+
+--- warnings ---
+- (none)

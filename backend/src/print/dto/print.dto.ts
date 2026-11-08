@@ -69,9 +69,11 @@ export class PrintCommandsDto {
   @IsNumber()
   copies?: number;
 
+  // 协议白名单与 print.controller 的 CmdProtocol、core/barcode-caps.PrintProtocol 必须同步
+  // （P7.8 有守卫测试；EPL 通道见 P7.7）
   @IsOptional()
-  @IsIn(['zpl', 'tspl'])
-  protocol?: 'zpl' | 'tspl';
+  @IsIn(['zpl', 'tspl', 'epl'])
+  protocol?: 'zpl' | 'tspl' | 'epl';
 
   @IsOptional()
   @IsNumber()

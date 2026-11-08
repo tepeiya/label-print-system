@@ -1,7 +1,7 @@
 # 10. 开发交接文档（面向接手的 AI / 开发者）
 
 > 本文档目标：**任何 AI 或开发者读完本文即可无缝接手继续开发**，不需要再翻历史对话。
-> 阅读顺序建议：§10.1 速览（**先看 §10.1.5 交付状态总表：做完的 / 没做的都在里面**） → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）** → **§10.19 P3 计费闭环（动账单/配额/计量前必读）** → **§10.20 P4 Agent/MCP（动 /agent/v1、agent token、库存只读模型前必读）** → **§10.21 P5 Agent 写工具与审批流（动 Agent 写路径/限流/幂等/MCP HTTP 前必读）** → **§10.22 P6.1 RLS 兜底（动数据库角色/连接、写任何原生 SQL 前必读）** → **§10.23 P6.3 租户数据导出与硬删 + Agent 前端入口（动 /platform/tenants/:id/export|purge、表清单口径前必读）** → **§10.24 P6.4 白标 D6 + P6.3 platform 前端（动 /branding、登录 Host 解析、主题注入前必读）** → **§10.25 P6.2 独立库租户阶段 A（动 datasource 注册/按库导出前必读）** → **§10.26 P6.5 Prompt 库（动 /agent-prompts、MCP prompts、Agent 下发模板前必读）**。
+> 阅读顺序建议：§10.1 速览（**先看 §10.1.5 交付状态总表：做完的 / 没做的都在里面**） → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）** → **§10.19 P3 计费闭环（动账单/配额/计量前必读）** → **§10.20 P4 Agent/MCP（动 /agent/v1、agent token、库存只读模型前必读）** → **§10.21 P5 Agent 写工具与审批流（动 Agent 写路径/限流/幂等/MCP HTTP 前必读）** → **§10.22 P6.1 RLS 兜底（动数据库角色/连接、写任何原生 SQL 前必读）** → **§10.23 P6.3 租户数据导出与硬删 + Agent 前端入口（动 /platform/tenants/:id/export|purge、表清单口径前必读）** → **§10.24 P6.4 白标 D6 + P6.3 platform 前端（动 /branding、登录 Host 解析、主题注入前必读）** → **§10.25 P6.2 独立库租户阶段 A（动 datasource 注册/按库导出前必读）** → **§10.26 P6.5 Prompt 库（动 /agent-prompts、MCP prompts、Agent 下发模板前必读）** → **§10.27 P7.2 复核重做 + P7.3–P7.8 条码打印核心（动指令生成器 / 能力矩阵 / 位图通道 / GS1 语义前必读）**。
 > 最后更新：2026-11-06（P0–P5 已落地；**P6 五个子项全部动手：P6.1 RLS + P6.3 导出/硬删 + P6.4 白标 + P6.5 Prompt 库四项完整；P6.2 独立库租户只完成阶段 A（注册 + 平台侧按库导出/删除），开通编排与业务读写接管未做**；
 > 本轮新增 **§10.26**；单测 217 条 / 验收 267 项（A–Q 段）/ RLS 冒烟 22 项；P6 只剩 P6.2 阶段 B（见 §10.25.8）。
 > 同日另交付**设计器 Vue 化**（§10.7.2）：`web/` 的 render/interactions/store 已搬进 `apps/console`，Designer 页的 iframe 删除，
@@ -99,6 +99,12 @@ curl -s http://localhost:3200/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 > 这是产品的"命根子"，目前与 BarTender / ZebraDesigner / NiceLabel 等专业系统差距显著，详见后续待补 §10.7.3。
 > 本轮复核实跑基线：单测 **217/0**（210 pass / 7 skip，0 fail）、apps/console + apps/platform + apps/mcp-server 三构建全绿、
 > 默认租户 admin/operator + 新开租户 hdzz001（刚重置密码）+ 平台 platform 四账号**全部实测登录 201**。
+>
+> **✅ 2026-11-08 当晚更新（P7 轮次已落地，接手做打印相关开发前先读 §10.27）**：P7.2 的结论被复核推翻并重做
+> （ZPL 的 ITF / PDF417 指令用错、MicroQR 谎称原生），P7.3–P7.8 全部完成，新增能力以 `CAP_MATRIX` 为单一真源。
+> 本轮实跑基线刷新为：单测 **385 tests / 377 pass / 0 fail / 8 skip**（P7 前 219/212/0/7）、backend `tsc --noEmit` **0 error**、
+> `bash backend/scripts/p7-acceptance.sh` **EXIT 0 / PASS 58 / FAIL 0 / SKIP 1**（唯一 SKIP 是 D 段：沙箱没起后端）、
+> `apps/console` `pnpm build` + `pnpm lint` **0 问题**。**但真机验证一项都没做**（沙箱没有打印机），待办见 §10.27.9。
 
 #### A. 已完成（每一项都有可重跑的验证，不是「写完了」）
 
@@ -119,6 +125,7 @@ curl -s http://localhost:3200/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 | 13 | **P6.5 Prompt 库（D8）** | 系统默认在代码、租户覆盖/自定义、`/agent-prompts` CRUD+预览、MCP 动态下发、Console 页面 | `agent/prompt.*`、`scripts/saas_p6_prompts.sql`、`views/PromptLibrary.vue` | 验收 Q 段 18 项 + 单测 8 条 |
 | 14 | **设计器 Vue 化** | render/interactions/store 三件套搬进 Console：12 类元素 WYSIWYG、手势（拖动/八向缩放/旋转/框选/平移/吸附）、标尺参考线、四页签检查器、撤销重做、快捷键、模板库与版本弹窗、打印预览；iframe 已删除 | `apps/console/src/views/designer/`、`views/Designer.vue` | Playwright 18 项 E2E 全绿（0 JS 错误）+ `pnpm build`/`lint` 0 问题，见 §10.7.2 |
 | 15 | **质量基线** | 单测 217、验收 267、RLS 冒烟 22、lint 0 error、console 构建、MCP 双 selftest | 命令见 §10.1.4 / §10.15.6 | 2026-11-06 全绿 |
+| 16 | **P7.2 复核重做 + P7.3–P7.8 条码打印核心** | ZPL 指令级纠错（`^B2`/`^B7`/MicroQR）、`CAP_MATRIX` 单一真源 + 通道派单 `planChannel`、TSPL/EPL 位图通道（`BITMAP`/`GW`/`^GFA` + `textBase64/textExact` 字节契约）、GS1 FNC1 三协议 + bwip 转写、几何/静区/参数/校验位调优、Console 能力呈现、EPL 通道、165 条新单测 + 66 份 golden | `backend/core/{barcode-caps,barcode-geometry,gs1,raster,bitmap-blocks,epl-generator}.ts`、`apps/console/src/views/designer/` | §10.27.7 / §10.27.8 实跑数字；⚠️ 真机一项未验，见 §10.27.9 |
 
 #### B. 未完成清单（按「会挡住什么」排序）
 
@@ -201,8 +208,17 @@ cd /app/label-print-system && DB_RLS_USER=labelflow_app D2_DSN='...' T_CODE=hand
 | `apps/console` `npm run build` | 通过 | vue-tsc + vite |
 | `apps/mcp-server` `npm run selftest[:http]` | 通过 | 工具/prompts/resources/会话回收 |
 
+**2026-11-08 P7 轮次追加基线**（离线可重跑，命令见 §10.27.8）：
+
+| 命令 | 基线 | 覆盖 |
+| --- | --- | --- |
+| `cd backend && npm test` | **385 / 377 pass / 0 fail / 8 skip** | 含 P7 新增 166 条（gs1 49 / geometry 33 / golden 28 / epl 34 / caps-sync 22） |
+| `npx tsc --noEmit -p tsconfig.json` | **0 error** | 含 `core/**` 生成器本体 |
+| `bash backend/scripts/p7-acceptance.sh` | **EXIT 0 / PASS 58 / FAIL 0 / SKIP 1**（见 §10.27.7；无 DB/无打印机的段落必须是 SKIP，不许假 PASS） | 三协议指令自洽、字节契约、GS1 转写、真实点阵解码回判 |
+| `apps/console` `pnpm build && pnpm lint` | **0 问题** | vue-tsc + vite + eslint |
+
 细节索引：P0 §10.15 · P1 §10.16 · 校验 §10.17 · P2 §10.18 · P3 §10.19 · P4 §10.20 · P5 §10.21 ·
-P6.1 §10.22 · P6.3 §10.23 · P6.4 §10.24 · P6.2 §10.25 · **P6.5 §10.26**。
+P6.1 §10.22 · P6.3 §10.23 · P6.4 §10.24 · P6.2 §10.25 · **P6.5 §10.26** · **P7.2 复核重做 + P7.3–P7.8 §10.27**。
 
 #### E. 环境注意（沙盒特有，接手先看）
 
@@ -371,8 +387,11 @@ POST /print/jobs
 ```
 
 - 通道由 `PrinterProviderRegistry` 路由：`raw_tcp` / `browser` / `image` / `windows_spooler`。
-- ZPL / TSPL 生成器在 `backend/core/`，**必须按码制输出原生指令**，不得统一降级为 Code128/QR。
-- `POST /print/commands` 返回 `warnings`（不支持的码制、TSPL 中文字库依赖），不得静默降级。
+- ZPL / TSPL / EPL 生成器在 `backend/core/`，**支持哪些码制、按哪条指令输出，一律查 `backend/core/barcode-caps.ts` 的
+  `CAP_MATRIX`（单一真源）**；生成器不得统一降级为 Code128/QR，也不得把查不到语法的指令「猜一条上去」。
+- `POST /print/commands` 返回 `warnings`（码制通道、几何/静区/校验位调优、GS1 结构、位图回填、中文字库依赖），不得静默降级。
+  作业里含位图段（TSPL `BITMAP` / EPL `GW` / ZPL 走位图通道）时 `textExact=false`，**下发与存盘必须用 `textBase64`**；
+  `raw_tcp` 通道内部一直按 Buffer 组装（历史实现 `.toString('ascii')` 会把点位图的高位字节砍掉，固件不报错直接打错图）。
 
 ### 10.5.4 RBAC（P0 后已升级为四层模型，详见 §10.15）
 
@@ -607,13 +626,13 @@ Excel 数据文件仍在原生版/后端解析，预览弹窗只吃 JSON/CSV/TSV
 | 子任务 | 工作量 | 优先级 | 落点 | 状态 |
 |---|---|---|---|---|
 | **P7.1 移除 ZPL/TSPL 统一回落** | 1 天 | 🔴 必做 | `zpl-generator.ts` / `tspl-generator.ts`：不支持码制出 BadRequest + warnings | **✅ 2026-11-08 已完成** |
-| **P7.2 码制覆盖复核 + 降级策略** | 2 天 | 🔴 必做 | ZPL 一维 12 全齐 / 二维 6 全齐；TSPL 一维 12 全齐、MICROQR 降级标准 QR、DM/PDF417/Aztec 精确引导 | **✅ 2026-11-08 已完成** |
-| **P7.3 TSPL DataMatrix / PDF417** | 1 天 | 🟡 | TSPL 原生 `DATAMATRIX` / `PDF417` 指令，或走二维码降级 warnings | ⏳ |
-| **P7.4 GS1 FNC1 语义** | 1.5 天 | 🟡 | TSPL BARCODE 加 FNC1 前缀、GS1 DataMatrix/QR 结构 | ⏳ |
-| **P7.5 前端码制列表加"受限"标记** | 0.5 天 | 🟡 | `BARCODE_SYMS` 里不支持打印的加 `(预览仅)` 后缀 | ⏳ |
-| **P7.6 条码属性专业调优** | 2 天 | 🟢 | 静区自动计算、模块宽受 DPI 约束、旋转时明文位置修正 | ⏳ |
-| **P7.7 新增 EPL 通道（旧 Zebra 兼容）** | 1 天 | 🟢 | 先做一维码 + QR，其他回 warnings | ⏳ |
-| **P7.8 单测补齐** | 2 天 | 🟢 | 每个码制的 ZPL/TSPL 指令快照测试（golden file） | ⏳ |
+| **P7.2 码制覆盖复核 + 降级策略** | 2 天 | 🔴 必做 | ZPL 一维 12 全齐 / 二维 6 全齐；TSPL 一维 12 全齐、MICROQR 降级标准 QR、DM/PDF417/Aztec 精确引导 | **⚠️ 2026-11-08 复核后推翻重做**：本行原结论有两条硬伤（ZPL 的 ITF 用了 `^BI`、PDF417 用了 `^B2`，都不是这两个符号），详见 §10.27.1 |
+| **P7.3 TSPL DataMatrix / PDF417** | 1 天 | 🟡 | TSPL 原生 `DATAMATRIX` / `PDF417` 指令，或走二维码降级 warnings | **✅ 2026-11-08 已完成（走位图通道，非降级）**：手册无原生指令 → `BITMAP` 原始字节通道；**没有**降级成 QR |
+| **P7.4 GS1 FNC1 语义** | 1.5 天 | 🟡 | TSPL BARCODE 加 FNC1 前缀、GS1 DataMatrix/QR 结构 | **✅ 2026-11-08 已完成（含一条「不做」结论）**：TSPL 用 `"EAN128"` + 0x1D 分隔；ZPL 用 `>;` / `>8`；二维 + `(AI)` 因拿不到 FNC1 转义写法证据 → 一律改派位图，见 §10.27.3 |
+| **P7.5 前端码制列表加"受限"标记** | 0.5 天 | 🟡 | `BARCODE_SYMS` 里不支持打印的加 `(预览仅)` 后缀 | **✅ 2026-11-08 已完成**：能力矩阵副本进 Console，选择器/检查器/预览三处呈现，见 §10.27.5 |
+| **P7.6 条码属性专业调优** | 2 天 | 🟢 | 静区自动计算、模块宽受 DPI 约束、旋转时明文位置修正 | **✅ 2026-11-08 已完成**：`barcode-geometry.ts` + 参数钳制 + 13 类 warnings（前缀清单见 §10.27.4），见 §10.27.4 |
+| **P7.7 新增 EPL 通道（旧 Zebra 兼容）** | 1 天 | 🟢 | 先做一维码 + QR，其他回 warnings | **✅ 2026-11-08 已完成（比原计划窄）**：一维 11 种原生 + 二维走 `GW` 位图；框/线/椭圆**只 warning 不打**（参数含义查不到），见 §10.27.6 |
+| **P7.8 单测补齐** | 2 天 | 🟢 | 每个码制的 ZPL/TSPL 指令快照测试（golden file） | **✅ 2026-11-08 已完成**：`gs1/geometry/golden`（三协议逐码制快照，66 份）+ `epl` + caps 漂移守卫 `caps-sync.test.ts`（22 条）+ `backend/scripts/p7-acceptance.sh`，见 §10.27.7 |
 
 **P7.1 已落地的关键改动**（2026-11-08 commit `efXXXXXX`）：
 - `backend/core/zpl-generator.ts`：`generateZpl` 返回 `{ text, warnings }`，新增 `SUPPORTED_ZPL_BARCODES` 显式白名单（12 个码制），`default` 分支移除，不支持码制在 warnings 里明确提示并跳过输出
@@ -2139,3 +2158,210 @@ env 入口：`DB_DEDICATED_DSNS='{"acme":"postgres://..."}'`，单条失败只�
   （`prompts/get(inventory.health_check, days=45)` 正文含 45）。
 - ⚠️ 新增实体必须**同时**加到 `src/entities/index.ts`（`app.module` 的 `ENTITIES` 只从那里批量注册）：
   漏了会报 `EntityMetadataNotFoundError: No metadata for "AgentPrompt"`，接口表现是 500 而不是 400。
+
+---
+
+## 10.27 P7.3–P7.8 条码设计与打印核心收口（2026-11-08 落地）
+
+> 本节是「把剩下的开发完」那一轮的权威记录。三件事必须一起读：
+> **(1) P7.2 的结论被本轮复核推翻并重做**（§10.27.1）；**(2) 新增能力全部以 `CAP_MATRIX` 为单一真源**；
+> **(3) 所有「✅ 已完成」都只到「指令/点阵在沙箱里可验证」这一层，真机验证项在 §10.27.9 单独列着，别当已交付。**
+>
+> 本轮验证手段只有两类，可信度不同，下文逐条标注：
+> - **手册级**：ZPL II / TSPL / EPL2 官方 Programming Guide 能查到该指令与其参数含义；
+> - **实测级**：在沙箱里用 bwip-js 4.x 出图 + **zxing-cpp 读图**回判 AIM 标识符（`]d1`/`]d2`/`]Q3`/`]C1`…）与字节序列。
+>   没有打印机的地方一律不写「已验证」；查不到出处的指令一律**不打 + warning**（「宁可不打，不打错码」）。
+
+### 10.27.1 P7.2 复核推翻重做：指令级纠错 + 能力矩阵单一真源
+
+**推翻的两条硬伤**（原 P7.2 声称「二维 6 全齐」，实际打出来的是另一种符号，而且打印机不报错）：
+
+| 码制 | 原写法 | 该指令真正是什么 | 现在的写法 |
+| --- | --- | --- | --- |
+| ITF（交叉二五码） | `^BI` | `^BI` = Industrial 2 of 5、`^BJ` = Standard 2 of 5，都不是交叉二五 | `^B2`（Interleaved 2 of 5，`zpl-generator.ts:284`） |
+| PDF417 | `^B2` | `^B2` 是一维交叉二五 | `^B7`（`zpl-generator.ts:338-343`，行高另发 `^BY`） |
+| MICROQR | 声称 `^BQ` 原生 | ZPL `^BQ` 只有 model 2（Micro QR / 混合模式 / 汉字模式无原生支持） | 改派位图通道 |
+
+纠正后的口径直接写死在 `zpl-generator.ts:260-266` 的注释表里（每条指令带参数位含义），不再在生成器里另写一份白名单。
+
+**单一真源 = `backend/core/barcode-caps.ts`**（223 行）：
+
+- `CAP_MATRIX`：21 个码制 × `zpl|tspl|epl|twoD|note`；`CAP_MATRIX_VERSION = 'p7-2026-11-08.4'`（约定 `p7-YYYY-MM-DD.N`，改表必须 bump，前端副本与 66 份 golden 都带这个号，漏改当场红）。
+- `statusFor / needsBitmap / nativeSymsFor / capNote / isKnownSym`：生成器、控制器、前端三处都从这里取结论。
+- `planChannel(sym, protocol, content)`（`:196`）：唯一的**通道派单**入口，输出 `native | bitmap | none` + `why`（`why` 就是 warning 正文，所以提示和结论不可能两张皮）。三条规则：
+  1. 一维码制**永不**走位图（bwip 一维缩放单位与打印点不成整数倍，栅格化会破坏条空比例）；能力矩阵里给不了一维的位图就是 `previewOnly`；
+  2. 二维 + 内容是 GS1 `(AI)` → 一律改派位图（§10.27.3 说明为什么协议侧不走原生指令）；
+  3. `degraded` 仍走原生但必须带差异说明（目前唯一实例：ITF14 @ EPL 用交叉二五 `'2'` 承载 GTIN-14，编码链一致但没有 ITF-14 边框/承载标记）。
+- `note` 里每条都带出处或「查不到」的结论，Aztec 的 `note`（`:140`）明确写 `^BO/^B0` 两个写法并存 → 属 §10.27.9 待实机项。
+
+**防漂移守卫**：`backend/core/__tests__/caps-sync.test.ts`（22 条，纯函数，直接 import 前端那份无依赖副本）。它锁五类关系，而不是重测功能：
+前后端 `CAP_MATRIX` 逐字段等价（含键顺序与版本号）；`epl` 列必须由 `EPL_SYM_STATUS` 按固定映射推导（`native→native / bitmap→bitmap / previewOnly|no-evidence→previewOnly`，ITF14 是唯一手工例外）；`EPL_BARCODE_TYPES` 与矩阵双向一致（有类型码的码制不许在矩阵里是 previewOnly，标 native 的一维必须有类型码）；GS1 `^FNC1` 转写口径（§10.27.3，含 13+2 条语料 × 8 个 bcid 的「返回值或是否抛错」逐条比对，并对称比较 `gs1ToBwipFnc1∘parseGs1` 两侧结果，避免「两边都抛」被误报成副本漂移）；AI 定长/变长判定逐档位一致（`measureAiLen` 收窄成 `^3[1-6]\d{2}$` 之后最容易只改一边，故把 4212/3103/3923 这类边界档位单独钉一次）。
+
+### 10.27.2 P7.3 TSPL DataMatrix / PDF417：走位图通道，不是降级成 QR
+
+TSC《TSPL Programming Guide》的 `BARCODE` 码型表里**没有** DATAMATRIX / PDF417 / AZTEC（有 `QRCODE`），所以这三类按 `planChannel` 判定为 `bitmap`，用 `BITMAP x,y,widthBytes,rows,mode,<原始字节>`（mode 0=OVERWRITE）下发，封装在 `core/bitmap-blocks.ts:30 tsplBitmapLines`；ZPL 侧同一份点阵走 `^GFA,a,b,c,d,<hex>`（`:24`，校验 `b == 总字节 == c×rows`）；EPL 侧走 `GW`（§10.27.6）。**没有把任何码制悄悄换成 QR**——原任务书里「或走二维码降级」那个选项被明确否掉了。
+
+**出图与几何（本轮最容易做错的地方，全部有实测依据）**：
+
+- `core/raster.ts:83 qrcodeMonoRaster`：bwip 二维的缩放档位是「**1 档 = 2 像素/模块**」，实测 scale=1 时网格为 datamatrix 28×28、qrcode 42×42、azteccode 38×38、**pdf417 120×21（高度是奇数）**。
+- 只有偶数点阵才能「隔行隔列抽稀」得到无损的整数点/模块。奇数档位若强行重采样或多数表决，等于把半个模块的灰边请回标签里 —— 所以改成**档位重试**：按 `requested → +1 → +2` 依次出图，取第一个宽高都为偶数的档位（`raster.ts` 内循环），三档全失败才抛错。
+- 上调档位时 `MonoRaster.moduleDotsRequested` 记下**模板请求值**，`attachBitmapFallbacks`（`:169`）随即发 `[位图] … 每模块点数由 N 点上调到 N+1 点 …（X-dim 略大于模板值，符号仍可扫）`。这一条是**如实告知**，不是静默改尺寸。
+- 为什么必须这样做：PDF417 的行高方向天然是奇数倍，203dpi 的 3/5 点与 300dpi 的 5/7/9 点档位全都会踩中；旧实现直接抛错 = 「300dpi 上 0.4/0.6/0.8mm 的 PDF417 一个都打不出」。
+
+**字节传输契约**（位图数据只要经过一次 utf8 往返就永久损坏，>0x7F 的点位字节会变成 U+FFFD）：
+
+| 层 | 口径 | 落点 |
+| --- | --- | --- |
+| 生成器 | 行数组可以是文本段或「指令头 + 原始字节」二进制段，全程 `Buffer.concat`，禁止整体 `.toString()` 后再编码 | `tspl-generator.ts:44,279,306` |
+| Provider | `raw_tcp` 内部一直按 Buffer 组装。历史实现有一句 `.toString('ascii')`：它把每个字节高位抹掉（实测 `0x80→0x00`、`0xFF→0x7F`），**字节数不变**，所以行宽/行数照样跟头部声明「对得上」、固件不报错，打出来却是一张点位被改过的图 —— 这类缺陷不会以故障形式暴露，只能靠字节断言防住 | `printer/printer-provider.interface.ts:91-131` |
+| HTTP | `/print/commands` 返回 `text` + `textBase64` + `textExact` + `bytes`（真实字节数）。含位图段时 `textExact=false`，**客户端只有拿 `textBase64` 才是可信的**；`textExact` 的判据是 `Buffer.from(text,'utf8').equals(buf)`，不是「有没有位图元素」这种猜测 | `src/print/print.controller.ts:144-151,160-178` |
+| 老前端 | `downloadCommands` 在 `textExact===false` 时 `atob → Uint8Array → Blob(application/octet-stream)`，纯文本作业路径逐字节不变 | `web/js/print.js` |
+| 测试标签入口 | `/printers/:id/test-commands` 只回 `{protocol,text}` —— 测试标签是纯文本、不含位图段，因此刻意**不**补 `textBase64/textExact` | `src/printer/printer.module.ts:161-182` |
+
+**端到端证据（沙箱内）**：同一份 GS1 DataMatrix 内容分别渲染三协议作业图，用 zxing-cpp 解码得到
+ZPL `^GFA` → `]d2`、TSPL `BITMAP` → `]d2`、EPL `GW` → `]Q1`（QR 明文场景），bytes 为 `b'010425123456789010AB789'`。
+⚠️ 这只证明「点阵/指令语义自洽且可被标准解码器识别」，**不等于真机打出来对**（§10.27.9）。
+现在这段证据可重跑：`bash backend/scripts/p7-acceptance.sh` 的 C.5/C.6（缺 python `zxing-cpp` 时整段 SKIP，不假 PASS）。
+
+### 10.27.3 P7.4 GS1 FNC1 语义（三协议 + bwip 四路）
+
+本轮修掉的**真缺陷**：二维符号装 GS1 `(AI)` 内容时，位图通道原来只开 `parsefnc:true`，实测（zxing-cpp 读 bwip-js 4.x 出图）：
+
+- `(01)04251234567890(10)AB789` + `parsefnc:true` → AIM `]d1` / `]Q1`，bytes 里**带字面括号** → 就是普通符号，AI 结构丢失 = **错码**；
+- `[01]…` + `parse:true` → 同样是字面方括号。所以「开 parse 就懂 GS1」是错的；
+- 正解：文本喂 `^FNC1` + 去括号 AI 链，并保持 `parsefnc:true` → `]d2`（GS1 DataMatrix）/ `]Q3`（GS1 QR），bytes `b'010425123456789010AB789'`。
+  对照实验：在**定长** `01` 之后多插一个分隔符也能解出 `]d2`，但 bytes 会多带一个 `\x1d` —— 数据里多一个不可见控制符属于不洁输出，所以实现按 GS1 规则只在变长段后插（这条曾以注释形式写成「带 `\x1d` 才对」，现已按实测改正）。
+
+转写规则（`core/gs1.ts:162 gs1ToBwipFnc1`）：符号起始一个 `^FNC1`；**只有「变长 AI 且其后还跟着别的 AI」**才在其后再插一个 `^FNC1`（bwip 编成 GS 0x1D）；定长 AI 之后不插；末尾永不插（尾随 GS 是脏数据）；数据里的字面 `^` 必须写成 `^^`，否则 bwip 报 `bwipp.truncatedFNC`（实测）。
+名单与例外（`gs1.ts:180 BWIP_GS1_2D_BCIDS` = datamatrix / datamatrixrectangular / qrcode / microqrcode / azteccode）：
+
+- `gs1-128` **不转写**：它自己解析括号 AI（实测 `]C1`，bytes 无括号），转写反而按字面量编；
+- `pdf417` **不转写**：GS1 AI 在 PDF417 是 Composite 链接语义，不能套「起始 FNC1 + GS 分隔」；
+- `microqrcode` 装 GTIN：bwip-js 对**任何** `^FNC1` 文本都报 `bwipp.qrcodeNoValidSymbol`（连 `(13)260101` 也一样）→ GS1 Micro QR 在本实现里出不了图。`gs1BwipText` 因此**显式抛错**给可读原因（「请改用 DATAMATRIX 或 QRCODE」），而不是等出图失败再兜底；同时它仍留在名单里，防止哪天被顺手删掉后退回「带括号的普通 Micro QR」这种错码。打印侧表现为 `[位图] … 该元素将被跳过（宁可不打，不打错码）`，预览侧表现为占位；
+- 括号 AI 结构解析不出来（尾随垃圾 / 空 AI / AI 前有多余字符）→ **抛错**，绝不退回字面括号。注意 `parseGs1` 只管结构不管长度，`(01)0425` 是能解析的，长度合法性由码制侧（bwip）拒。
+
+调用点：`core/barcode-renderer.ts` 的 `barcodeBwipOptions` / `qrcodeBwipOptions`（预览与位图通道共用同一份参数构造，所以预览不会再是另一种符号）。回归锁：`__tests__/gs1.test.ts`（49 条）+ `caps-sync.test.ts` 的转写口径段。
+
+协议侧 GS1 语义现状（与上面不同，这是**指令层**）：
+
+| 协议 | 做法 | 出处状态 |
+| --- | --- | --- |
+| ZPL | `>;`（GTIN 定长段，含校验位）/ `>8`（变长段后插 FNC1），`gs1ToZpl`；`^BC` 的 `e` 位对 GS1-128 必须关 | 手册可查 |
+| TSPL | 码型用 `"EAN128"`（TSC 的 EAN128 = GS1-128，**不是** `"128"`），变长字段之间插 0x1D | 手册可查 |
+| EPL | 类型码 `'1E'` 存在，但数据段 FNC1/GS 写法查不到出处 → `previewOnly`，跳过 + warning（`[码制]`） | ⚠️ 未查证 |
+| 二维原生指令 | DataMatrix/QR/Aztec 的 FNC1 转义写法拿不到可引用出处 → `planChannel` 一律改派位图 | ⚠️ 刻意不做 |
+
+**GS1 这一节里四条「刻意不做 / 刻意只做一半」，别再当成 bug 修**：
+
+1. **4 位定长 AI（41xx / 42xx 等）不进表**：`aiLength` 只收录可查证的那些档位，表外的 4 位 AI 一律按**变长**处理，于是会多插一个分隔符。方向是保守的（不会串字段、不会丢数据，只是数据里多一个 GS）。GS1 官方定长表这几档我拿不到可引用的出处，按红线「查不到就不猜」维持现状，并用 `caps-sync.test.ts` 的 `(37)260315(4100)1234567890123(10)AB` 语料把这个行为锁住（要改必须先看它红）。
+   ⚠️ 本轮修掉了一个**方向相反**的老 bug：`measureAiLen` 原来写的是 `/^[34][1-6]\d{2}$/ && !startsWith('41')`，等于把 42xx–46xx（Ship To 地址族，规范里是**变长**字母数字）判成定长 6 位 ⇒ 该插的分隔符没插，扫描器会把地址和下一个 AI 串成一个字段，这才是真会错数据的档位。现在计量类只认 `^3[1-6]\d{2}$`（`31nn`–`36nn` = 前缀 + 6 位数字），`parseGs1` 裸串分支同步收窄。回归锁：`gs1.test.ts` 的「计量类只认 31xx–36xx」+「4212 之后必须插 FNC1」两条，以及 `caps-sync.test.ts` 第 5 节语料里的 `(4212)` 链。
+2. **`validateGs1` 只校验 (00)/(01)/(02) 的 Mod10 校验位**：本轮把 `checksum.gtinCheckDigit` 接进校验链，补上「位数对、数字对、但校验位算错」这个静默缺口（这类数据扫得出来、下游系统复核时炸）。刻意**只查这三档**——它们在本模块的定长表里已有明确语义标注（SSCC / GTIN / 内装物 GTIN）；`(03)/(04)/(08)/(12)` 是不是同一套「数据 + 校验位」结构，我拿不到可核验的出处，误报一条 warning 会让用户对本来正确的数据起疑，代价不比漏报小。命中时输出 `AI (01) GTIN 校验位错误：末位应为 1，实际 9（12345678901239）`，走 `[GS1]` warning 通道、**不拦打印**（校验位错说明数据可疑，是否放行是业务决定）。位图通道仍不调 `validateGs1`（见 §10.27.5 的已知不对称）。
+3. **legacy `web/js/render.js` 的同一缺陷不修**：`render.js:365/:400-410` 仍是「只给 `gs1-128` 开 parsefnc、二维不转写」，所以老客户端的**预览图**里 GS1 二维还是带括号的普通符号。核对过链路：`backend/printer/printer-provider.interface.ts:86` 把 `protocol==='browser'` 归一成 `'zpl'`，即老前端的实际打印指令始终由后端生成器产出 → 这是「预览不一致」而不是「打出错码」。`web/` 已 DEPRECATED（只对照行为、不再新增功能），因此只在此记录。要修的人请注意：那份是浏览器 `<script>`，没有构建、没有 lint、没有测试，改动只能靠手工比对。
+4. **`/printers/:id/test-commands` 不补 `textBase64/textExact`**：该入口只生成一张纯文本测试标签（`printer.module.ts:161-182`），不含位图段。真出现含位图的测试标签时再补，别提前做半成品。
+
+**GS1 这节还留着四个已知缺口（本轮如实记下，别当成已解决）**：
+
+1. **位图通道不调 `validateGs1`**：只有 `zpl-generator` / `tspl-generator` 调它出 `[GS1]` warning，`raster.ts` → `barcode-renderer.ts` 这条路上结构错误既不抛也不告警。后果是「`(01)` 装了 20 位」这种数据在原生通道有提示、在位图通道静默出图。已用 `gs1.test.ts` 两条「如实记录现状」的断言钉住（补校验时它们会显式变红），并有一条断言反向要求两个生成器继续调用 `validateGs1`。
+2. **方括号 `[01]…` 形式不进改写名单**：`gs1BwipText` 的触发条件是 `\(\d{2,4}\)`，方括号写法则 bwip 照样按字面量编（实测仍是 `]d1`），所以这种写法**没有拦截路径**，只有实测结论。要么在入口拒绝方括号写法，要么接受「用了方括号就是普通符号」，本轮没选。
+3. **`parseGs1` 的括号分支偏宽**：`(01)04251234567890)(10)AB` 这种尾随 `)` / 括号+方括号混写会被吃进前一个 AI 的数据段，`consumed` 恰好等于总长 ⇒ 不抛错。真正抛的是「多余字符使 consumed 对不上」那三类。要收紧需要动 consumed 判定，属实现改动。
+4. **「首个 AI 应为 (00)/(01)/(02)」这条建议被 `some()` 全局抑制**：判定是「串里存在 00/01/02」而不是「首位是 00/01/02」，所以 `(21)A(01)…`（GTIN 不在打头位）不提示。扫码端在这种情况下仍可能整串按普通 Code128 解，属可改进项。
+
+### 10.27.4 P7.6 条码属性专业调优（几何 / 静区 / 参数 / 校验位）
+
+`core/barcode-geometry.ts`（250 行）是新的几何真源，`computeGeometry` 返回量化后的点数与 warnings，生成器只认它给的值：
+
+- `dotPitchMm(dpi) = 25.4/dpi`；X-dim 先量化成**整数点**，不足 1 点抬到 1 点（`[几何] … 已抬到 1 点`），并给出该码制推荐下限（低于则提示提高分辨率/加宽模块）。
+- 固定比例码制（EAN/UPC）忽略宽窄比；Code128/GS1-128 宽元素必须整数模块，非整数比取整（各出 `[几何]`）。
+- 符号高度：`HEIGHT_RATIO_OF_LENGTH = 0.25`、`MIN_HEIGHT_MODULES = 10`，取两者较大值做下限，符号长度用 `estimateModules/estimateSymbolLengthMm` 按内容估；过短出 `[几何]`。
+- 静区按码制要求的模块数换算成整数点，不够就按最小值补足并出 `[静区]`；二维模块 <2 点时出建议（203dpi 下 0.25mm 是清晰定位图形的下限）。
+- 旋转时的明文位置：`textSideFor` / `isVerticalTextSide`（90°/270° 把 bottom/top 映射成 left/right）。TSPL `BARCODE` 没有「明文在上」参数，只能按固件默认（符号下方），如实出 `[版式]` 而不是假装支持。
+- 参数钳制统一在两个生成器的 `clamp/clampDot` 里：`^BY` 模块宽 1–35 点（早期固件上限 10 → 额外 `[参数]` 提示换算后的 mm 值）、宽窄比 2.0–3.0 按 0.1 步进、`^BQ` 放大 1–10、`^B0`(Aztec) 1–20、`^BX` 高度可到标签宽；TSPL narrow/wide 上下限同理。
+- 校验位一律显式化：让打印机自动加校验位的分支（ZPL `e` 位、TSPL 用 `MSIC` 码型、EPL `3C`/`2C`）都会出 `[校验位] … 扫描结果会比预览数据多一位`，因为下游系统常常按不带校验位解析。
+
+warning 前缀现在共 **13 类**，前端按前缀分类展示：core 侧 12 类 `[码制] [几何] [静区] [参数] [校验位] [GS1] [位图] [图像] [字体] [版式] [数据] [图形]`，控制器侧再加 1 类 `[字节]`（作业含 BITMAP/GW 原始二进制时提醒「text 仅供阅读，落盘请用 textBase64」）。
+⚠️ 老前端与 `/print/commands` 里还留着**不带前缀**的历史 warning（如 `print.controller.ts:202` 的 TSPL `FONT001` 中文字库提示），前端分类器必须容忍「无前缀」这一档，不能假定每条都以 `[xx]` 开头。
+
+⚠️ 没做的部分：只有经验性下限，没有「最小印刷宽度 × 扫描器景深/光斑」的机型级模型；也没有按具体扫描枪型号的调优表。
+
+⚠️ **25% 高度建议是「估得出来才提示」的刻意设计，别当 bug 修**（P7.8 复核时逐条判过）：`estimateModules` 返回 0 的含义是「本模块估不出来」，它同时覆盖内容为空、码制不在估算表内（PHARMACODE / CODE16K / 各二维符号）、以及 ITF/MSI/CODABAR 这类只能给近似值的码制退化；`computeGeometry` 一律以 `lenMm > 0` 为「有估算」，0 就**静默跳过**高度建议。理由：宁可少提示一条，也不要拿猜出来的长度去劝用户改高度——那会让人怀疑本来正确的设置。已知代价（都在代码注释里写明）：CODE16K 这类码制完全不出现 25% 建议，且响应里不会说明「为什么没提」；`estimateSymbolLengthMm` 在 `xMm` 异常时会把 NaN 塌成 0，等价于同一档静默跳过。没有改成返回 `null`，因为那会牵动 66 份 golden 的 warning 数组。
+
+另两条判为「不是缺陷」：`defaultRatio(ITF)=2.5` 与 ZPL 实际下发的 `^BY w,2.7,h` 不是同一个数——2.7 是 `wideDots / xDots` 反算值（203dpi、模块宽 3 点时宽条只能落 8 点），与几何模块自洽；直接写 2.5 反而要赌固件是四舍五入还是截断。理由写在 `zpl-generator.ts` 的 `zplByRatio` 注释里，golden 按实际值钉住。
+
+### 10.27.5 P7.5 前端能力如实呈现（Console）
+
+- `apps/console/src/views/designer/barcode-caps.ts`：后端矩阵的内容等价副本（`CAP_MATRIX_VERSION` 必须与后端一致，由 `caps-sync.test.ts` 直接 import 这份文件做守卫），另加展示层 `DISPLAY_PROTOCOLS / worstStatusFor / capStatus / capOptions / capHint / warnBadge`。
+- 下拉后缀口径：`native` 不标、`degraded` →（打印有差异）、`bitmap` →（位图打印）、`previewOnly` →（仅预览·不能直接打印）；`value` 仍是原码制串（`FSelect` 只改 label），`model.ts` 的 `BARCODE_SYMS/QRCODE_SYMS` 取值集合**零改动**。
+- 三处呈现：码制选择器后缀；选中受限码制时字段下方一行小字（`capNote`，不弹窗不拦截）；打印预览弹窗的「指令导出提示」（逐协议 POST `/print/commands`，按并集去重后渲染，无提示时完全不占位）。
+- **默认协议口径的选择**：designer 侧拿不到打印机协议（store 里没有 protocol 概念），所以缺省在 `zpl|tspl` 里按 `native<degraded<bitmap<previewOnly` **取最坏一档**，且刻意不纳入 `epl`——EPL 是可选的老机型协议，纳入会让 CODE128/QRCODE 这类主流码制也挂上「位图打印/仅预览」，噪音盖掉信号；调用方显式传 `protocol:'epl'` 时 `capStatus/capHint` 如实呈现。将来接打印机选择器，只需换 `PropsPanel.vue:444` 的 `symProtocol`。
+- 老前端只修缺陷：`web/js/printers.js` 的 `pd-cmds` 分支原来写 `const r = await api.printerCommands(id, r.protocol || 'zpl')`，`r` 自引用（TDZ，取协议时 `r` 还没初始化）→ 改成用外层行数据 `r.protocol`。`web/` 已 DEPRECATED（§开头第 8 行口径：只对照行为，不新增功能），因此**没有**给它的协议下拉加 EPL 选项。
+- ⚠️ 已知不一致（留待下一步，不是本轮漏做）：下拉标记只看矩阵状态，不看内容，所以「ZPL + GS1 DataMatrix」在下拉里仍无标记，只有导出时才拿到 `[码制] 改派位图` 的 warning；要覆盖需按 `bc/qrcode.content` 实时判定。预览弹窗每次刷新生成 2 个 POST（rows 用当前预览数据、copies 固定 1），大模板 × 数百行未压测，失败静默、不影响预览。
+- **预览与打印同口径（P7.4 的前端收尾）**：`apps/console/src/views/designer/engine/gs1.ts`（136 行，新增）是 `backend/core/gs1.ts` 的 bwip 通道语义等价只读副本（沿用 barcode-caps 那份「前端副本」约定），`engine/barcode.ts` 里加私有 `applyGs1Bwip`，接在两个 bwip 参数构造点（`:126` makeBarcodeSvg / `:181` makeQrSvg）—— 画布 `DesignerElement.vue`、打印 HTML `print.ts`、模板缩略图 `TemplateThumb.vue`、`PropsPanel.vue:424` 的自然宽度全部经这两处。解析失败沿用该文件既有的 `try/catch` + `console.warn` + 占位兜底，**绝不退回带括号的预览图**。
+- 这份副本由 `caps-sync.test.ts` 第 5 节直接 import 并比对：**13 条语料 × 8 个 bcid** 的「返回值或是否抛错」逐条一致，外加 `BWIP_GS1_2D_BCIDS` 数组与 `gs1ToBwipFnc1` 输出。console 侧没有测试框架（scripts 只有 dev/build/lint/preview），所以这道守卫放在后端；改前端那份纯函数副本时，请直接在 `backend/` 跑 `node --import tsx --test core/__tests__/caps-sync.test.ts` 自检（22 条）。
+
+### 10.27.6 P7.7 EPL 通道（旧 Zebra / Eltron）
+
+`core/epl-generator.ts`（975 行）刻意做成**完全自包含**：唯一的运行时 import 是 `./types`（纯类型），不引用 barcode-caps / barcode-geometry / bitmap-blocks / gs1 / raster —— 代价是文件内联了三份最小必需的最小组合（`normSym` + 一维几何量化、图形宽高单位换算、最小 AI 定长表只用于诊断），文件头注明**必须双向同步**。这样单测里那 34 个点阵全用手写字面量，不碰 sharp/bwip/nest。
+
+- 签名：`generateEpl(els, dpi, page, orientation?)`，page 支持 `gapMm/density/speed/copies/orientation`；第 4 参优先于 `page.orientation`。页头 `N` → `q<宽点>`/`Q<高点,gap点>` → `D<density>`/`S<speed>`，收尾 `P<n>`。
+- 文本 `A x,y,font,rot,hI,wI,MODE,"DATA"`：CJK 走双字节字体（p4=8、p3=4–7）并出 `[字体]` 说明「只有带亚洲字库机型有字形，且 DATA 必须是 GBK/GB18030 或 BIG5 字节，UTF-8 直发会乱码」；非 Code Page 437 的字符入口查不到 → 一律 warning。
+- 一维 `B x,y,rot,type,p3..p8,"DATA"`，类型码表 `EPL_BARCODE_TYPES`（照手册 Table 2-1）：`CODE128 '1'`、`CODE39 '3'/'3C'`、`CODE93 '9'`、`EAN13 'E30'`、`EAN8 'E80'`、`UPC/UPC_A 'UA0'`、`UPC_E 'UE0'`、`ITF/ITF14 '2'/'2C'/'2D'`、`CODABAR 'K'` → **native 11 种**（ITF14 在矩阵里是 `degraded`：编码链一致但无 ITF-14 边框/承载标记）。
+- `GS1_128`（有 `'1E'` 但 FNC1 写法未查证）、`MSI`（`'M'`=MSI-3 / `'L'`=Plessey-MSI-1，校验算法被类型码写死，与本产品 MSI+MSI10/11 不是同一符号）→ `previewOnly`；`PHARMACODE`/`CODE16K` 手册无指令 → `no-evidence`。这四类都**只跳过 + warning**，并给出「手册有没有这条指令 → 本产品暂未覆盖」两级口径与出路。
+- 二维全部走位图：`GW x,y,widthBytes,rows,<原始 latin1 字节>`。结论依据：手册目录的图形族只有 `GG/GI/GK/GM/GW(+UG)`，**没有裸 `G`**；真实作业样本与多份独立实现都是「指令头 + 原始字节」，ASCII hex 形态属于 CPCL 的 `EG`，不是 EPL。`EPL_GRAPHIC_COMMAND`/`EPL_GW_POLARITY` 做成常量开关，改口径只动一行。
+- 两个必须防住的坑已实现并有单测：① **数据字段永不省略** —— `B`/`A` 行必带非空 `"DATA"`，内容为空时整条元素不打（绝不发 `B...,""`），因为 EPL 省略数据字段会**打印上一次缓存的符号**；② 未知元素类型/框线椭圆参数查不到 → `[图形]` warning 且不打。
+
+### 10.27.7 P7.8 单测 / golden 快照 / 验收脚本
+
+| 文件 | 用例 | 锁什么 |
+| --- | --- | --- |
+| `core/__tests__/gs1.test.ts` | 49 | AI 定长表（含 42xx–46xx 归变长的修正）、`parseGs1`、三种转写输出（ZPL `>;`/`>8`、裸流 0x1D、bwip `^FNC1`）的分隔符条数互相等值、`^^` 转义、名单外 bcid 返回 undefined、结构解析失败抛错、`(00)/(01)/(02)` 的 Mod10 校验位、`barcode-renderer` 调用点只读源码扫描 |
+| `core/__tests__/geometry.test.ts` | 33（1 skip） | 点距/X-dim 量化/固定比例/高度下限/静区整数点/旋转明文/档位重试（①自动上调 ②三档全奇必抛 ③上调必发 warning） |
+| `core/__tests__/golden.test.ts` | 28 | 三协议 × 码制指令快照逐字节比对（66 份 `.txt`）；`^GFA` 断言含「b==c、c==d×rows、c≠rows、hex 长度==2b、b%d==0、hex==synthFallback」并自带两条合成样本自检（防止结构断言沦为装饰） |
+| `core/__tests__/epl.test.ts` | 34 | EPL 页头/类型码/校验位类型码/`GW` 宽高与载荷字节数/位极性翻转/数据字段永不省略/审计表↔类型码↔实际输出三方一致 |
+| `core/__tests__/caps-sync.test.ts` | 22 | 见 §10.27.1 的防漂移四类关系 + §10.27.5 的 Console GS1 副本一致性 |
+| `core/__tests__/golden/cases.ts` `update.ts` | — | 用例定义与快照重生成：`npx tsx core/__tests__/golden/update.ts` |
+
+- 本轮新增 **166 条**（49 + 33 + 28 + 34 + 22）。`npm test` 的 8 条 skip 是 7 条 PG 集成用例（本机无库）+ 1 条**刻意留的指针**：
+  「抽稀后偶数性/无损性」不能进单测（会拉进 sharp/bwip，违反纯函数红线），改由验收脚本 C 段实跑，用例里写明去向。
+
+- golden 的关键设计：位图段**不调 `raster.ts`**（bwip/sharp 出图非确定性，快照会天天变），而是塞一个手写确定点阵 `synthFallback()`（`cases.ts:97`），因此快照里的 `BITMAP`/`GW`/`^GFA` 头部与字节数可复现，而真实点阵正确性由 §10.27.2 的解码回判与真机清单负责。
+- 每份快照头部写明：`CAP_MATRIX_VERSION`、该码制在该协议下的 `status`、`planChannel` 的 `why`、该回归点一句话。所以快照红的时候先读头部就知道是「结论变了」还是「实现漂了」。
+- `backend/scripts/p7-acceptance.sh`（806 行）：P7 的离线验收脚本，四段 —— **A** typecheck + `npm test` 真实数字（不截断）、**B** golden 默认模式（不许写盘，另附「手改一份快照 → 必红 → 还原 → md5 一致」的可红性演示）、**C** 真实点阵往返（`raster.ts` 出图 → 独立重建 → `cv2.QRCodeDetector` / `zxingcpp` 解回，含 AIM 断言、`^GFA`/`BITMAP`/`GW` 三协议的字节自洽、PDF417 档位上调五组、RGBA 透明底陷阱正反两例）、**D** `POST /print/commands` 三协议冒烟。**没有后端/打印机/Python 依赖时必须 SKIP 而不能假 PASS**（D 段在本沙箱就是 SKIP）。
+- 本轮实跑基线（2026-11-08，沙箱）：`cd backend && npm test` → **385 tests / 377 pass / 0 fail / 8 skip**（P7 前基线 219/212/0/7，本轮 +166）；`npx tsc --noEmit -p tsconfig.json` → **0 error**；`bash backend/scripts/p7-acceptance.sh` → **EXIT 0，PASS 58 / FAIL 0 / SKIP 1**（前置 0/0/0 · A 5/0/0 · B 5/0/0 · C 48/0/0 · D 0/0/1），连续两次整跑计数一致；`cd apps/console && pnpm build && pnpm lint` → 均 exit 0。
+- ⚠️ 写指令类单测的一条卫生要求：**读作业 buffer 不要用 `toString('ascii')`**（`engines.test.ts:155/167` 是既有写法，只因那两条用例的作业确实不含位图段才成立）。要看字节就用 `latin1` 或 `Buffer.compare`，否则将来给同一个用例加一个 `BITMAP`/`GW` 元素时，字节损坏会被悄悄吃掉。
+
+### 10.27.8 复核命令（接手请先全跑一遍）
+
+```bash
+cd backend && npm test                                   # 期望 385 / 377 / 0 fail / 8 skip
+npx tsc --noEmit -p tsconfig.json                       # 期望 0 error
+node --import tsx --test core/__tests__/caps-sync.test.ts   # 22 条：矩阵/前后端/GS1 漂移守卫
+npx tsx core/__tests__/golden/update.ts                  # 只有**故意**改结论时才跑，跑完 git diff 必须能解释
+cd apps/console && pnpm build && pnpm lint               # vue-tsc + vite 0 error，eslint 0 问题
+bash backend/scripts/p7-acceptance.sh                    # 期望 EXIT 0 / PASS 58 / FAIL 0 / SKIP 1（D 段无后端时 SKIP）
+```
+
+**关于「解码回判」证据怎么重跑**：现在**已经在仓库里**，位置是 `backend/scripts/p7-acceptance.sh` 的 C 段（48 项），跑法就是上面那条 `bash backend/scripts/p7-acceptance.sh`。口径值得单独记一笔，因为它是换过一次实现才跑通的：
+
+- **Node 侧走不通，改用 Python**：先试的是仓库自带的 `zxing-wasm` + `sharp`（见 `src/ai-template/barcode-reader.ts`），在 Nest 之外裸跑时 `zxing-wasm/reader` 取不到 wasm（`Aborted: both async and sync fetching of the wasm failed`），走主入口则返回一条字段全空的结果 —— 想做成仓库内常规检查还得补 wasm 定位，成本比收益高。C 段因此改用沙箱里的 `python3 -c "import cv2, zxingcpp"`（`pip install zxing-cpp opencv-headless numpy`），依赖缺失时整段 SKIP 而不是假 PASS。
+- **三个解码器的能力差异要写清，否则会误判**：`cv2.QRCodeDetector` 只解普通 QR，GS1 QR 会报 mode 5（C.4 里如实记录、不参与判定）；**能验 GS1 DataMatrix 的只有 zxing-cpp**（C.5 现解出 `]d2 / 011234567890123121SN0007` 与 `]Q3`，text 里的括号是解码器补的，AIM 才是判据）；`pyzbar` 能 import 但这个 build 的 `ZBarSymbol` 只有 DATABAR/DATABAR_EXP、**没有 DMTX**，所以不进判定链。
+- **探测协议要挑对，否则假绿**：PDF417 在 ZPL 走原生 `^B7`，只有 TSPL/EPL 才走位图，所以档位上调（C.7）固定在 **tspl** 上探测；用 zpl 探永远是「无 warning」= 假绿。
+- **透明底陷阱做成了正反两例（C.9）**：`qrcodeBwipOptions` 固定 `backgroundcolor:FFFFFF`，所以生产 PNG 必须 alpha 全 255（C.9a，有人把默认值改掉就判红并提醒去核对 `sharp` 的 `.flatten`）；C.9b 用同参数摘掉 `backgroundcolor` 复现陷阱 —— alpha=[0,255] 时直接 `convert('L')` 只剩 [0]（全黑）、zxingcpp 解不出，flatten 到白底才解得出。这条不是理论：`src/ai-template/barcode-reader.ts` 早就靠 `.flatten({background:'#ffffff'})` 兜着。
+- C.8 另有一组**不依赖后端**的字节口径复核：用真实 bwip 点阵（115×115 / 205×205）核对 `^GFA,1725,1725,15` 三数与载荷、TSPL `BITMAP` 逐行 205×26B 拼回一致、EPL `GW …,15,115,` 的 p3×p4==1725B。
+
+AIM/几何结论除了 C 段，另外固化在三处可复核的地方：`gs1.ts` 的注释（AIM 标识符、`^^` 规则、定长不插分隔）、`raster.ts` 的注释（实测网格尺寸与档位重试）、`caps-sync.test.ts` 的转写与副本一致性断言。
+
+### 10.27.9 必须实机 / 外部条件才能定的事（不要按已完成对外承诺）
+
+| 项 | 现状 | 判定方法 |
+| --- | --- | --- |
+| EPL `GW` 位极性（1=墨 还是 1=白） | 默认 `EPL_GW_POLARITY='mark-is-1'`（与仓内 `packRows` 同向），每次出图在 `[位图]` 里写明当前口径；手册级证据不足 | 打一张含二维码的标签，反了就改成 `'mark-is-0'`（单行开关，`eplInvertHex` 已就位） |
+| ZPL Aztec 指令名 `^B0` vs `^BO` | 代码按 `^B0`（放大 1–20），两个写法在资料里并存 | 一张 Aztec 标签即可判 |
+| 图形指令名 `GW` vs 某版本手册的 `G` | 按 `GW`（`EPL_GRAPHIC_COMMAND` 单行可改） | 同上 |
+| TSPL 中文字库 / `BITMAP` mode 语义 / EPL 缓存符号现象 | 只有手册级结论 | 各打一张，看是否需 mode 1/2 与是否复现「空数据打上一张」 |
+| PDF417 行高与档位上调后的实际 X-dim | 抽稀无损但符号比模板略大 | 用扫描枪 + 卡尺量一次 |
+| `p7-acceptance.sh` **D 段（`/print/commands` 三协议在线冒烟）在本沙箱不可跑** | 脚本设计上只 SKIP 不参与退出码；沙箱没有 postgres/redis 服务端二进制（只有 `psql` 客户端），`dist/src/main.js` 也未构建 ⇒ 本轮 58 PASS 里 **不含任何走 HTTP 的验证** | 起后端后 `BASE=http://127.0.0.1:3200/api/v1 bash backend/scripts/p7-acceptance.sh`，期望 D 段从 SKIP 变成 PASS |
+| A 段 8 条 skip 中的 7 条 PG 集成用例 | 同上原因（无库），不是被跳过的功能 | 有 PG 的机器上 `npm test` 应为 0 skip |
+| Console 面板对「MICROQR + `(AI)`」仍判合法 | `PropsPanel.validateBarcodeText` 的 BC_RULES 没这条预检，用户看到的是占位图 + `console.warn`，而不是「此码制不支持 GS1」的字段级提示（后端会抛，打不出是打不出） | 加一条 UI 口径决定后再做：是禁用选项、还是选中即报错，需要产品定 |
+| P6.2 阶段 B、密钥管理、真域名白标 DNS、通知/定时任务基建 | 与本轮无关，仍是 §10.1.5 B1/B2 的未完成项 | 见该节 |
+| `apps/console/package-lock.json` | 在 console 里误用 `npm install` 的副产物（该 app 的锁文件是 `pnpm-lock.yaml`），**未跟踪**。已加进 `.gitignore`（console/platform 走 pnpm；backend 与 mcp-server 走 npm，它们的 lock 是入库的） | 不用管；如果哪天要统一包管理器，那是另一件事 |
+

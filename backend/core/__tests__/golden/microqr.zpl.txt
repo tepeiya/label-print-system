@@ -1,0 +1,15 @@
+# golden —— MICROQR @ ZPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: ★ ^BQ 明确 model 2 only，Micro QR 无原生指令 → 必须走 ^GFA 位图；旧实现谎称原生（发 ^BQ 打出的是标准 QR，与预览不是同一符号）
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=bitmap —— 码制 MICROQR / 内容 "MICRO-42"
+# 通道派单: channel=bitmap why=MICROQR @ ZPL → 位图通道（bwip-js 出图）；ZPL ^BQ 明确 model 2 only，Micro QR 无原生指令；TSPL 降级标准 QR 也不等价，统一走位图；EPL 的 b(2D) 语法未查证到，同样只能 GW 点阵
+# 位图段: 确定性合成点阵 synthFallback()（24×12 点 / 4 点每模块），不经 bwip/sharp
+
+--- commands ---
+^XA
+^CI28
+^FH\
+^FO80,64^GFA,36,36,3,FFC3C381C3C381F0F099F0F0993C3C813C3C810F0FFF0F0FC3C3C3C3C3C3F0F0F0F0F0F0^FS
+^XZ
+
+--- warnings ---
+- [位图] MICROQR @ ZPL → 位图通道（bwip-js 出图）；ZPL ^BQ 明确 model 2 only，Micro QR 无原生指令；TSPL 降级标准 QR 也不等价，统一走位图；EPL 的 b(2D) 语法未查证到，同样只能 GW 点阵；已用 bwip-js 点阵经 ^GFA 下发（24×12 点 ≈ 3.00mm 宽，含 4 点/模块与四周静区），可扫但不是打印机原生符号

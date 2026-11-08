@@ -1,0 +1,18 @@
+# golden —— CODE128 @ ZPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: ^BY 三段参数顺序（模块宽,宽窄比,高度）与 ^BC 的 5 位参数齐全；宽窄比 2.5 必须取整为 3:1（Code128 的宽元素只能是整数模块），校验位不重复追加
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 CODE128 / 内容 "ABC-1234"
+# 通道派单: channel=native
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+^XA
+^CI28
+^FH\
+^FO80,64^BY3,3,96
+^BCN,96,Y,N,N
+^FDABC-1234^FS
+^XZ
+
+--- warnings ---
+- [几何] CODE128 X-dim 由 0.400mm 量化为 0.375mm（3 点 × 0.125mm/点）
+- [几何] Code128/GS1-128 宽元素必须为整数模块，宽窄比 2.5 已取整为 3:1

@@ -1,0 +1,15 @@
+# golden —— DATAMATRIX @ ZPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: ^BX 的 quality 只能是 200（ECC200）；h 是「每符号元素高度」而不是符号总高
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 DATAMATRIX / 内容 "DM-0001"
+# 通道派单: channel=native
+# 位图段: 确定性合成点阵 synthFallback()（24×12 点 / 4 点每模块），不经 bwip/sharp
+
+--- commands ---
+^XA
+^CI28
+^FH\
+^FO80,64^BXN,4,200^FDDM-0001^FS
+^XZ
+
+--- warnings ---
+- (none)

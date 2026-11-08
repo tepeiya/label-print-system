@@ -1,0 +1,11 @@
+# golden —— DATAMATRIX_GS1_NORASTER @ TSPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: 同上：不得回落 QRCODE 指令、也不得造一条空 BITMAP（空载荷会让打印机吃掉后续指令）
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=bitmap —— 码制 DATAMATRIX（派生标识 DATAMATRIX_GS1_NORASTER：同码制不同内容口径） / 内容 "(01)12345678901231(21)SN0007"
+# 通道派单: channel=bitmap why=DATAMATRIX @ TSPL → 位图通道（bwip-js 出图）；ZPL ^BX（质量级只能 200=ECC200，列/行走自动）；TSPL 无原生指令走位图；EPL 手册有 b(2D DataMatrix, p.3-20) 但参数语法查不到 → GW 点阵
+# 位图段: 故意不给 fallback —— 验「拿不到点阵 → 跳过 + warning，绝不换码制」
+
+--- commands ---
+
+
+--- warnings ---
+- [码制] TSPL 需位图回填但未拿到点阵：DATAMATRIX @ TSPL → 位图通道（bwip-js 出图）；ZPL ^BX（质量级只能 200=ECC200，列/行走自动）；TSPL 无原生指令走位图；EPL 手册有 b(2D DataMatrix, p.3-20) 但参数语法查不到 → GW 点阵。该元素已跳过。建议改用 ZPL 协议或 protocol=image

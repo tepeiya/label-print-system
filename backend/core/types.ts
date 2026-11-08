@@ -24,6 +24,20 @@ export interface QrcodeSpec {
   quietZoneMm: number;
 }
 
+/**
+ * 位图回填数据（P7.3）。由 raster.ts 预生成，生成器只负责按协议封装下发。
+ * 生成器本身保持同步：拿到 raster 就出图像指令，拿不到就跳过 + warnings。
+ */
+export interface BitmapFallback {
+  widthDots: number;
+  heightDots: number;
+  bytesPerRow: number;
+  /** 逐行 ASCII hex 拼接（长度 = bytesPerRow*heightDots*2） */
+  hex: string;
+  /** 每模块打印点数 */
+  moduleDots: number;
+}
+
 /** 打印任务上下文：模板 + 数据行 + 打印机 */
 export interface RenderContext {
   tenantId: number;

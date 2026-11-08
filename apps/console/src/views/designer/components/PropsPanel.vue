@@ -171,8 +171,10 @@
       <FGroup v-else-if="el!.type === 'barcode'" title="一维码内容">
         <FRow>
           <FLabel text="码制" />
-          <FSelect :model-value="bc!.sym ?? 'CODE128'" :options="BARCODE_SYMS" @update:model-value="setBarcode({ sym: $event })" />
+          <FSelect :model-value="bc!.sym ?? 'CODE128'" :options="bcSymOptions" @update:model-value="setBarcode({ sym: $event })" />
         </FRow>
+        <!-- 码制能力受限（走位图 / 只能预览）：capNote 的小字说明，不弹窗、不拦截，口径见 barcode-caps.ts -->
+        <span v-for="(line, i) in bcCapHint" :key="`cap${i}`" class="f-hint f-hint-warn">⚠ {{ line }}</span>
         <FField label="内容">
           <FText :model-value="bc!.content ?? ''" placeholder="支持 {{变量}}" @update:model-value="setBarcode({ content: $event })" />
         </FField>
@@ -213,8 +215,10 @@
       <FGroup v-else-if="el!.type === 'qrcode'" title="二维码内容">
         <FRow>
           <FLabel text="码制" />
-          <FSelect :model-value="qr!.sym ?? 'QRCODE'" :options="QRCODE_SYMS" @update:model-value="setQr({ sym: $event })" />
+          <FSelect :model-value="qr!.sym ?? 'QRCODE'" :options="qrSymOptions" @update:model-value="setQr({ sym: $event })" />
         </FRow>
+        <!-- 同「一维码」：受限码制给一行 capNote 小字，取值集合不变 -->
+        <span v-for="(line, i) in qrCapHint" :key="`cap${i}`" class="f-hint f-hint-warn">⚠ {{ line }}</span>
         <FField label="内容">
           <FText :model-value="qr!.content ?? ''" placeholder="支持 {{变量}}" @update:model-value="setQr({ content: $event })" />
         </FField>
@@ -326,6 +330,8 @@
 import { computed } from 'vue';
 import { useDesignerStore } from '../store';
 import { BARCODE_SYMS, QRCODE_SYMS, SYSVAR_KEYS, TYPE_LABELS } from '../model';
+import { capHint, capOptions } from '../barcode-caps';
+import type { PrintProtocol } from '../barcode-caps';
 import {
   FORMULA_FUNCTIONS, buildContext, evalFormula, interpolate, sampleRowOf,
 } from '../engine/context';
@@ -429,6 +435,18 @@ const formulaError = computed(() => {
     ? '公式无法求值，画布上会显示默认值或 #公式错误'
     : '';
 });
+
+// --------------------------- 码制能力标记 ---------------------------
+// 下拉后缀与小字说明都来自 barcode-caps.ts（与 backend/core/barcode-caps.ts 等价的副本）。
+// designer store 里没有打印机/协议概念（协议只在导出指令时由调用方指定），
+// 所以这里传 undefined，走「zpl/tspl 取最差情况」口径 —— 详见 barcode-caps.ts 文件头注释。
+// 日后接入打印机选择器，只需把它的 protocol 传给 symProtocol，判定表不用动。
+const symProtocol: PrintProtocol | undefined = undefined;
+
+const bcSymOptions = computed(() => capOptions(BARCODE_SYMS, symProtocol));
+const qrSymOptions = computed(() => capOptions(QRCODE_SYMS, symProtocol));
+const bcCapHint = computed(() => capHint(bc.value?.sym ?? 'CODE128', symProtocol));
+const qrCapHint = computed(() => capHint(qr.value?.sym ?? 'QRCODE', symProtocol));
 
 // --------------------------- 本地图片 → data URL ---------------------------
 function pickImage() {

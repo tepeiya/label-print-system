@@ -1,0 +1,17 @@
+# golden —— DATAMATRIX_GS1_NORASTER @ EPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: 同上：不得凭空造 GW；warning 要说清缺的是点阵（fallback）而不是码制不支持，否则排查方向直接被带偏
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=bitmap —— 码制 DATAMATRIX（派生标识 DATAMATRIX_GS1_NORASTER：同码制不同内容口径） / 内容 "(01)12345678901231(21)SN0007"
+# 通道派单: channel=bitmap why=DATAMATRIX @ EPL → 位图通道（bwip-js 出图）；ZPL ^BX（质量级只能 200=ECC200，列/行走自动）；TSPL 无原生指令走位图；EPL 手册有 b(2D DataMatrix, p.3-20) 但参数语法查不到 → GW 点阵
+# 位图段: 故意不给 fallback —— 验「拿不到点阵 → 跳过 + warning，绝不换码制」
+
+--- commands ---
+<CR>
+N<CR>
+q480<CR>
+Q320,16<CR>
+D8<CR>
+S2<CR>
+P1<CR>
+
+--- warnings ---
+- [码制] EPL 无法原生输出 DATAMATRIX：EPL2 的二维指令是 b（[M] p.3-20/3-25/3-29，[N] 清单还含 QR/Aztec），但参数级语法（模式、纠错等级、放大系数、数据定界）在可引用资料里查不到，硬编会把整块标签打废，因此本版不打 b 指令；本元素又没有预置位图点阵（fallback），已跳过输出。建议：①改用 ZPL 或 TSPL 协议（QR 有可引用的原生指令 ^BQ / QRCODE）；②protocol=image 让后端预生成 bwip-js 点阵，再由 EPL 的 GW 图形指令下发（可扫，但不是打印机原生符号）

@@ -27,8 +27,10 @@ export class PrintProcessor extends WorkerHost {
       jobId, tenantId, templateContent, rows, serialMap, printerId, params = {},
     } = data;
     const copies = Math.max(1, params.copies ?? 1);
-    const protocol: 'zpl' | 'tspl' | 'browser' =
-      params.protocol === 'tspl' ? 'tspl' : params.protocol === 'browser' ? 'browser' : 'zpl';
+    const protocol: 'zpl' | 'tspl' | 'epl' | 'browser' =
+      params.protocol === 'tspl' ? 'tspl'
+        : params.protocol === 'epl' ? 'epl'
+        : params.protocol === 'browser' ? 'browser' : 'zpl';
 
     // 重打场景队列里 templateContent 为空：按 templateId 重新加载
     let content = templateContent;
@@ -91,6 +93,8 @@ export class PrintProcessor extends WorkerHost {
           payload = { zpl: this.render.toZplElements(rendered) };
         } else if (protocol === 'tspl') {
           payload = { tspl: this.render.toTsplElements(rendered) };
+        } else if (protocol === 'epl') {
+          payload = { epl: this.render.toEplElements(rendered) };
         }
 
         if (provider) {

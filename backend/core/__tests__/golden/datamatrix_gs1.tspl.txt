@@ -1,0 +1,11 @@
+# golden —— DATAMATRIX_GS1 @ TSPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: 二维 + (AI) → 位图；封装格式同 DATAMATRIX@tspl
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=bitmap —— 码制 DATAMATRIX（派生标识 DATAMATRIX_GS1：同码制不同内容口径） / 内容 "(01)12345678901231(21)SN0007"
+# 通道派单: channel=bitmap why=DATAMATRIX @ TSPL → 位图通道（bwip-js 出图）；ZPL ^BX（质量级只能 200=ECC200，列/行走自动）；TSPL 无原生指令走位图；EPL 手册有 b(2D DataMatrix, p.3-20) 但参数语法查不到 → GW 点阵
+# 位图段: 确定性合成点阵 synthFallback()（24×12 点 / 4 点每模块），不经 bwip/sharp
+
+--- commands ---
+BITMAP 80,64,3,12,0,⟦BIN 36B:FFC3C381C3C381F0F099F0F0993C3C813C3C810F0FFF0F0FC3C3C3C3C3C3F0F0F0F0F0F0⟧
+
+--- warnings ---
+- [位图] DATAMATRIX @ TSPL → 位图通道（bwip-js 出图）；ZPL ^BX（质量级只能 200=ECC200，列/行走自动）；TSPL 无原生指令走位图；EPL 手册有 b(2D DataMatrix, p.3-20) 但参数语法查不到 → GW 点阵；已用 bwip-js 点阵经 BITMAP 下发（24×12 点 = 3 字节/行，3.00mm 宽），可扫但不是打印机原生符号

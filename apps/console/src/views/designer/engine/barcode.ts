@@ -7,6 +7,7 @@
 // =============================================================================
 
 import bwipjs from 'bwip-js/browser';
+import { gs1BwipText } from './gs1';
 
 const PXMM = 96 / 25.4;
 
@@ -58,6 +59,26 @@ export function is2dSym(sym: unknown): boolean {
 
 type BwipOptions = Record<string, unknown>;
 
+/**
+ * GS1 语义落到 bwip 参数上，口径与 backend/core/barcode-renderer.ts 逐字一致：
+ *   · 一维 gs1-128：括号 AI 由 bwip 自己解析（实测 `]C1`，bytes 无括号），只开 parsefnc，不改文本；
+ *   · 二维符号：bwip **不解析**括号 / 方括号，必须改写成 `^FNC1` 文本 + parsefnc，
+ *     否则预览出的是带字面括号的普通符号（AI 结构丢失，实测 `]d1`/`]Q1`），
+ *     和现在后端打出来的 `]d2`/`]Q3` 不是同一个码。
+ * AI 结构解析失败按「宁可不出图，不出错图」抛出，由调用侧走既有的占位兜底。
+ */
+function applyGs1Bwip(opts: BwipOptions, bcid: string, raw: string): void {
+  if (bcid === 'gs1-128') {
+    if (/\(\d{2,4}\)/.test(raw)) opts.parsefnc = true;
+    return;
+  }
+  const g = gs1BwipText(bcid, raw);
+  if (g) {
+    opts.text = g;
+    opts.parsefnc = true;
+  }
+}
+
 function toSvg(opts: BwipOptions): string | null {
   try {
     return bwipjs.toSVG(opts as never);
@@ -84,12 +105,13 @@ export function makeBarcodeSvg(spec: BarcodeLikeOptions | undefined, content: un
   if (hit) return hit;
 
   const bcid = bcidOf(s.sym);
+  const raw = String(content ?? '');
   const moduleWidth = s.moduleWidthMm ?? 0.25;
   const heightMm = s.heightMm ?? 9;
   const barHeightPx = Math.max(20, Math.round((heightMm * PXMM) / moduleWidth));
   const opts: BwipOptions = {
     bcid,
-    text: String(content ?? ''),
+    text: raw,
     scale: BWIP_SVG_SCALE,
     height: Math.round((heightMm / moduleWidth) * BWIP_SVG_SCALE) || barHeightPx,
     paddingwidth: 8,
@@ -98,9 +120,14 @@ export function makeBarcodeSvg(spec: BarcodeLikeOptions | undefined, content: un
     includetext: false,
   };
   if (s.wideRatio) opts.ratio = s.wideRatio;
-  if (bcid === 'gs1-128') opts.parsefnc = true;
-
-  const svgStr = toSvg(opts);
+  // GS1 (AI) → bwip 参数（gs1-128 只开 parsefnc；若模板里放了二维码制，走 ^FNC1 转写）
+  let svgStr: string | null = null;
+  try {
+    applyGs1Bwip(opts, bcid, raw);
+    svgStr = toSvg(opts);
+  } catch (e) {
+    console.warn('[bwip] GS1 (AI) 解析失败，退化为占位条纹', (e as Error)?.message || e);
+  }
   if (svgStr) {
     const out: SvgResult = { svgStr, ...svgMetrics(svgStr, moduleWidth) };
     CACHE.bc.set(key, out);
@@ -136,9 +163,10 @@ export function makeQrSvg(spec: BarcodeLikeOptions | undefined, content: unknown
   if (hit) return hit;
 
   const bcid = bcidOf(s.sym);
+  const raw = String(content ?? '');
   const opts: BwipOptions = {
     bcid,
-    text: String(content ?? ''),
+    text: raw,
     scale: BWIP_SVG_SCALE,
     paddingwidth: 0,
     paddingheight: 0,
@@ -146,8 +174,15 @@ export function makeQrSvg(spec: BarcodeLikeOptions | undefined, content: unknown
   };
   if (bcid === 'qrcode' || bcid === 'microqrcode') opts.eclevel = s.ecc || 'M';
   if (bcid === 'pdf417') opts.compact = false;
-
-  const svgStr = toSvg(opts);
+  // GS1 DataMatrix / GS1 QR / GS1 Aztec：二维符号必须喂 `^FNC1` 文本，见 ./gs1
+  // （PDF417 不在名单内：GS1 AI 在 PDF417 走 Composite 链接语义，不是起始 FNC1）
+  let svgStr: string | null = null;
+  try {
+    applyGs1Bwip(opts, bcid, raw);
+    svgStr = toSvg(opts);
+  } catch (e) {
+    console.warn('[bwip] GS1 (AI) 解析失败，退化为占位矩阵', (e as Error)?.message || e);
+  }
   if (svgStr) {
     const metrics = svgMetrics(svgStr, moduleSize);
     const out: SvgResult = {

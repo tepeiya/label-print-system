@@ -1,0 +1,17 @@
+# golden —— ITF @ ZPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: ★ 必须是 ^B2（Interleaved 2 of 5）。^BI 是 Industrial 2 of 5、^BJ 是 Standard 2 of 5，用错固件不报错但打出另一种符号（P7.1 实伤）
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 ITF / 内容 "12345670"
+# 通道派单: channel=native
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+^XA
+^CI28
+^FH\
+^FO80,64^BY3,2.7,96
+^B2N,96,Y,N,N
+^FD12345670^FS
+^XZ
+
+--- warnings ---
+- [几何] ITF X-dim 由 0.400mm 量化为 0.375mm（3 点 × 0.125mm/点）

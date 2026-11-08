@@ -1,0 +1,17 @@
+# golden —— ITF14 @ ZPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: GTIN-14 仍用 ^B2 承载（ITF-14 只是数据规范 + 边框），指令层不得出现 ^BI / ^B7
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 ITF14 / 内容 "10012345600019"
+# 通道派单: channel=native
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+^XA
+^CI28
+^FH\
+^FO80,64^BY3,2.7,96
+^B2N,96,Y,N,N
+^FD10012345600019^FS
+^XZ
+
+--- warnings ---
+- [几何] ITF14 X-dim 由 0.400mm 量化为 0.375mm（3 点 × 0.125mm/点）

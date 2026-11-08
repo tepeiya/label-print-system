@@ -1,0 +1,18 @@
+# golden —— DATAMATRIX_RECT @ EPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: GW 下发：同上，宽高由 p3×p4 决定；出现 b 指令即视为硬编未查证的语法
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=bitmap —— 码制 DATAMATRIX_RECT / 内容 "RECT-7"
+# 通道派单: channel=bitmap why=DATAMATRIX_RECT @ EPL → 位图通道（bwip-js 出图）；ZPL ^BX 的 columns/rows 允许范围是 9–49，ECC200 矩形尺寸 8×18/8×32/12×26 越界会整块不打印，改走位图更稳；EPL 同走 GW
+# 位图段: 确定性合成点阵 synthFallback()（24×12 点 / 4 点每模块），不经 bwip/sharp
+
+--- commands ---
+<CR>
+N<CR>
+q480<CR>
+Q320,16<CR>
+D8<CR>
+S2<CR>
+GW80,64,3,12,⟦BIN 36B:FFC3C381C3C381F0F099F0F0993C3C813C3C810F0FFF0F0FC3C3C3C3C3C3F0F0F0F0F0F0⟧<CR>
+P1<CR>
+
+--- warnings ---
+- [位图] DATAMATRIX_RECT 已用 bwip-js 点阵经 GW 图形指令下发（24×12 点 ≈ 3.00mm 宽，3 字节/行 × 12 行，4 点/模块，含四周静区），可扫但不是打印机原生符号；GW 的 DATA 是原始二进制，下发通道必须按 latin1/binary 逐字节写出（不能用 utf8，否则高位字节翻倍）；位极性按 [默认 1=墨，与 raster.packRows 同向] 输出——手册未查证到该位定义，实机若打出负片请改 EPL_GW_POLARITY 一个常量

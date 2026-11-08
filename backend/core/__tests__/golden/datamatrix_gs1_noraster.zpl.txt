@@ -1,0 +1,14 @@
+# golden —— DATAMATRIX_GS1_NORASTER @ ZPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: 位图通道但调用方没预置点阵（同步直调生成器）→ 必须「跳过 + 说清原因的 warning」，不得回落到 ^BX 原生指令（那是另一种符号），也不得凭空造 ^GFA
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 DATAMATRIX（派生标识 DATAMATRIX_GS1_NORASTER：同码制不同内容口径） / 内容 "(01)12345678901231(21)SN0007"
+# 通道派单: channel=bitmap why=DATAMATRIX 含 GS1 (AI)：ZPL 原生指令缺少可引用的 FNC1 转义写法，改走位图通道以保证 AI 结构可识别
+# 位图段: 故意不给 fallback —— 验「拿不到点阵 → 跳过 + warning，绝不换码制」
+
+--- commands ---
+^XA
+^CI28
+^FH\
+^XZ
+
+--- warnings ---
+- [码制] ZPL 需位图回填但未拿到点阵：DATAMATRIX 含 GS1 (AI)：ZPL 原生指令缺少可引用的 FNC1 转义写法，改走位图通道以保证 AI 结构可识别。该元素已跳过

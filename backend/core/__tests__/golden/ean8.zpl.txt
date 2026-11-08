@@ -1,0 +1,19 @@
+# golden —— EAN8 @ ZPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: ^B8（不是 ^BE=EAN13）；固定比例同样忽略宽窄比
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 EAN8 / 内容 "96385074"
+# 通道派单: channel=native
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+^XA
+^CI28
+^FH\
+^FO80,64^BY3,2,96
+^B8N,96,Y,N
+^FD96385074^FS
+^XZ
+
+--- warnings ---
+- [几何] EAN8 X-dim 由 0.400mm 量化为 0.375mm（3 点 × 0.125mm/点）
+- [几何] EAN8 为固定比例码制，宽窄比 2.5 已忽略（强制 1:1）
+- [参数] ^BY 宽窄比对 EAN8 无效（EAN/UPC 为固定比例码制，按 ZPL 手册忽略）

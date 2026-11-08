@@ -1,0 +1,11 @@
+# golden —— ITF14 @ TSPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: 码型 "ITF14"（TSC 码型表里 ITF14 与 ITF 是两条，不能都写 ITF）
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 ITF14 / 内容 "10012345600019"
+# 通道派单: channel=native
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+BARCODE 80,64,"ITF14",96,1,0,3,8,"10012345600019"
+
+--- warnings ---
+- [几何] ITF14 X-dim 由 0.400mm 量化为 0.375mm（3 点 × 0.125mm/点）

@@ -1,0 +1,11 @@
+# golden —— CODE16K @ TSPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: 不得出现 BARCODE 行——^BB/TSC 都没有可引用的 Code16K 语法，跳过比「打个看着像的」安全
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=previewOnly —— 码制 CODE16K / 内容 "ABC-1234"
+# 通道派单: channel=none why=CODE16K @ TSPL → 仅预览；ZPL 有 ^BB Codablock 但不是 Code16K，不可混用；同 PHARMACODE，仅预览
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+
+
+--- warnings ---
+- [码制] TSPL 无法原生输出 CODE16K：CODE16K @ TSPL → 仅预览；ZPL 有 ^BB Codablock 但不是 Code16K，不可混用；同 PHARMACODE，仅预览。该元素已跳过。建议：①改用 ZPL 协议（^B 家族覆盖更广）；②用 protocol=image 走 bwip-js 位图；③换成业务等效码制

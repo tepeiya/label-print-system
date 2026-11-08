@@ -1,0 +1,14 @@
+# golden —— PHARMACODE @ ZPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: 手册无原生指令、一维位图回填又会破坏条空比例 → 只能跳过 + 可执行建议；指令串里不得出现任何 ^B*（出现即等于悄悄换了码制）
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=previewOnly —— 码制 PHARMACODE / 内容 "1234567"
+# 通道派单: channel=none why=PHARMACODE @ ZPL → 仅预览；ZPL/TSPL 手册均无原生指令；一维符号的 bwip 缩放单位与打印点不成整数倍，位图回填会破坏条空比例，因此只保证预览
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+^XA
+^CI28
+^FH\
+^XZ
+
+--- warnings ---
+- [码制] ZPL 无法原生输出 PHARMACODE：PHARMACODE @ ZPL → 仅预览；ZPL/TSPL 手册均无原生指令；一维符号的 bwip 缩放单位与打印点不成整数倍，位图回填会破坏条空比例，因此只保证预览。该元素已跳过。建议：①打印指令改用 protocol=image 走 bwip-js PNG；②换成业务上等效的常见码制（如 PHARMACODE→CODE128、CODE16K→CODE128）

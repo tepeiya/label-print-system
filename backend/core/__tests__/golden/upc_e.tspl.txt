@@ -1,0 +1,12 @@
+# golden —— UPC_E @ TSPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: 码型 "UPCE"（与 UPCA 是两条码型）
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 UPC_E / 内容 "01234565"
+# 通道派单: channel=native
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+BARCODE 80,64,"UPCE",96,1,0,3,3,"01234565"
+
+--- warnings ---
+- [几何] UPC_E X-dim 由 0.400mm 量化为 0.375mm（3 点 × 0.125mm/点）
+- [几何] UPC_E 为固定比例码制，宽窄比 2.5 已忽略（强制 1:1）

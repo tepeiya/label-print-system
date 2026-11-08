@@ -176,8 +176,12 @@ async function doAction(act, id) {
   }
   if (act === 'cmds') {
     try {
-      const r = await api.printerCommands(id, r.protocol || 'zpl');
-      downloadBlob(new Blob([r.text], { type: 'text/plain' }), `test-${id}.${r.protocol || 'zpl'}`);
+      // 原来这里写成 `const r = await api.printerCommands(id, r.protocol || 'zpl')`：
+      // 新的 const 在初始化表达式里就引用了自己的名字（TDZ），从列表行点「下载指令」
+      // 必抛 "Cannot access 'r' before initialization"。协议取外层的行数据 r。
+      const cmdProtocol = r.protocol || 'zpl';
+      const res = await api.printerCommands(id, cmdProtocol);
+      downloadBlob(new Blob([res.text], { type: 'text/plain' }), `test-${id}.${cmdProtocol}`);
     } catch (e) { toast('❌ ' + e.message, 'err'); }
     return;
   }

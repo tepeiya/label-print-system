@@ -1,0 +1,17 @@
+# golden —— GS1_128 @ EPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: EPL2 虽有类型码 '1E'，但 FNC1 转义写法查证不到 → 必须整条跳过 + warning，绝不能把 (AI) 原样塞进 DATA 静默打错码
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=previewOnly —— 码制 GS1_128 / 内容 "(01)12345678901231(21)SN0007(30)1234"
+# 通道派单: channel=none why=GS1_128 @ EPL → 仅预览；ZPL ^BC + FNC1(>;, 变长 AI 间 >8)；TSPL "EAN128" 同为 GS1-128（旧称 UCC/EAN-128）；EPL 有类型码 '1E' 但 FNC1 转义写法未查证到，不做输出
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+<CR>
+N<CR>
+q480<CR>
+Q320,16<CR>
+D8<CR>
+S2<CR>
+P1<CR>
+
+--- warnings ---
+- [码制] EPL 无法原生输出 GS1_128：[Z]/[M] Table 2-1 有 'UCC/EAN 128'='1E'，但数据段里 FNC1（符号起始）与变长 AI 之后的 GS 分隔符怎么写在 [M]/[Z]/[S]/[N] 里都查不到；按 (AI) 原样塞进 `1E` 会静默打成普通 Code128 结构（扫描结果与预览不一致且看不出来），因此本版不输出。coordinator 提的 `b1`+`{G}`+`&` 写法在上述资料里同样查不到（EPL2 的 `b` 是 2D 家族：DataMatrix p.3-20 / MaxiCode p.3-25 / PDF417 p.3-29）。本条数据的 (AI) 结构：检出 3 个 (AI)，定长 01，变长 21/30（其后若还有字段必须插 FNC1/GS 分隔）。该元素已跳过输出。建议：①改用 ZPL（^B 家族覆盖更广）或 TSPL 协议；②protocol=image 让后端走 bwip-js 位图下发（EPL 侧对应 GW 图形指令，需预置点阵）；③换成业务上等效的常见码制（如 GS1_128 的定长数据可评估直接用 CODE128 承载）

@@ -1,0 +1,17 @@
+# golden —— CODE93 @ ZPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: ^BA（Code93）而不是 ^B3/^BC；宽窄比按整数模块取整
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 CODE93 / 内容 "CODE93-1"
+# 通道派单: channel=native
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+^XA
+^CI28
+^FH\
+^FO80,64^BY3,2.7,96
+^BAN,96,Y,N,N
+^FDCODE93-1^FS
+^XZ
+
+--- warnings ---
+- [几何] CODE93 X-dim 由 0.400mm 量化为 0.375mm（3 点 × 0.125mm/点）

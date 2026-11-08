@@ -1,0 +1,18 @@
+# golden —— CODABAR @ EPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: 类型码 'K'（Codabar 在 Table 2-1 里只有 K 一条），p6 宽条可设定（wideSettable=true）→ 不得出现「p6 会被固件忽略」那条 warning
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 CODABAR / 内容 "A1234567B"
+# 通道派单: channel=native
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+<CR>
+N<CR>
+q480<CR>
+Q320,16<CR>
+D8<CR>
+S2<CR>
+B80,64,0,K,3,8,96,B,"A1234567B"<CR>
+P1<CR>
+
+--- warnings ---
+- [几何] CODABAR X-dim 由 0.400mm 量化为 0.375mm（3 点 × 0.125mm/点）

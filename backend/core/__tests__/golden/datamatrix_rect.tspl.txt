@@ -1,0 +1,11 @@
+# golden —— DATAMATRIX_RECT @ TSPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: 位图 BITMAP 下发：矩形 DM 的宽高比只能由点阵表达，BITMAP 头的前两个参数是字节数/行数而不是 mm
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=bitmap —— 码制 DATAMATRIX_RECT / 内容 "RECT-7"
+# 通道派单: channel=bitmap why=DATAMATRIX_RECT @ TSPL → 位图通道（bwip-js 出图）；ZPL ^BX 的 columns/rows 允许范围是 9–49，ECC200 矩形尺寸 8×18/8×32/12×26 越界会整块不打印，改走位图更稳；EPL 同走 GW
+# 位图段: 确定性合成点阵 synthFallback()（24×12 点 / 4 点每模块），不经 bwip/sharp
+
+--- commands ---
+BITMAP 80,64,3,12,0,⟦BIN 36B:FFC3C381C3C381F0F099F0F0993C3C813C3C810F0FFF0F0FC3C3C3C3C3C3F0F0F0F0F0F0⟧
+
+--- warnings ---
+- [位图] DATAMATRIX_RECT @ TSPL → 位图通道（bwip-js 出图）；ZPL ^BX 的 columns/rows 允许范围是 9–49，ECC200 矩形尺寸 8×18/8×32/12×26 越界会整块不打印，改走位图更稳；EPL 同走 GW；已用 bwip-js 点阵经 BITMAP 下发（24×12 点 = 3 字节/行，3.00mm 宽），可扫但不是打印机原生符号

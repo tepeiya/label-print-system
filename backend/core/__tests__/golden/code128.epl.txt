@@ -1,0 +1,20 @@
+# golden —— CODE128 @ EPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: B 指令 p4 类型码必须是 '1'（Table 2-1 Code128），p5 窄条 / p6 宽条 / p7 高度 / p8=B 的位次不能错
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 CODE128 / 内容 "ABC-1234"
+# 通道派单: channel=native
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+<CR>
+N<CR>
+q480<CR>
+Q320,16<CR>
+D8<CR>
+S2<CR>
+B80,64,0,1,3,9,96,B,"ABC-1234"<CR>
+P1<CR>
+
+--- warnings ---
+- [几何] CODE128 X-dim 由 0.400mm 量化为 0.375mm（3 点 × 0.125mm/点）
+- [几何] Code128/GS1-128 宽元素必须为整数模块，宽窄比 2.5 已取整为 3:1
+- [参数] CODE128 在 EPL2 里 p6（宽条宽）为固件固定值（[Z] Table 2-1 的 P6 列为 N），指令里仍按 9 点给出但会被打印机忽略，实际宽窄比以符号规范为准

@@ -1,0 +1,17 @@
+# golden —— MSI @ ZPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: ★ ^BM 第 2 位是「校验方式 A/B/C/D」而不是 Y/N：未要求校验位时必须显式给 A，否则固件按 B(单 Mod10) 多打一位，扫描结果比预览多一位
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 MSI / 内容 "1234567"
+# 通道派单: channel=native
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+^XA
+^CI28
+^FH\
+^FO80,64^BY3,2.7,96
+^BMN,A,96,Y,N
+^FD1234567^FS
+^XZ
+
+--- warnings ---
+- [几何] MSI X-dim 由 0.400mm 量化为 0.375mm（3 点 × 0.125mm/点）

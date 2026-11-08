@@ -1,0 +1,15 @@
+# golden —— DATAMATRIX_GS1 @ ZPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: ★ 能力矩阵把 DATAMATRIX 判为 zpl=native，但内容含 (AI) → planChannel 必须改派位图通道（^GFA）：^BX 没有可引用的 FNC1 转义写法，硬编会把 GS1 DataMatrix 静默打成普通 DataMatrix（数据错但肉眼看不出）
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 DATAMATRIX（派生标识 DATAMATRIX_GS1：同码制不同内容口径） / 内容 "(01)12345678901231(21)SN0007"
+# 通道派单: channel=bitmap why=DATAMATRIX 含 GS1 (AI)：ZPL 原生指令缺少可引用的 FNC1 转义写法，改走位图通道以保证 AI 结构可识别
+# 位图段: 确定性合成点阵 synthFallback()（24×12 点 / 4 点每模块），不经 bwip/sharp
+
+--- commands ---
+^XA
+^CI28
+^FH\
+^FO80,64^GFA,36,36,3,FFC3C381C3C381F0F099F0F0993C3C813C3C810F0FFF0F0FC3C3C3C3C3C3F0F0F0F0F0F0^FS
+^XZ
+
+--- warnings ---
+- [位图] DATAMATRIX 含 GS1 (AI)：ZPL 原生指令缺少可引用的 FNC1 转义写法，改走位图通道以保证 AI 结构可识别；已用 bwip-js 点阵经 ^GFA 下发（24×12 点 ≈ 3.00mm 宽，含 4 点/模块与四周静区），可扫但不是打印机原生符号

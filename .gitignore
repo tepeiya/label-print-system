@@ -5,6 +5,11 @@ node_modules/
 # pnpm 的包缓存（内容寻址 store，node_modules 由它硬链接而来）。
 # 本机曾把 store 指到仓库目录内，导致 232MB 缓存被 git add -A 一起提交（见 95b4970）。
 .pnpm-store/
+# console / platform 用 pnpm（各自目录下有 pnpm-lock.yaml），backend 与 mcp-server 用 npm（lock 已入库）。
+# 在 console / platform 里误用 npm 会生成 package-lock.json，留着只有两种坏结果：
+# 被提交进去（双锁文件漂移）或被误删本地缓存，所以一律不入库。
+apps/console/package-lock.json
+apps/platform/package-lock.json
 
 # 构建产物
 dist/

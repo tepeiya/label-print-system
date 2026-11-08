@@ -133,30 +133,7 @@ export class RenderService {
           }];
         }
         // 表格：按单元格拆成文本（网格线由客户机/图像渲染，打印指令保留文字内容）
-        if (e.type === 'table') {
-          const rows = Math.max(1, e.rows || 1);
-          const cols = Math.max(1, e.cols || 1);
-          const cw = Number(e.w ?? 0) / cols;
-          const ch = Number(e.h ?? 0) / rows;
-          const fh = e.font?.size ? (e.font.size * 25.4) / 72 : 2;
-          const out: any[] = [];
-          for (let r = 0; r < rows; r++) {
-            for (let c = 0; c < cols; c++) {
-              const txt = String(e.cells?.[r * cols + c] ?? '');
-              if (!txt) continue;
-              out.push({
-                xMm: Number(e.x ?? 0) + c * cw + 0.5,
-                yMm: Number(e.y ?? 0) + r * ch + 0.4,
-                rotation: 0,
-                type: 'text',
-                text: txt,
-                fontHeightMm: fh,
-                fontWidthMm: fh * 0.6,
-              });
-            }
-          }
-          return out;
-        }
+        if (e.type === 'table') return this.tableCellsToTexts(e);
         return [];
       });
   }
@@ -209,30 +186,85 @@ export class RenderService {
             strokeMm: Number(e.stroke?.width ?? 0.3),
           }];
         }
-        if (e.type === 'table') {
-          const rows = Math.max(1, e.rows || 1);
-          const cols = Math.max(1, e.cols || 1);
-          const cw = Number(e.w ?? 0) / cols;
-          const ch = Number(e.h ?? 0) / rows;
-          const fh = e.font?.size ? (e.font.size * 25.4) / 72 : 2;
-          const out: any[] = [];
-          for (let r = 0; r < rows; r++) {
-            for (let c = 0; c < cols; c++) {
-              const txt = String(e.cells?.[r * cols + c] ?? '');
-              if (!txt) continue;
-              out.push({
-                xMm: Number(e.x ?? 0) + c * cw + 0.5,
-                yMm: Number(e.y ?? 0) + r * ch + 0.4,
-                rotation: 0,
-                type: 'text',
-                text: txt,
-                fontHeightMm: fh,
-              });
-            }
-          }
-          return out;
-        }
+        if (e.type === 'table') return this.tableCellsToTexts(e);
         return [];
       });
+  }
+
+  /**
+   * 通用元素 → EPL2 元素描述（P7.7）。
+   * 与 TSPL 映射基本同形（同一套 mm 字段），差别只有两处：
+   *   · image 要映射出来 —— EPL 有 GW 图形指令，点阵由 attachBitmapFallbacks 预生成；
+   *   · rect/line/ellipse 也要映射出来 —— 生成器对它们有「查证不到参数就不打」的明确 warning，
+   *     在映射层悄悄丢掉的话，用户看到的是「标签上少了个框」而不是「EPL 打不了框」。
+   */
+  toEplElements(elements: any[]): any[] {
+    return elements
+      .filter((e) => e.visible !== false && !e._skip)
+      .sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0))
+      .flatMap((e) => {
+        const base = { xMm: Number(e.x ?? 0), yMm: Number(e.y ?? 0), rotation: (e.rotation ?? 0) as any };
+        if (e.type === 'text' || e.type === 'formula' || e.type === 'serial' || e.type === 'datetime' || e.type === 'sysvar') {
+          const text = String(e.rendered ?? e.text ?? '');
+          if (!text) return [];
+          return [{
+            ...base,
+            type: 'text',
+            text,
+            fontHeightMm: e.font?.size ? (e.font.size * 25.4) / 72 : 3,
+            fontWidthMm: e.font?.size ? ((e.font.size * 25.4) / 72) * 0.6 : 1.8,
+            bold: !!e.font?.bold,
+          }];
+        }
+        if (e.type === 'barcode') {
+          return [{ ...base, type: 'barcode', barcode: { ...e.barcode, content: String(e.barcode?.content ?? '') } }];
+        }
+        if (e.type === 'qrcode') {
+          return [{
+            ...base, type: 'qrcode', hMm: Number(e.h ?? 0),
+            qrcode: { ...e.qrcode, content: String(e.qrcode?.content ?? '') },
+          }];
+        }
+        if (e.type === 'image' && e.src) {
+          return [{ ...base, type: 'image', imageData: e.src, imgWmm: e.w, imgHmm: e.h }];
+        }
+        if (e.type === 'rect') {
+          return [{ ...base, type: 'box', wMm: Number(e.w ?? 0), hMm: Number(e.h ?? 0), borderMm: Number(e.stroke?.width ?? 0.3) }];
+        }
+        if (e.type === 'ellipse') {
+          return [{ ...base, type: 'ellipse', wMm: Number(e.w ?? 0), hMm: Number(e.h ?? 0), borderMm: Number(e.stroke?.width ?? 0.3) }];
+        }
+        if (e.type === 'line') {
+          return [{ ...base, type: 'line', x2Mm: Number(e.x2 ?? e.x ?? 0), y2Mm: Number(e.y2 ?? e.y ?? 0), strokeMm: Number(e.stroke?.width ?? 0.3) }];
+        }
+        if (e.type === 'table') return this.tableCellsToTexts(e);
+        return [];
+      });
+  }
+
+  /** 表格元素 → 单元格文本（ZPL / TSPL / EPL 三个映射共用；网格线不进打印机指令，只保留文字） */
+  private tableCellsToTexts(e: any): any[] {
+    const rows = Math.max(1, e.rows || 1);
+    const cols = Math.max(1, e.cols || 1);
+    const cw = Number(e.w ?? 0) / cols;
+    const ch = Number(e.h ?? 0) / rows;
+    const fh = e.font?.size ? (e.font.size * 25.4) / 72 : 2;
+    const out: any[] = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const txt = String(e.cells?.[r * cols + c] ?? '');
+        if (!txt) continue;
+        out.push({
+          xMm: Number(e.x ?? 0) + c * cw + 0.5,
+          yMm: Number(e.y ?? 0) + r * ch + 0.4,
+          rotation: 0,
+          type: 'text',
+          text: txt,
+          fontHeightMm: fh,
+          fontWidthMm: fh * 0.6,
+        });
+      }
+    }
+    return out;
   }
 }

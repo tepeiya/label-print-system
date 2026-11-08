@@ -112,7 +112,9 @@ http.interceptors.response.use(
     }
 
     const apiErr = toApiError(body, status ?? 0, err?.message ?? '请求失败');
-    if (status !== 401) ElMessage.error(describeError(apiErr));   // 401 上面已经提示过了
+    // silentError：调用方自己兜底的「增强信息」类请求（如设计器取 /print/commands 的
+    // warnings）失败时不弹全局 toast，否则每次生成预览都会闪一条与主流程无关的报错。
+    if (status !== 401 && !config?.silentError) ElMessage.error(describeError(apiErr));   // 401 上面已经提示过了
     return Promise.reject(apiErr);
   },
 );
@@ -141,6 +143,30 @@ export const apiRevokeRole = (id: number, role: string) =>
 // ========== Print Jobs ==========
 export const apiListPrintJobs = (params?: any) => http.get('/print/jobs', { params });
 export const apiPrintStats = (days = 7) => http.get('/print/jobs/stats', { params: { days } });
+
+// ========== Print Commands（指令导出，设计器打印预览取 warnings 用）==========
+// 契约见 backend/src/print/print.controller.ts 的 PrintCommandsController +
+// docs/05-api.md：warnings 里是码制降级、几何量化、静区放大、TSPL 中文字库等提示。
+// 字节口径：TSPL 的 BITMAP 数据段、EPL 的 GW 数据段是原始二进制，utf8 解码会把高位字节
+// 换成 U+FFFD —— text 只在 textExact=true 时才与 bytes 逐字节等价，否则只能读不能用，
+// 要落盘/下发必须取 textBase64。
+export interface PrintCommandsResult {
+  protocol: 'zpl' | 'tspl' | 'epl';
+  text: string;
+  /** 整份作业字节无损的 base64（含位图段时唯一的可信字节来源） */
+  textBase64: string;
+  /** text 是否字节无损（含位图段时为 false） */
+  textExact: boolean;
+  labelCount: number;
+  bytes: number;
+  dpi: number;
+  warnings: string[];
+}
+
+export const apiPrintCommands = (
+  data: Record<string, any>,
+  config?: Record<string, any>,
+): Promise<PrintCommandsResult> => http.post('/print/commands', data, config);
 
 // ========== Backups ==========
 export const apiListBackups = () => http.get('/backups');

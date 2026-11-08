@@ -1,0 +1,19 @@
+# golden —— ITF14 @ EPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: ★ degraded：EPL2 无 ITF-14 类型码，用 '2' 承载 → 必须同时给出「不含 ITF-14 边框/承载标记」的等价性 warning，不能假装完全等价
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=degraded —— 码制 ITF14 / 内容 "10012345600019"
+# 通道派单: channel=native why=ITF14 @ EPL → 原生指令（有等价性差异）；GTIN-14 用 Interleaved 2 of 5 承载，ZPL ^B2 / TSPL "ITF14"；EPL Table 2-1 无 ITF-14 类型码，用 '2' 承载 → 编码链一致但不含 ITF-14 边框/承载标记
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+<CR>
+N<CR>
+q480<CR>
+Q320,16<CR>
+D8<CR>
+S2<CR>
+B80,64,0,2,3,8,96,B,"10012345600019"<CR>
+P1<CR>
+
+--- warnings ---
+- [几何] ITF14 X-dim 由 0.400mm 量化为 0.375mm（3 点 × 0.125mm/点）
+- [码制] ITF14：EPL2 Table 2-1 无 ITF-14 类型码，用交叉二五码 `2` 承载：编码数据链一致（GTIN-14），但不含 ITF-14 的边框/承载标记，外观与预览不同（类型码 `2`，[Z]/[M] Table 2-1 只有 Interleaved 2 of 5='2'；[N] 的 EPL 线性码清单同样不含 ITF-14）

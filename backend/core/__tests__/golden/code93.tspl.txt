@@ -1,0 +1,11 @@
+# golden —— CODE93 @ TSPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: 码型必须是 "93"（不是 "39"，也不是 "EAN128"——Code93 在 TSC 码型表里是独立一条）；narrow/wide 以点为单位
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 CODE93 / 内容 "CODE93-1"
+# 通道派单: channel=native
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+BARCODE 80,64,"93",96,1,0,3,8,"CODE93-1"
+
+--- warnings ---
+- [几何] CODE93 X-dim 由 0.400mm 量化为 0.375mm（3 点 × 0.125mm/点）

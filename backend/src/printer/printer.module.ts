@@ -14,6 +14,7 @@ import { CalibratePrinterDto, CreatePrinterDto, TestCommandsDto, UpdatePrinterDt
 import { AuditModule, AuditService } from '../audit/audit.module';
 import { generateZpl } from '../../core/zpl-generator';
 import { buildJob as buildTsplJob } from '../../core/tspl-generator';
+import { generateEpl } from '../../core/epl-generator';
 
 const PRINTER_WRITE: RoleName[] = ['admin', 'operator'];
 
@@ -124,7 +125,7 @@ export class PrinterService {
       { type: 'text', xMm: 3, yMm: 9, text: stamp, fontHeightMm: 2.4, fontWidthMm: 1.6 },
       { type: 'barcode', xMm: 3, yMm: 14, barcode: { sym: 'CODE128', content: `TEST-${now.getTime()}`, moduleWidthMm: 0.3, wideRatio: 2.5, heightMm: 8, showText: true, textPosition: 'bottom' } },
     ];
-    const protocol = (printer.connection?.protocol || 'zpl') as 'zpl' | 'tspl';
+    const protocol = (printer.connection?.protocol || 'zpl') as 'zpl' | 'tspl' | 'epl';
     const provider = PrinterProviderRegistry.get(printer.type as any);
     const t0 = Date.now();
     try {
@@ -147,7 +148,7 @@ export class PrinterService {
           connection: printer.connection ?? {},
         },
         copies: 1,
-        labels: [{ zpl: textEls as any, tspl: textEls as any }],
+        labels: [{ zpl: textEls as any, tspl: textEls as any, epl: textEls as any }],
       });
       await this.audit.write(useTenantId(), 'printer.test_print', { id, ok: result.ok, error: result.error }, undefined, 'printer', id);
       return { ...result, roundtripMs: Date.now() - t0 };
@@ -157,15 +158,27 @@ export class PrinterService {
   }
 
   /** 生成测试标签指令（不发送，用于前端预览/排错） */
-  async testCommands(id: number, protocol?: 'zpl' | 'tspl') {
+  async testCommands(id: number, protocol?: 'zpl' | 'tspl' | 'epl') {
     const printer = normalize(await this.get(id));
-    const p = protocol ?? ((printer.connection?.protocol as any) || 'zpl');
+    const p: 'zpl' | 'tspl' | 'epl' = protocol ?? ((printer.connection?.protocol as any) || 'zpl');
     const els: any[] = [
       { type: 'text', xMm: 3, yMm: 3, text: 'LabelFlow Test', fontHeightMm: 4, fontWidthMm: 3, bold: true },
     ];
-    const text = p === 'tspl'
-      ? buildTsplJob(els, printer.dpi, { widthMm: printer.labelWidthMm, heightMm: printer.labelHeightMm, gapMm: 2, copies: 1 }).buffer.toString('ascii')
-      : generateZpl(els, printer.dpi).text;
+    // 测试标签只有文本，没有位图段，所以按 utf8/原生文本取即可；
+    // 一旦模板带 BITMAP/GW 段，必须改用 .buffer（见 print.controller 的 textBase64 口径）
+    let text: string;
+    if (p === 'tspl') {
+      text = buildTsplJob(els, printer.dpi, {
+        widthMm: printer.labelWidthMm, heightMm: printer.labelHeightMm, gapMm: 2, copies: 1,
+      }).buffer.toString('utf8');
+    } else if (p === 'epl') {
+      text = generateEpl(els, printer.dpi, {
+        widthMm: printer.labelWidthMm, heightMm: printer.labelHeightMm, gapMm: 2, copies: 1,
+        density: printer.density, speed: printer.speed, orientation: printer.orientation,
+      }).text;
+    } else {
+      text = generateZpl(els, printer.dpi).text;
+    }
     return { protocol: p, text };
   }
 }

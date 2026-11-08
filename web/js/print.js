@@ -482,6 +482,15 @@ function computeSerialMap(rowCount, opts) {
 // ---------------------------------------------------------------------------
 // 指令导出
 // ---------------------------------------------------------------------------
+/** 二进制下载：位图作业（TSPL BITMAP / EPL GW）必须按字节写盘，不能走文本 */
+function downloadBlob(name, u8) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([u8], { type: 'application/octet-stream' }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
 async function downloadCommands(protocol) {
   const rows = mappedRows();
   const opts = readOptions();
@@ -502,9 +511,20 @@ async function downloadCommands(protocol) {
       serialMap: computeSerialMap(rows.length, opts),
     });
     const name = (document.getElementById('tpl-name')?.value || 'label').replace(/[\\/:*?"<>|]/g, '_');
-    downloadFile(`${name}.${protocol}`, r.text, 'text/plain');
-    if (r.warnings?.length) toast(`已导出，但：${r.warnings.join('；')}`, 'warn');
-    else toast(`已导出 ${protocol.toUpperCase()}（${r.labelCount} 张 / ${r.bytes} 字节）`, 'success');
+    // textExact=false 说明作业里有图像指令的原始二进制，后端 text 的高位字节已被 utf8
+    // 解码换成 U+FFFD（不可逆），拿它落盘会打坏点位图 —— 必须用 textBase64 还原字节。
+    const isBinary = r.textExact === false && typeof r.textBase64 === 'string' && r.textBase64.length > 0;
+    if (isBinary) {
+      const bin = atob(r.textBase64);
+      const u8 = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      downloadBlob(`${name}.${protocol}`, u8);
+    } else {
+      downloadFile(`${name}.${protocol}`, r.text, 'text/plain');
+    }
+    const how = isBinary ? '（位图作业已按二进制导出）' : '';
+    if (r.warnings?.length) toast(`已导出${how}，但：${r.warnings.join('；')}`, 'warn');
+    else toast(`已导出 ${protocol.toUpperCase()}${how}（${r.labelCount} 张 / ${r.bytes} 字节）`, 'success');
   } catch (e) {
     toast('导出失败：' + e.message, 'error');
   }

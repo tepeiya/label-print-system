@@ -128,9 +128,13 @@ test('ZPL-生成含头尾与内容', () => {
     type: 'barcode', xMm: 4, yMm: 10,
     barcode: { sym: 'CODE128', content: 'ABC123', moduleWidthMm: 0.25, wideRatio: 2.5, heightMm: 10, showText: true, textPosition: 'bottom', checksum: true },
   }], 300);
-  assert.equal(zplWarn.length, 0);
+  // P7.6 起这条用例必然带「专业调优」提示（2.5:1 不是整数模块 → 取整为 3；校验位由打印机追加），
+  // 但绝不允许出现换码制 / 走位图 / 跳过元素这类降级警告
+  assert.deepEqual(zplWarn.filter((w) => /^\[(码制|位图|图像)\]/.test(w)), []);
   assert.match(zpl, /\^XA/); assert.match(zpl, /\^XZ/);
   assert.match(zpl, /Hello/); assert.match(zpl, /ABC123/);
+  // ^BY 三段参数按手册是 模块宽度,宽窄比,高度，且都取整；^BC 的校验位在第 5 位
+  assert.match(zpl, /\^BY3,3,118\n\^BCN,118,Y,N,Y/);
 });
 
 test('ZPL-不支持码制出 warning 不静默降级（P7.1）', () => {

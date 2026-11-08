@@ -1,0 +1,17 @@
+# golden —— MSI @ EPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: ★ EPL2 的 'M'(MSI-3)/'L'(Plessey) 校验算法被固件写死，与本产品 MSI(+MSI10/11) 不是同一符号 → 必须跳过 + warning，不许拿 'M' 顶替
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=previewOnly —— 码制 MSI / 内容 "1234567"
+# 通道派单: channel=none why=MSI @ EPL → 仅预览；ZPL ^BM / TSPL "MSI"（校验位另用 MSI10/MSI11）；EPL 只有 'M'(MSI-3) 与 'L'(Plessey/MSI-1)，校验算法被固件写死，不是同一符号，不做输出
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+<CR>
+N<CR>
+q480<CR>
+Q320,16<CR>
+D8<CR>
+S2<CR>
+P1<CR>
+
+--- warnings ---
+- [码制] EPL 无法原生输出 MSI：[Z]/[M] Table 2-1 只有 'M'（MSI-3，带 Mod10 校验）与 'L'（Plessey/MSI-1，带 Mod10 校验）：校验算法被类型码写死，与本产品 MSI + MSI10/MSI11 的组合不是同一符号，不能拿来顶替。该元素已跳过输出。建议：①改用 ZPL（^B 家族覆盖更广）或 TSPL 协议；②protocol=image 让后端走 bwip-js 位图下发（EPL 侧对应 GW 图形指令，需预置点阵）；③换成业务上等效的常见码制（如 GS1_128 的定长数据可评估直接用 CODE128 承载）

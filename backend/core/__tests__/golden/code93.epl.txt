@@ -1,0 +1,19 @@
+# golden —— CODE93 @ EPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: 类型码 '9'（P7.7 复核由 bitmap 改 native：EPL 侧只应出 B 指令，不该出现 GW）
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 CODE93 / 内容 "CODE93-1"
+# 通道派单: channel=native
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+<CR>
+N<CR>
+q480<CR>
+Q320,16<CR>
+D8<CR>
+S2<CR>
+B80,64,0,9,3,8,96,B,"CODE93-1"<CR>
+P1<CR>
+
+--- warnings ---
+- [几何] CODE93 X-dim 由 0.400mm 量化为 0.375mm（3 点 × 0.125mm/点）
+- [参数] CODE93 在 EPL2 里 p6（宽条宽）为固件固定值（[Z] Table 2-1 的 P6 列为 N），指令里仍按 8 点给出但会被打印机忽略，实际宽窄比以符号规范为准

@@ -1,0 +1,11 @@
+# golden —— PDF417 @ TSPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: 位图 BITMAP 下发（TSPL 无原生 PDF417）：头必须是 BITMAP x,y,bpr,rows,0,，不能降级成一维码
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=bitmap —— 码制 PDF417 / 内容 "PDF417DATA"
+# 通道派单: channel=bitmap why=PDF417 @ TSPL → 位图通道（bwip-js 出图）；ZPL ^B7（安全级 0–8）；^B2 是 Interleaved 2 of 5，不能拿来当 PDF417 用；TSPL 无原生指令 → 位图；EPL 同走 GW
+# 位图段: 确定性合成点阵 synthFallback()（24×12 点 / 4 点每模块），不经 bwip/sharp
+
+--- commands ---
+BITMAP 80,64,3,12,0,⟦BIN 36B:FFC3C381C3C381F0F099F0F0993C3C813C3C810F0FFF0F0FC3C3C3C3C3C3F0F0F0F0F0F0⟧
+
+--- warnings ---
+- [位图] PDF417 @ TSPL → 位图通道（bwip-js 出图）；ZPL ^B7（安全级 0–8）；^B2 是 Interleaved 2 of 5，不能拿来当 PDF417 用；TSPL 无原生指令 → 位图；EPL 同走 GW；已用 bwip-js 点阵经 BITMAP 下发（24×12 点 = 3 字节/行，3.00mm 宽），可扫但不是打印机原生符号

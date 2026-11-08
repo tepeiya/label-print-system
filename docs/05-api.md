@@ -191,7 +191,7 @@ export class TemplateController {
 | 方法 | 路径 | 入参 | 出参 | 说明 |
 | --- | --- | --- | --- | --- |
 | POST | `/print/preview` | `{templateContent, rows, copies}` | HTML 字符串 | 服务端按 mm/pt 渲染打印 HTML（与前端共用元素语义） |
-| POST | `/print/commands` | `{templateContent, rows, copies, protocol, dpi, widthMm, heightMm, gapMm, offsetXMm, offsetYMm, density, speed, serialMap}` | `{protocol, text, labelCount, bytes, dpi, warnings[]}` | 导出 ZPL / TSPL；`warnings` 提示码制降级与中文字库依赖 |
+| POST | `/print/commands` | `{templateContent, rows, copies, protocol, dpi, widthMm, heightMm, gapMm, offsetXMm, offsetYMm, density, speed, serialMap}` | `{protocol, text, textBase64, textExact, labelCount, bytes, dpi, warnings[]}` | 导出 ZPL / TSPL / **EPL**（`protocol ∈ zpl\|tspl\|epl`）。**含位图段（TSPL `BITMAP`、EPL `GW`、ZPL `^GFA`）时 `textExact=false`：`text` 只能看不能用，下发与存盘必须用 `textBase64` 的字节**；`bytes` 是真实字节数 |
 | GET | `/print/jobs` | `?status&page&pageSize` | `[rows, total]` | 打印队列分页 |
 | GET | `/print/jobs/logs` | `?jobId&status&pageSize` | `PrintLog[]` | 逐张打印日志（追溯/回读） |
 | GET | `/print/jobs/:id/logs` | `?page&pageSize` | `[rows, total]` | 单任务逐张日志 |
@@ -202,17 +202,34 @@ export class TemplateController {
 | GET | `/data-sources/:id/rows` | `?limit&offset` | `DataRow[]` | 读取数据行（批量打印/预览） |
 | DELETE | `/data-sources/:id` | — | `{ok}` | 删除数据源及其数据行 |
 | GET | `/templates/:id/export` | — | `{template, schemaVersion}` | 单模板导出（前端再打包为 `.ziptpl`） |
-| POST | `/printers/:id/test-commands` | `{protocol}` | `{protocol, text, bytes}` | 打印机自检指令（不落纸） |
+| POST | `/printers/:id/test-commands` | `{protocol}` | `{protocol, text, bytes}` | 打印机自检指令（不落纸）；`protocol ∈ zpl\|tspl\|epl`，与 `/print/commands` 同一白名单 |
 
-### ZPL / TSPL 码制覆盖
+### ZPL / TSPL / EPL 码制覆盖
 
-| 能力 | ZPL | TSPL |
-| --- | --- | --- |
-| 文本（UTF-8） | `^CI28` + `^A0N,h,w` + `^FH` 转义 | `TEXT ... "FONT001"`（中文依赖打印机字库） |
-| 一维码 | Code128 `^BC`、Code39 `^B3`、Code93 `^BA`、EAN13 `^BE`、EAN8 `^B8`、UPC-A `^BU`、UPC-E `^B9`、ITF `^BI`、Codabar `^BK`、MSI `^BM` | `BARCODE ... "128/39/93/EAN13/EAN8/UPCA/UPCE/ITF14/ITF/CODABAR/MSI"` |
-| 二维码 | QR `^BQ`、DataMatrix `^BX`、PDF417 `^B2`、Aztec `^BO` | 仅 `QRCODE`；其它码制降级为 QR 并返回 `warnings` |
-| 图形 | 矩形 `^GB`、椭圆 `^GE`、线（细长矩形） | `BOX` / `ELLIPSE` / `BAR` |
-| 页面 | `^LH` 偏移、`^PQ` 份数、`~SD` 浓度、`^PR` 速度 | `SIZE` / `GAP` / `DIRECTION` / `DENSITY` / `SPEED` / `PRINT` |
+> **单一真源是 `backend/core/barcode-caps.ts` 的 `CAP_MATRIX`（`CAP_MATRIX_VERSION` 版本化）**，
+> 生成器、Console 副本（`apps/console/src/views/designer/barcode-caps.ts`）、单测守卫、验收脚本都以它为准。
+> 下表只是人读摘要，**与矩阵冲突时以矩阵为准**（历史上这张表写过 `ITF=^BI`、`PDF417=^B2`，两处都是错的，
+> 打出来是另一种符号或直接不打印 —— 见 docs/10 §10.27）。
+> 状态口径：`原生` = 协议有原生指令；`位图` = 无原生指令，服务端用 bwip-js 出点阵走图像通道（可扫，但不是打印机原生符号）；
+> `仅预览` = 连位图通道都不给（一维符号栅格化会破坏条空比例），生成器直接跳过 + warning，绝不换码制。
+
+| 码制 | ZPL | TSPL | EPL |
+| --- | --- | --- | --- |
+| CODE128 | 原生 `^BC` | 原生 `"128"` | 原生 类型码 `1` |
+| GS1_128 | 原生 `^BC` + FNC1（`>;` 起始、变长 AI 间 `>8`） | 原生 `"EAN128"`（**不是** `"128"`） | 仅预览：类型码 `1E` 存在，但 FNC1/AI 分隔转义写法查不到 |
+| CODE39 / CODE93 | 原生 `^B3` / `^BA` | 原生 `"39"` / `"93"` | 原生 `3`/`3C` / `9` |
+| EAN13 / EAN8 / UPC-A / UPC-E | 原生 `^BE` / `^B8` / `^BU` / `^B9` | 原生 `"EAN13"` / `"EAN8"` / `"UPCA"` / `"UPCE"` | 原生 `E30` / `E80` / `UA0` / `UE0` |
+| ITF / ITF14 | 原生 `^B2`（`^BI` 是 Industrial 2 of 5，`^B7` 是 PDF417） | 原生 `"ITF"` / `"ITF14"` | `2` / `2`（EPL 无 ITF-14 类型码，不含边框承载 → degraded） |
+| CODABAR / MSI | 原生 `^BK` / `^BM` | 原生 `"CODABAR"` / `"MSI"`（校验位用 `MSIC`） | `K` / 仅预览（`M`=MSI-3、`L`=Plessey，校验算法被固件写死） |
+| PHARMACODE / CODE16K | 仅预览（手册无 `^B`；`^BB` 是 Codablock 不是 Code16K） | 仅预览 | 仅预览 |
+| QRCODE | 原生 `^BQ`（model 2） | 原生 `QRCODE` | 位图 `GW`（`b` 2D 指令语法查不到） |
+| MICROQR | 位图 `^GFA` | 位图 `BITMAP` | 位图 `GW` |
+| DATAMATRIX / DATAMATRIX_RECT | 原生 `^BX` / 位图（矩形尺寸越出 `columns,rows` 9–49） | 位图 `BITMAP` | 位图 `GW` |
+| PDF417 / AZTEC | 原生 `^B7` / 原生 `^B0` | 位图 `BITMAP` | 位图 `GW` |
+| 含 GS1 `(AI)` 的二维符号 | **一律位图**：`^BX/^B7/^B0/^BQ` 的 FNC1 转义写法无可引用依据，硬编会静默丢 AI 结构 | 同左 | 同左 |
+| 文本 | `^CI28` + `^A0N,h,w` + `^FH` 转义（UTF-8） | `TEXT ... "FONT001"`（中文依赖打印机字库） | `A` 指令拉丁字体 1–5；CJK 需亚洲机型字库且 DATA 要是 GBK 字节 |
+| 图形 | `^GB` / `^GE` / 细矩形 | `BOX` / `ELLIPSE` / `BAR` | 仅预览：手册有 `X`、`LO/LS/LW/LE` 但参数几何含义说法不一致，不猜 |
+| 页面 | `^LH` 偏移、`^PQ` 份数、`~SD` 浓度、`^PR` 速度 | `SIZE`/`GAP`/`DIRECTION`/`DENSITY`/`SPEED`/`OFFSET`/`PRINT` | `N`/`q`/`Q`/`D`/`S`/`Z`/`P`；无 OFFSET 指令（偏移等价折算成坐标平移） |
 
 ## 5.13 命令行工具（`tools/labelctl.mjs`）
 

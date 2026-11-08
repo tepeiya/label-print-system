@@ -1,0 +1,15 @@
+# golden —— AZTEC @ ZPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: ^B0（Aztec，^BO 同义）而不是 ^BX/^BQ；放大系数按 1–20 钳制
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 AZTEC / 内容 "AZTEC-1"
+# 通道派单: channel=native
+# 位图段: 确定性合成点阵 synthFallback()（24×12 点 / 4 点每模块），不经 bwip/sharp
+
+--- commands ---
+^XA
+^CI28
+^FH\
+^FO80,64^B0N,4^FDAZTEC-1^FS
+^XZ
+
+--- warnings ---
+- (none)

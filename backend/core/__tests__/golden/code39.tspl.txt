@@ -1,0 +1,11 @@
+# golden —— CODE39 @ TSPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: 码型 "39"；宽窄比 2.5 可原样下发（Code39 宽元素允许非整数模块）
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 CODE39 / 内容 "ABC-123"
+# 通道派单: channel=native
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+BARCODE 80,64,"39",96,1,0,3,8,"ABC-123"
+
+--- warnings ---
+- [几何] CODE39 X-dim 由 0.400mm 量化为 0.375mm（3 点 × 0.125mm/点）

@@ -1,0 +1,11 @@
+# golden —— QRCODE @ TSPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: QRCODE 指令的 cell size 单位是点/模块，mode 位固定 A（标准模型）
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=native —— 码制 QRCODE / 内容 "https://labelflow.example/t/42"
+# 通道派单: channel=native
+# 位图段: 确定性合成点阵 synthFallback()（24×12 点 / 4 点每模块），不经 bwip/sharp
+
+--- commands ---
+QRCODE 80,64,M,4,A,0,"https://labelflow.example/t/42"
+
+--- warnings ---
+- (none)

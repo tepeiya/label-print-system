@@ -1,0 +1,17 @@
+# golden —— PHARMACODE @ EPL（dpi=203，由 core/__tests__/golden/update.ts 生成，勿手改）
+# 回归点: 同上：不得出现 B 指令行；EPL 的 Table 2-1 没有 PHARMACODE 类型码，任何类型码顶替都是换码制
+# 能力矩阵: CAP_MATRIX_VERSION=p7-2026-11-08.4 status=previewOnly —— 码制 PHARMACODE / 内容 "1234567"
+# 通道派单: channel=none why=PHARMACODE @ EPL → 仅预览；ZPL/TSPL 手册均无原生指令；一维符号的 bwip 缩放单位与打印点不成整数倍，位图回填会破坏条空比例，因此只保证预览
+# 位图段: 不涉及（一维无位图回填通道）
+
+--- commands ---
+<CR>
+N<CR>
+q480<CR>
+Q320,16<CR>
+D8<CR>
+S2<CR>
+P1<CR>
+
+--- warnings ---
+- [码制] EPL 无法原生输出 PHARMACODE：手册无此指令：[Z]/[M] Table 2-1 与 [N] 的 EPL 码清单都没有 PHARMACODE。该元素已跳过输出。建议：①改用 ZPL（^B 家族覆盖更广）或 TSPL 协议；②protocol=image 让后端走 bwip-js 位图下发（EPL 侧对应 GW 图形指令，需预置点阵）；③换成业务上等效的常见码制（如 GS1_128 的定长数据可评估直接用 CODE128 承载）

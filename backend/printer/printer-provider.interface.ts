@@ -8,6 +8,7 @@
 import type { PrintResult } from '../core/types';
 import type { ZplElement } from '../core/zpl-generator';
 import type { TsplElement } from '../core/tspl-generator';
+import type { EplElement } from '../core/epl-generator';
 
 export type ProviderType = 'browser' | 'raw_tcp' | 'windows_spooler' | 'image';
 
@@ -28,8 +29,8 @@ export interface PrintJobInput {
     density?: number;
     /** 打印速度（ZPL ^PR / TSPL SPEED） */
     speed?: number;
-    /** 指令协议：zpl（斑马）/ tspl（台半等） */
-    protocol?: 'zpl' | 'tspl' | 'browser';
+    /** 指令协议：zpl（斑马）/ tspl（台半等）/ epl（老 Zebra/Eltron 页模式机） */
+    protocol?: 'zpl' | 'tspl' | 'epl' | 'browser';
     /** 标签间隙 mm（TSPL GAP） */
     gapMm?: number;
     connection: { host?: string; port?: number; driverName?: string; protocol?: string; [k: string]: any };
@@ -40,9 +41,10 @@ export interface PrintJobInput {
 }
 
 export interface LabelFrame {
-  // 一套元素，可同时包含 ZPL 与 TSPL 两种描述，由 Provider 选用其一
+  // 一套元素，可同时包含 ZPL / TSPL / EPL 三种描述，由 Provider 选用其一
   zpl?: ZplElement[];
   tspl?: TsplElement[];
+  epl?: EplElement[];
   // 服务端出图通道使用（ImageProvider）
   pngBuffer?: Buffer;
 }
@@ -61,7 +63,12 @@ export interface PrinterProvider {
 // =============================================================================
 import { generateZpl, buildJob as buildZplJob, mmToDots } from '../core/zpl-generator';
 import { buildJob as buildTsplJob } from '../core/tspl-generator';
+import { generateEpl } from '../core/epl-generator';
+import { attachBitmapFallbacks } from '../core/raster';
 import { createConnection } from 'net';
+
+/** 指令导出/下发支持的协议（与 PrintCommandsDto、core/barcode-caps.PrintProtocol 同步） */
+export type CommandProtocol = 'zpl' | 'tspl' | 'epl';
 
 export class RawTcpProvider implements PrinterProvider {
   readonly type: ProviderType = 'raw_tcp';
@@ -76,15 +83,25 @@ export class RawTcpProvider implements PrinterProvider {
     const host = printer.connection.host!;
     const port = printer.connection.port ?? 9100; // 默认 9100
 
-    const protocol = (printer.protocol || printer.connection.protocol || 'zpl') as 'zpl' | 'tspl';
+    const protocol = ((printer.protocol === 'browser' ? 'zpl' : printer.protocol)
+      || printer.connection.protocol || 'zpl') as CommandProtocol;
     const offX = mmToDots(printer.offsetXMm ?? 0, printer.dpi);
     const offY = mmToDots(printer.offsetYMm ?? 0, printer.dpi);
 
-    let text: string;
-    if (protocol === 'tspl') {
-      const parts = labels.map((f) => {
-        const out = buildTsplJob(
-          f.tspl ?? [],
+    // ★ 这里全程用 Buffer 组装，不再走 string：
+    //   TSPL 的 BITMAP 数据段与 EPL 的 GW 数据段是原始二进制，旧实现那句
+    //   `.toString('ascii')` 会把每个字节的高位抹掉（实测 0x80→0x00、0xFF→0x7F），
+    //   **字节数不变**，所以头部声明的行宽/行数照样「对得上」，固件不报错，
+    //   打出来的却是一张点位被改过的图 —— 这类缺陷不会以故障形式暴露，只能靠字节断言防住。
+    //   ZPL 的 ^CI28 中文同理不能按 ascii 发。
+    const zplFrames: string[] = [];
+    const chunks: Buffer[] = [];
+    for (const f of labels) {
+      if (protocol === 'tspl') {
+        // 位图回填点阵在这里出（能力矩阵判为 bitmap 的二维符号 / image 元素）
+        const prepared = await attachBitmapFallbacks(f.tspl ?? [], printer.dpi, 'tspl');
+        chunks.push(buildTsplJob(
+          prepared.els,
           printer.dpi,
           {
             widthMm: printer.widthMm,
@@ -93,25 +110,49 @@ export class RawTcpProvider implements PrinterProvider {
             copies: Math.max(1, copies),
           },
           printer.orientation,
-        );
-        return out.buffer.toString('ascii');
-      });
-      text = parts.join('');
-      if (printer.density !== undefined && printer.density !== null) text = `DENSITY ${printer.density}\r\n` + text;
-      if (printer.speed !== undefined && printer.speed !== null) text = `SPEED ${printer.speed}\r\n` + text;
-      if (offX || offY) text = `OFFSET ${offX},${offY}\r\n` + text;
-    } else {
-      const frames = labels.map((f) => {
-        const { text: raw } = generateZpl(f.zpl ?? [], printer.dpi);
+        ).buffer);
+      } else if (protocol === 'epl') {
+        // EPL2 手册没有 OFFSET 指令（[M] 命令目录里只有 A/B/b/D/GW/N/P/q/Q/S/X/Z），
+        // 所以打印偏移在这里等价地折算成元素坐标平移
+        const els = (f.epl ?? []).map((e: any) => ({
+          ...e,
+          xMm: Number(e.xMm ?? 0) + (printer.offsetXMm ?? 0),
+          yMm: Number(e.yMm ?? 0) + (printer.offsetYMm ?? 0),
+        }));
+        const prepared = await attachBitmapFallbacks(els, printer.dpi, 'epl');
+        const out = generateEpl(prepared.els, printer.dpi, {
+          widthMm: printer.widthMm,
+          heightMm: printer.heightMm,
+          gapMm: printer.gapMm ?? 2,
+          copies: Math.max(1, copies),
+          density: printer.density,
+          speed: printer.speed,
+          orientation: printer.orientation,
+        });
+        // GW 载荷是 latin1 逐字节；页头/元素/页尾全是 ASCII，所以 latin1 是无损的
+        chunks.push(Buffer.from(out.text, 'latin1'));
+      } else {
+        const prepared = await attachBitmapFallbacks(f.zpl ?? [], printer.dpi, 'zpl');
+        const { text: raw } = generateZpl(prepared.els, printer.dpi);
         const head = `^LH${offX},${offY}`
           + (printer.density !== undefined && printer.density !== null ? `~SD${printer.density}` : '')
           + (printer.speed !== undefined && printer.speed !== null ? `^PR${printer.speed}` : '');
-        return raw.replace('^XA', `^XA${head}`);
-      });
-      text = buildZplJob(frames, Math.max(1, copies));
+        zplFrames.push(raw.replace('^XA', `^XA${head}`));
+      }
     }
 
-    const payload = Buffer.from(text, 'ascii');
+    let payload: Buffer;
+    if (protocol === 'zpl') {
+      payload = Buffer.from(buildZplJob(zplFrames, Math.max(1, copies)), 'utf8');
+    } else {
+      const pre: string[] = [];
+      if (protocol === 'tspl') {
+        if (printer.density !== undefined && printer.density !== null) pre.push(`DENSITY ${printer.density}`);
+        if (printer.speed !== undefined && printer.speed !== null) pre.push(`SPEED ${printer.speed}`);
+        if (offX || offY) pre.push(`OFFSET ${offX},${offY}`);
+      }
+      payload = Buffer.concat([...pre.map((s) => Buffer.from(`${s}\r\n`, 'utf8')), ...chunks]);
+    }
     return new Promise<PrintResult>((resolve) => {
       const socket = createConnection({ host, port, timeout: 5000 });
       let settled = false;
