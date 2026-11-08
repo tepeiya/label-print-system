@@ -607,7 +607,7 @@ Excel 数据文件仍在原生版/后端解析，预览弹窗只吃 JSON/CSV/TSV
 | 子任务 | 工作量 | 优先级 | 落点 | 状态 |
 |---|---|---|---|---|
 | **P7.1 移除 ZPL/TSPL 统一回落** | 1 天 | 🔴 必做 | `zpl-generator.ts` / `tspl-generator.ts`：不支持码制出 BadRequest + warnings | **✅ 2026-11-08 已完成** |
-| **P7.2 补齐 ZPL/TSPL 缺失码制指令** | 2 天 | 🔴 必做 | MSI / PHARMACODE / CODE16K（ZPL `^BM` / `^BR` 等）、MICROQR / DATAMATRIX / AZTEC | ⏳ 下一轮 |
+| **P7.2 码制覆盖复核 + 降级策略** | 2 天 | 🔴 必做 | ZPL 一维 12 全齐 / 二维 6 全齐；TSPL 一维 12 全齐、MICROQR 降级标准 QR、DM/PDF417/Aztec 精确引导 | **✅ 2026-11-08 已完成** |
 | **P7.3 TSPL DataMatrix / PDF417** | 1 天 | 🟡 | TSPL 原生 `DATAMATRIX` / `PDF417` 指令，或走二维码降级 warnings | ⏳ |
 | **P7.4 GS1 FNC1 语义** | 1.5 天 | 🟡 | TSPL BARCODE 加 FNC1 前缀、GS1 DataMatrix/QR 结构 | ⏳ |
 | **P7.5 前端码制列表加"受限"标记** | 0.5 天 | 🟡 | `BARCODE_SYMS` 里不支持打印的加 `(预览仅)` 后缀 | ⏳ |
@@ -622,6 +622,17 @@ Excel 数据文件仍在原生版/后端解析，预览弹窗只吃 JSON/CSV/TSV
 - 调用方适配：`backend/printer/printer-provider.interface.ts`、`backend/src/printer/printer.module.ts`
 - 单测：`backend/core/__tests__/engines.test.ts` 新增两条 P7.1 验证（不支持码制出 warning 不静默降级）
 - 实测：219 条单测全绿（pass 212 / fail 0 / skip 7），commands 接口对 CODE16K 模板返回清晰 warnings、指令里无 `^BC` 回落
+
+**P7.2 已落地的关键改动**（2026-11-08）：
+- 复核结论：**ZPL 侧其实已完整覆盖**——一维 12 种（含 `^BM` MSI）+ 二维 6 种（QR/MicroQR `^BQ`、DM 含矩形 `^BX`、PDF417 `^B2`、Aztec `^BO`）；
+  真正缺原生指令的只有 `PHARMACODE` / `CODE16K`（ZPL 手册确无对应 `^B`，且属小众码制）。
+- **TSPL 侧**：一维 12 种全齐；二维只有 `QRCODE`，`MICROQR` 改为**降级输出标准 QRCODE**（形状变但可扫，比整块丢弃更有价值），
+  `DATAMATRIX` / `PDF417` / `AZTEC` 手册无原生命令 → 跳过并精确引导（改 ZPL 或 `protocol=image`）。
+- warnings 从笼统的"不支持"升级为**可执行的修复建议**，并区分两种根因：
+  `ZPL_NO_NATIVE_BARCODES`（手册无此指令）vs（本产品暂未覆盖）。
+- 修掉 `print.controller.ts` 里 `buildWarnings` 的**过时矛盾提示**：原先会对 DATAMATRIX 说"已按 QRCODE 输出"，
+  而生成器 P7.1 之后实际是跳过——同一响应里两条 warnings 自相矛盾。现码制维度提示统一由生成器产出，`buildWarnings` 只保留字体维度。
+- 实测：219 单测全绿；TSPL DATAMATRIX 只回 1 条"已跳过"提示；TSPL MICROQR 回 1 条"已降级"提示且指令里确有 `QRCODE`；ZPL DATAMATRIX 无 warnings 且输出 `^BX`。
 
 **验收标准**（P7 全完）：
 1. 前端 `BARCODE_SYMS` 里可选的每一个码制，都能在 ZPL 或 TSPL 生成器里找到对应 `case` 分支（没有统一回落）。

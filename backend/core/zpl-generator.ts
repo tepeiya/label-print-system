@@ -43,9 +43,13 @@ function zplOrient(rot: number): 'N' | 'R' | 'I' | 'B' {
 }
 
 // =============================================================================
-// ZPL II 支持的码制集合（不包括 QRCODE/MICROQR/DATAMATRIX/PDF417/AZTEC，
-// 它们走 qrcode 分支。不在这个集合里的一维码制会出现在 warnings 里，
-// 且不输出任何条码指令——**不再静默降级为 Code128**（违反 docs/05-api.md §8.3）。
+// ZPL II 原生指令支持的码制集合（一维）。
+// ZPL ^B 家族完整覆盖：Code128/GS1-128/Code39/Code93/EAN-13/EAN-8/UPC-A/UPC-E
+// /Interleaved 2 of 5 / Codabar / MSI。
+// 二维码制走 SUPPORTED_ZPL_QRCODES（QR/DM/PDF417/Aztec），
+// PHARMACODE / CODE16K 不在集合里——ZPL 手册无对应 ^B 原生指令，
+// 前端预览用 bwip-js SVG，但若要打印到 Zebra 标签机只能走 bwip-js 图像通道
+// （由 PrintCommandsDto 的 protocol=image 或 RawTcp 走 PNG ^GF 下发）。
 // =============================================================================
 const SUPPORTED_ZPL_BARCODES = new Set<string>([
   'CODE128', 'GS1_128',
@@ -63,6 +67,9 @@ const SUPPORTED_ZPL_QRCODES = new Set<string>([
   'PDF417',
   'AZTEC',
 ]);
+
+/** ZPL 一维码制是否确实没有原生 ^B 指令（用于生成更精确的 warnings） */
+const ZPL_NO_NATIVE_BARCODES = new Set<string>(['PHARMACODE', 'CODE16K']);
 
 /**
  * 生成单个标签的完整 ZPL（不含作业头尾 ^XA/^XZ 由调用方包）。
@@ -94,8 +101,12 @@ export function generateZpl(els: ZplElement[], dpi: number): { text: string; war
         const b = e.barcode!;
         const sym = zplSymKey(b.sym);
         if (!SUPPORTED_ZPL_BARCODES.has(sym)) {
-          warnings.push(`ZPL 不支持一维码制 "${b.sym ?? ''}"，该元素已跳过输出；如需打印请改用 TSPL 或图像通道`);
-          break; // ⚠️ 关键：不 fallback Code128，让 warnings 暴露问题
+          // 精确提示：是 ZPL 手册确实无原生指令（引导图像通道），还是只是本产品暂未覆盖（引导换协议）
+          const reason = ZPL_NO_NATIVE_BARCODES.has(sym)
+            ? `ZPL 手册无原生 ^B 指令（${sym} 小众码制）`
+            : `ZPL 暂未覆盖 ${sym} 指令`;
+          warnings.push(`[ZPL] ${reason}，该元素已跳过输出。建议：①改用 TSPL 协议试试；②打印指令用 protocol=image 让后端走 bwip-js 位图下发（^GF PNG）`);
+          break;
         }
         const bh = Math.max(1, mmToDots(b.heightMm, dpi));
         const byW = Math.max(1, mmToDots(b.moduleWidthMm, dpi));
@@ -113,7 +124,7 @@ export function generateZpl(els: ZplElement[], dpi: number): { text: string; war
         const q = e.qrcode!;
         const key = String(q.sym ?? 'QRCODE').toUpperCase();
         if (!SUPPORTED_ZPL_QRCODES.has(key)) {
-          warnings.push(`ZPL 不支持二维码制 "${q.sym ?? ''}"，该元素已跳过输出；如需打印请改用 TSPL 或图像通道`);
+          warnings.push(`[ZPL] 暂无二维码制 "${key}" 原生指令，该元素已跳过输出。建议改用 protocol=image 让后端走 bwip-js 位图下发`);
           break;
         }
         const content = esc(q.content);

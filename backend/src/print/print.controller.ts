@@ -141,17 +141,10 @@ export class PrintCommandsController {
   }
 }
 
-/** 指令导出能力提示：TSPL 只有 QRCODE，其余二维码只能按 QR 输出 */
+/** 指令导出能力提示（码制维度的提示已由生成器 warnings 精确产出，此处只保留字体维度） */
 function buildWarnings(protocol: 'zpl' | 'tspl', tpl: any): string[] {
   const warnings: string[] = [];
   if (protocol !== 'tspl') return warnings;
-  const NON_QR = /^(DATAMATRIX|PDF417|AZTEC)/i;
-  const coerced = (tpl.elements ?? [])
-    .filter((e: any) => e.type === 'qrcode' && NON_QR.test(String(e.qrcode?.sym ?? '')))
-    .map((e: any) => e.qrcode.sym);
-  if (coerced.length) {
-    warnings.push(`TSPL 无对应指令，${[...new Set(coerced)].join('/')} 已按 QRCODE 输出；如需原码制请改用 ZPL 协议或图像通道`);
-  }
   // TSPL 文本按 FONT001 输出，中文依赖打印机内置中文字库
   const CJK = /[\u3400-\u9fff\uf900-\ufaff]/;
   const texts: string[] = [

@@ -24,8 +24,12 @@ export interface TsplElement {
 }
 
 // =============================================================================
-// TSPL（TSC 指令）支持的码制集合。不在集合里的码制会出现在 warnings 里，
-// 且不输出任何指令——**不再静默降级**（docs/05-api.md §8.3）。
+// TSPL（TSC 指令）支持的码制集合（一维）。
+// TSPL BARCODE 指令完整覆盖 Code128/GS1-128/Code39/Code93/EAN-13/EAN-8
+// /UPC-A/UPC-E/ITF/ITF-14/Codabar/MSI（MSI10/MSI11）。
+// 二维码制只原生支持 QRCODE，MICROQR 用 QRCODE 命令降级（形状变但能扫），
+// DATAMATRIX/PDF417/AZTEC 无原生指令，走 warnings 引导换 ZPL 或图像通道。
+// PHARMACODE/CODE16K 也无原生指令。
 // =============================================================================
 const SUPPORTED_TSPL_BARCODES = new Set<string>([
   '128', 'GS1_128', 'GS1-128', 'CODE128',
@@ -38,7 +42,14 @@ const SUPPORTED_TSPL_BARCODES = new Set<string>([
   'MSI', 'MSI10', 'MSI11',
 ]);
 
-const SUPPORTED_TSPL_QRCODES = new Set<string>(['QRCODE', 'MICROQR']);
+/** TSPL 确实没有原生指令的二维码制（用于精确提示） */
+const TSPL_NO_NATIVE_QRCODES = new Set<string>(['DATAMATRIX', 'DATAMATRIX_RECT', 'PDF417', 'AZTEC']);
+
+/** TSPL 确实没有原生指令的一维码制 */
+const TSPL_NO_NATIVE_BARCODES = new Set<string>(['PHARMACODE', 'CODE16K']);
+
+/** TSPL 原生 QRCODE 指令支持 */
+const SUPPORTED_TSPL_QRCODES = new Set<string>(['QRCODE']);
 
 /**
  * 生成单张标签 TSPL（不含 SIZE/DIRECTION 等页头，由 buildJob 封装）。
@@ -66,7 +77,11 @@ export function generateTspl(els: TsplElement[], dpi: number): { text: string; w
         const b = e.barcode!;
         const mapped = tsplSym(b.sym);
         if (!mapped) {
-          warnings.push(`TSPL 不支持一维码制 "${b.sym ?? ''}"，该元素已跳过输出；如需打印请改用 ZPL 协议或图像通道`);
+          const key = String(b.sym ?? '').toUpperCase();
+          const reason = TSPL_NO_NATIVE_BARCODES.has(key)
+            ? `TSPL 手册无原生 BARCODE 指令（${key} 小众码制）`
+            : `TSPL 暂未覆盖 ${key} 指令`;
+          warnings.push(`[TSPL] ${reason}，该元素已跳过输出。建议：①改用 ZPL 协议试试（ZPL ^B 家族覆盖更广）；②用 protocol=image 让后端走 bwip-js 位图下发（BITMAP）`);
           break;
         }
         // BARCODE x,y,"code",height,human,rotation,narrow,wide,alignment,content
@@ -82,8 +97,14 @@ export function generateTspl(els: TsplElement[], dpi: number): { text: string; w
       case 'qrcode': {
         const q = e.qrcode!;
         const sym = String(q.sym ?? 'QRCODE').toUpperCase();
-        if (!SUPPORTED_TSPL_QRCODES.has(sym)) {
-          warnings.push(`TSPL 不支持二维码制 "${q.sym ?? ''}"，该元素已跳过输出；如需打印请改用 ZPL 协议或图像通道`);
+        // MICROQR → 用 QRCODE 命令降级成标准 QR（形状变但能扫，不浪费元素）
+        if (sym === 'MICROQR') {
+          warnings.push(`[TSPL] MICROQR 无原生命令，降级为标准 QRCODE 输出（形状变但可扫）；如需真 Micro QR 请改用 ZPL 协议`);
+        } else if (!SUPPORTED_TSPL_QRCODES.has(sym)) {
+          const reason = TSPL_NO_NATIVE_QRCODES.has(sym)
+            ? `TSPL 手册无原生二维码指令（${sym}）`
+            : `TSPL 暂未覆盖 ${sym} 指令`;
+          warnings.push(`[TSPL] ${reason}，该元素已跳过输出。建议改用 ZPL 协议或 protocol=image 位图下发`);
           break;
         }
         // QRCODE x,y,ECC,cell size,mode,rotation,[model],[mask],content
