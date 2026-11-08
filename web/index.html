@@ -1,15 +1,27 @@
 <!doctype html>
+<!--
+  ⚠️ DEPRECATED（已弃用）：本目录是「老版本原生 HTML5 前端」，仅保留作行为对照。
+  新前端为 Vue 3：apps/console（租户后台，:5173）、apps/platform（平台后台，:5181）。
+  后续只做必要修复，不再新增功能；待新前端功能全部完善后整目录删除。
+-->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LabelFlow · 标签设计器</title>
+<meta name="labelflow:deprecated" content="true; replaced-by=apps/console">
+<title>LabelFlow · 标签设计器（老版·已弃用）</title>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0f172a">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
+<!-- ⚠️ DEPRECATED 横幅：提示这是老版前端，避免与 Vue 版混淆 -->
+<div role="alert" style="padding:8px 12px;background:#fef3c7;color:#92400e;border-bottom:1px solid #fcd34d;font:13px/1.6 system-ui,sans-serif;text-align:center">
+  老版前端已弃用（DEPRECATED），仅作行为对照 · 新前端请用
+  <a href="http://localhost:5173" style="color:#b45309;font-weight:600">apps/console（:5173）</a>
+  · 本目录待新前端功能完善后删除
+</div>
 <div class="app">
 
   <!-- ================= 顶栏 ================= -->

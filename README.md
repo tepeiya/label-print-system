@@ -6,6 +6,10 @@
 > 面向 AI / 开发者的一页式交接文档：运行环境与端口、模块地图、核心 schema 约定、
 > 已完成清单、已知技术债、路线图、踩坑记录、自测清单。
 
+> **前端现状（重要）**
+> - ✅ 当前主前端：`apps/console`（Vue 3 + TypeScript + Vite + Element Plus + Pinia），租户后台 `:5173`；平台运营后台 `apps/platform` `:5181`
+> - ⚠️ `web/`（原生 HTML5）**已弃用（DEPRECATED）**，仅作行为对照，不再新增功能；待新前端功能全部完善后删除
+
 ---
 
 ## 0. 技术栈选型与取舍
@@ -62,8 +66,8 @@ label-print-system/
 │       ├── raw-tcp.provider.ts            # 网络打印机 9100 直连
 │       ├── image.provider.ts              # 服务端 PNG/PDF 出图（存档/第三方）
 │       └── tenant.guard.ts                # 多租户行级隔离守卫
-├── web/                            # 前端（原生 HTML5/CSS/ES Modules，无构建）
-│   ├── index.html                  # 主界面（5 个页签：设计/打印/任务/模板/审计）
+├── web/                            # ⚠️ 已弃用（DEPRECATED）：老版原生 HTML5 前端，仅作对照，待新前端完善后删除
+│   ├── index.html                  # 老版主界面（设计/打印/任务/模板/审计 页签）
 │   ├── serve.mjs                   # 静态服务器（dev 用，5180）
 │   ├── sw.js                       # PWA Service Worker
 │   ├── vendor/                     # 第三方库（bwipjs / XLSX / fflate / JsBarcode / QRCode）
@@ -116,8 +120,9 @@ dots → mm  : mm   = dots * 25.4 / dpi
 ```bash
 # 后端
 cd backend && npm i && npm run start:dev
-# 前端（原生 HTML5，无构建步骤）
-node web/serve.mjs 5180          # 打开 http://localhost:5180/
+# 前端（Vue 3 后台，Vite dev server，自动代理 /api → 3200）
+cd apps/console && npm i && npm run dev         # http://localhost:5173
+# 老版原生前端（⚠️ 已弃用，仅作对照）：node web/serve.mjs 5180
 # 一键全家桶
 docker compose up -d
 ```
@@ -130,7 +135,7 @@ docker compose up -d
 | 条码出图（Code128/EAN13 自包含编码器 + PNG 写出） | ✅ 真实 | 测试产出有效 PNG 签名 |
 | 渲染管线（变量+公式+流水号 → 单行元素） | ✅ 真实 | 渲染测试覆盖占位/公式/流水号切片 |
 | 后端 NestJS 应用 | ✅ 完整骨架 | 模块/控制器/服务/实体/main/worker 齐备，需 `npm i` + PG/Redis 启动 |
-| 前端设计器 | ✅ 原生 HTML5 重写 | `web/`：DOM 渲染标签元素（无 Konva 命中测试问题）、设计/打印/模板三页签、原生 Pointer 拖拽缩放旋转、离线条码二维码 |
+| 前端设计器 | ✅ Vue 3 重写（`apps/console`） | 设计器原生 Vue 实现（无 iframe）：12 类元素、手势/标尺/检查器/撤销重做；`web/` 老版已弃用（DEPRECATED），仅作行为对照 |
 | 多租户隔离 | ✅ 守卫+BaseRepository | 查询强制带 tenant_id |
 
 ### 如何运行测试（零外部依赖，立即可跑）
@@ -146,9 +151,9 @@ node --import tsx --test core/__tests__/*.test.ts
 ```bash
 docker compose up -d        # 拉起 PG + Redis + api + worker + web
 # 或本地：先建库（docs/03-database.sql），再：
-cd backend && npm i && npm run start:dev      # API :3000
-cd backend && npm run worker                  # BullMQ 打印消费者
-node web/serve.mjs 5180                       # 设计器 :5180（原生 HTML5）
+cd backend && npm i && npm run start:dev      # API :3200
+cd apps/console && npm i && npm run dev       # Vue 3 租户后台 :5173（推荐）
+# 老版原生前端（⚠️ 已弃用，仅作对照）：node web/serve.mjs 5180
 ```
 
 > 说明：核心引擎层已通过测试证明正确（最难验证的并发打号、校验位、DPI 换算、渲染管线均在测试中覆盖）。后端应用与前端为完整可运行骨架，需在 `npm i` + 基础设施就绪后联调。

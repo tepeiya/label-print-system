@@ -5,7 +5,9 @@
 > 最后更新：2026-11-06（P0–P5 已落地；**P6 五个子项全部动手：P6.1 RLS + P6.3 导出/硬删 + P6.4 白标 + P6.5 Prompt 库四项完整；P6.2 独立库租户只完成阶段 A（注册 + 平台侧按库导出/删除），开通编排与业务读写接管未做**；
 > 本轮新增 **§10.26**；单测 217 条 / 验收 267 项（A–Q 段）/ RLS 冒烟 22 项；P6 只剩 P6.2 阶段 B（见 §10.25.8）。
 > 同日另交付**设计器 Vue 化**（§10.7.2）：`web/` 的 render/interactions/store 已搬进 `apps/console`，Designer 页的 iframe 删除，
-> `web/` 转为老版本独立客户端；Playwright 18 项 E2E 全绿。
+> `web/` 转为「老版本对照客户端」并**已标记弃用（DEPRECATED）**：只在对照行为时启动，不再新增功能；
+> 待 `apps/console` / `apps/platform` 功能全部完善后整目录删除（删除前需确认无脚本/Caddy 配置再引用 `web/`）。
+> Playwright 18 项 E2E 全绿。
 > **接手先读 §10.1.5「交付状态总表」：已完成 15 项、未完成按 🔴/🟡/⚪ 分级列全。**）
 >
 > ⚠️ **2026-11-05 历史瘦身**：`.pnpm-store`（232 MB pnpm 包缓存，被 `95b4970` 误提交）已从
@@ -32,6 +34,7 @@ LabelFlow —— 专业级标签设计与打印系统。核心能力：
 | 项 | 值 |
 | --- | --- |
 | 前端 | Vue 3 后台 `http://localhost:5173`（`apps/console/` · pnpm dev）——**设计器已在 Console 内原生 Vue 实现**，不再依赖 iframe |
+| 老版前端 | ⚠️ **已弃用（DEPRECATED）**：`web/` 原生 HTML5，`node web/serve.mjs 5180` 仅作行为对照，不新增功能，待新前端完善后删除 |
 | 后端 | `http://localhost:3200/api/v1` |
 | 数据库 | PostgreSQL `localhost:5433`，库/用户/密码均 `labelflow` |
 | Redis | `localhost:6380` |
@@ -60,7 +63,7 @@ nohup node -r reflect-metadata dist/src/main.js > /tmp/labelflow-backend.log 2>&
 # —— 开发态：Vite dev server 5173 自动代理 /api 到后端
 cd apps/console && pnpm dev
 
-# —— 原生 DOM 版（web/）现在是「老版本独立客户端」，只在需要对照行为时单独起：
+# —— 老版原生 DOM 前端（web/）⚠️ 已弃用（DEPRECATED）：仅作行为对照，不新增功能，待新前端完善后删除
 node web/serve.mjs 5180
 
 # —— 生产部署：Vue 3 构建产物托管到 NestJS 静态目录
@@ -234,8 +237,8 @@ label-print-system/
 │       ├── auth/ template/ serial/ formula/ barcode/
 │       ├── printer/ print/ datasource/ audit/ user/
 │       └── ai-template/          # AI 图片→模板（11 个文件）
-├── web/
-│   ├── index.html                # 7 个页签
+├── web/                          # ⚠️ 已弃用（DEPRECATED）：老版原生 HTML5 前端，仅作对照，待新前端完善后删除
+│   ├── index.html                # 老版页签
 │   ├── css/app.css
 │   ├── js/                       # 原生 ES Module：app/store/model/render/...
 │   ├── serve.mjs                 # 静态服务器

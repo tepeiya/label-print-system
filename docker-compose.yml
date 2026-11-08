@@ -41,6 +41,9 @@ services:
       - DB_HOST=postgres
     depends_on: [postgres, redis]
 
+  # ⚠️ DEPRECATED（已弃用）：web 是老版原生 HTML5 前端，仅作行为对照，不再新增功能。
+  #    新前端为 Vue 3：apps/console（租户后台 :5173）、apps/platform（平台后台 :5181）；
+  #    待新前端功能完善后，本服务与 ./web 一并删除。
   web:
     image: nginx:alpine
     volumes: ["./web:/usr/share/nginx/html:ro"]
