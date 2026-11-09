@@ -219,9 +219,20 @@
         </FRow>
         <!-- 同「一维码」：受限码制给一行 capNote 小字，取值集合不变 -->
         <span v-for="(line, i) in qrCapHint" :key="`cap${i}`" class="f-hint f-hint-warn">⚠ {{ line }}</span>
-        <FField label="内容">
-          <FText :model-value="qr!.content ?? ''" placeholder="支持 {{变量}}" @update:model-value="setQr({ content: $event })" />
+        <!-- 内容可能上千字符（URL / JSON / GS1 串），单行 input 看不见后半段，
+             所以这里用可调高的多行框；但它仍是「一条数据」，noNewline 见 fields/FArea.vue -->
+        <FField label="内容" class="f-field-top">
+          <FArea
+            :model-value="qr!.content ?? ''"
+            :rows="6"
+            no-newline
+            placeholder="支持 {{变量}}；内容再长也不用回车分段"
+            @update:model-value="setQr({ content: $event })"
+            @normalize="onQrNormalize"
+          />
         </FField>
+        <span v-if="qrLen" class="f-hint">内容 {{ qrLen }} 字符（软换行只是显示，数据里不换行）</span>
+        <span v-if="qrNotice" class="f-hint f-hint-warn">⚠ {{ qrNotice }}</span>
         <span class="f-hint" :class="{ 'f-hint-bad': !qrCheck.ok }">
           {{ qrCheck.ok ? (qrCheck.note ? `✓ ${qrCheck.note}` : '') : `✗ ${qrCheck.error}` }}
         </span>
@@ -327,7 +338,7 @@
 //   写入一律走 store.updateElement（实时、不入历史），历史由 COMMIT_KEY 的
 //   begin/end 在控件层收口，所以「拖一次滑块」= 一条 undo。
 // =============================================================================
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useDesignerStore } from '../store';
 import { BARCODE_SYMS, QRCODE_SYMS, SYSVAR_KEYS, TYPE_LABELS } from '../model';
 import { capHint, capOptions } from '../barcode-caps';
@@ -418,6 +429,19 @@ const previewCtx = buildContext(store.template, sampleRowOf(store.template), { s
 
 const bcCheck = computed(() => validateBarcodeText(bc.value?.sym ?? 'CODE128', bc.value?.content ?? ''));
 const qrCheck = computed(() => validateBarcodeText(qr.value?.sym ?? 'QRCODE', qr.value?.content ?? ''));
+const qrLen = computed(() => (qr.value?.content ?? '').length);
+
+/** 换行挡在输入侧，但挡了就要说：粘贴里有几个控制字符就报几个，不静默改用户的数据 */
+const qrNotice = ref('');
+let qrNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+function onQrNormalize(n: number) {
+  clearTimeout(qrNoticeTimer);
+  qrNotice.value = `内容有 ${n} 个换行/控制字符，已整理成单行（换行按空格接续）：ZPL/TSPL 指令按行切分，^FD…^FS 里带换行会让打印机把后半段当新指令读，只有位图通道能原样承载。`;
+  qrNoticeTimer = setTimeout(() => { qrNotice.value = ''; }, 8000);
+}
+// 换元素时这条提示就与当前内容无关了，别挂在下一个二维码下面
+watch(() => el.value?.id, () => { qrNotice.value = ''; });
+onBeforeUnmount(() => clearTimeout(qrNoticeTimer));
 
 const bcWarn = computed(() => {
   if (!el.value || el.value.type !== 'barcode') return '';

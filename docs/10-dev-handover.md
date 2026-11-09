@@ -2365,3 +2365,19 @@ AIM/几何结论除了 C 段，另外固化在三处可复核的地方：`gs1.ts
 | P6.2 阶段 B、密钥管理、真域名白标 DNS、通知/定时任务基建 | 与本轮无关，仍是 §10.1.5 B1/B2 的未完成项 | 见该节 |
 | `apps/console/package-lock.json` | 在 console 里误用 `npm install` 的副产物（该 app 的锁文件是 `pnpm-lock.yaml`），**未跟踪**。已加进 `.gitignore`（console/platform 走 pnpm；backend 与 mcp-server 走 npm，它们的 lock 是入库的） | 不用管；如果哪天要统一包管理器，那是另一件事 |
 
+## 10.28 二维码内容框放大（2026-11-09 落地）
+
+诉求原文：「二维码内容框太小了，调大一些，有些二维码的内容很长」。改的是 Console 属性面板的**可视面积**，不是打印链路，也不是「允许二维码带换行」。
+
+- `PropsPanel.vue` 二维码组的「内容」由 `FText`（单行 input）换成 `FArea`：`rows=6`、可竖向拖高、长内容软换行整段可见。这一组同时覆盖 QRCODE / MICROQR / DATAMATRIX / PDF417 / AZTEC（它们共用 `el.qrcode`）。框下加一行字符数 `内容 N 字符`，容量口径不变，仍是 `validateBarcodeText`（QRCODE `maxLen 2953`、note「建议 ≤ 2000 字符」）。`designer.css` 新增 `.f-field-top`，多行时标签贴第一行而不是垂直居中。
+- **放大框子 ≠ 允许换行**：`FArea` 新增可选 prop `noNewline`，QR 内容开启它 ⇒ 回车被 `preventDefault`；粘贴 / 拖入的 `\r\n\t` 按空格接续，其余 C0 删除，并弹一行 `⚠ 内容有 N 个…`（8 秒自动收）。计数报的是「原始串里有几个控制字符」而不是「净删了几个」——换行换成空格时净删为 0，按净删报等于当着用户的面说假话。依据还是那句老规矩「宁可不打，不打错码」：
+  - ZPL：`esc()` 只处理 `\ ^ ~`，2D 数据是 `^FD${content}^FS`，整份 job 仍按 `\n` 拼接，内容里的换行会被当成行结束，后半段有被当作新指令读的风险；
+  - TSPL：命令按 CRLF 分行，同理；
+  - EPL：`epl-generator.ts:728-730` 已显式剔除控制字符并报 `[数据]` 告警（仓内唯一已有的换行策略，代价是它改了数据本身）；
+  - 位图（bwip）通道实测换行按字节原样保留 —— 提示里那句「只有位图通道能原样承载」是实测结论，不是推测。
+- **没做 / 边界（别按已完成理解）**：
+  1. 挡在输入侧只保护面板。模板 JSON 导入、AI 生成、`/templates` 接口写进来的内容仍可带 `\n`，三条原生通道不会报错，只会打出与预览不一致的码。要在核心侧收口，两条路选一条：(a) `planChannel` 加「2D + 内容含 C0 ⇒ bitmap」这条**内容级**规则（与既有「2D + `(AI)` ⇒ bitmap」同一形态），或 (b) ZPL/TSPL 对含控制字符的数据直接跳过该元素并报 `[数据]`。两者都会牵动 `CAP_MATRIX_VERSION`（现 `p7-2026-11-08.4`，仓内 69 处：两份 caps 副本、66 份 golden 头、本文 §10.27.1），改完必须 `npx tsx core/__tests__/golden/update.ts` 重生成并同步文档。**等口径定了再做，本轮没动核心。**
+  2. 一维码「内容」仍是 `FText`：单行 input 里浏览器会把粘贴的换行吃掉，长度也是几十字符量级，放大没收益。
+  3. 老前端 `web/js/inspector.js:518` 同为单行 input，**未跟改**（`web/` 已 DEPRECATED，口径是只对照行为、不新增功能）。
+- **验证**：`pnpm build`（含 `vue-tsc -b`）与 `pnpm lint` 均 rc 0；backend 零改动 ⇒ §10.27.8 的 388/380/0/8 与 `p7-acceptance.sh` 的 58 PASS 口径不变。console 无测试框架、沙箱也无可用浏览器，**没有做过真实渲染验证**：6 行高度、拖拽 resize、粘贴提示三条只到代码级确认，接手时请在浏览器里点一遍。
+

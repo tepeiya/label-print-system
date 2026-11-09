@@ -525,6 +525,9 @@
   flex-wrap: wrap;
 }
 .f-field { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; }
+/* 多行内容框（二维码内容等）：标签贴第一行，不要居中到 6 行高的中间 */
+.f-field.f-field-top { align-items: flex-start; }
+.f-field-top > .f-label { padding-top: 7px; }
 .f-label {
   font-size: 11.5px;
   color: var(--d-muted);
