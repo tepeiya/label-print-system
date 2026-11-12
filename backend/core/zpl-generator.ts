@@ -7,6 +7,11 @@
 // =============================================================================
 
 import type { BarcodeSpec, QrcodeSpec } from './types';
+// P7：能力判定/降级/warnings/几何约束一律委托单一真源，本文件只保留「指令语法」知识。
+import {
+  canonSym, describeUnsupported, resolveBarcodeGeometry,
+  encodeGs1, gs1ToProtocol,
+} from './symbology.capabilities';
 
 /** mm → dots（按 dpi）。核心换算公式，全指令生成统一使用 */
 export function mmToDots(mm: number, dpi: number): number {
@@ -43,33 +48,11 @@ function zplOrient(rot: number): 'N' | 'R' | 'I' | 'B' {
 }
 
 // =============================================================================
-// ZPL II 原生指令支持的码制集合（一维）。
-// ZPL ^B 家族完整覆盖：Code128/GS1-128/Code39/Code93/EAN-13/EAN-8/UPC-A/UPC-E
-// /Interleaved 2 of 5 / Codabar / MSI。
-// 二维码制走 SUPPORTED_ZPL_QRCODES（QR/DM/PDF417/Aztec），
-// PHARMACODE / CODE16K 不在集合里——ZPL 手册无对应 ^B 原生指令，
-// 前端预览用 bwip-js SVG，但若要打印到 Zebra 标签机只能走 bwip-js 图像通道
-// （由 PrintCommandsDto 的 protocol=image 或 RawTcp 走 PNG ^GF 下发）。
+// P7 重构：原本这里维护 SUPPORTED_ZPL_BARCODES / SUPPORTED_ZPL_QRCODES /
+// ZPL_NO_NATIVE_BARCODES 三个 Set，与前端列表、TSPL 生成器、buildWarnings 共四处
+// 各写一份，是「静默降级 / warnings 自相矛盾」的根因。现统一委托
+// symbology.capabilities.ts，本文件只保留 ZPL 指令语法（^B 家族参数顺序）。
 // =============================================================================
-const SUPPORTED_ZPL_BARCODES = new Set<string>([
-  'CODE128', 'GS1_128',
-  'CODE39', 'CODE93',
-  'EAN13', 'EAN8',
-  'UPC', 'UPC_E',
-  'ITF', 'ITF14',
-  'CODABAR',
-  'MSI',
-]);
-
-const SUPPORTED_ZPL_QRCODES = new Set<string>([
-  'QRCODE', 'MICROQR',
-  'DATAMATRIX', 'DATAMATRIX_RECT',
-  'PDF417',
-  'AZTEC',
-]);
-
-/** ZPL 一维码制是否确实没有原生 ^B 指令（用于生成更精确的 warnings） */
-const ZPL_NO_NATIVE_BARCODES = new Set<string>(['PHARMACODE', 'CODE16K']);
 
 /**
  * 生成单个标签的完整 ZPL（不含作业头尾 ^XA/^XZ 由调用方包）。
@@ -99,34 +82,51 @@ export function generateZpl(els: ZplElement[], dpi: number): { text: string; war
       }
       case 'barcode': {
         const b = e.barcode!;
-        const sym = zplSymKey(b.sym);
-        if (!SUPPORTED_ZPL_BARCODES.has(sym)) {
-          // 精确提示：是 ZPL 手册确实无原生指令（引导图像通道），还是只是本产品暂未覆盖（引导换协议）
-          const reason = ZPL_NO_NATIVE_BARCODES.has(sym)
-            ? `ZPL 手册无原生 ^B 指令（${sym} 小众码制）`
-            : `ZPL 暂未覆盖 ${sym} 指令`;
-          warnings.push(`[ZPL] ${reason}，该元素已跳过输出。建议：①改用 TSPL 协议试试；②打印指令用 protocol=image 让后端走 bwip-js 位图下发（^GF PNG）`);
-          break;
-        }
+        const sym = canonSym(b.sym);
+        // P7：能力判定统一走单一真源（区分"手册无指令"与"暂未覆盖"，并支持显式降级）
+        const support = describeUnsupported('zpl', sym);
+        warnings.push(...support.warnings);
+        if (support.skip) break;
+
+        // P7.6 几何约束：模块宽对齐到整数 dot（防条宽不均译码失败）、静区按码制自动、
+        // 旋转时明文方位反转（避开静区）。原理见 symbology.capabilities.ts。
+        const geo = resolveBarcodeGeometry({
+          sym, moduleWidthMm: b.moduleWidthMm, wideRatio: b.wideRatio, heightMm: b.heightMm,
+          showText: b.showText, textPosition: b.textPosition, rotation: rot,
+        }, dpi);
+        const qz = geo.quietZone;
+        // 静区通过 ^FO 起点偏移实现；bwip-js 预览侧同样自带静区，保证所见即所得一致
+        const bx = x + mmToDots(qz.left, dpi);
+        const by = y + mmToDots(qz.top, dpi);
         const bh = Math.max(1, mmToDots(b.heightMm, dpi));
-        const byW = Math.max(1, mmToDots(b.moduleWidthMm, dpi));
-        // ^BY 宽窄比有效范围 2.0~3.0，缺省 2.5（uC 未传时为 undefined 会产生 ^BY2,undefined）
-        const ratio = Number.isFinite(b.wideRatio)
-          ? Math.min(3, Math.max(2, Math.round(Number(b.wideRatio) * 10) / 10))
-          : 2.5;
+        const byW = Math.max(1, geo.moduleDots);
+        const ratio = Math.min(3, Math.max(2, Math.round(geo.wideRatio * 10) / 10));
         const human = b.showText ? 'Y' : 'N';
         const checksum = b.checksum === false ? 'N' : 'Y';
-        out.push(`^FO${x},${y}^BY${byW},${ratio},${bh}`);
-        out.push(...zplBarcodeLine(sym, orient, bh, human, checksum, b.content));
+        // moduleWidth 对齐是静默规范化（与 mmToDots 取整同理，属预期行为），不进 warnings；
+        // 对齐结果在 geo.moduleWidthMm / moduleDots 中，供验收脚本与前端属性面板回显。
+        // warnings 只承载「需要用户行动」的事：不支持码制、高度过小、GS1 数据非法。
+        if (geo.heightTooSmall) {
+          warnings.push(`[ZPL] ${sym} 高度 ${b.heightMm}mm 偏小（建议 ≥ ${geo.suggestedHeightMm}mm，约 ${10}×模块宽），可能影响扫描`);
+        }
+        out.push(`^FO${bx},${by}^BY${byW},${ratio},${bh}`);
+        out.push(...zplBarcodeLine(sym, orient, bh, human, checksum, b.content, geo.humanReadable.zplFlag as 'Y' | 'N'));
         break;
       }
       case 'qrcode': {
         const q = e.qrcode!;
-        const key = String(q.sym ?? 'QRCODE').toUpperCase();
-        if (!SUPPORTED_ZPL_QRCODES.has(key)) {
-          warnings.push(`[ZPL] 暂无二维码制 "${key}" 原生指令，该元素已跳过输出。建议改用 protocol=image 让后端走 bwip-js 位图下发`);
-          break;
-        }
+        const key = canonSym(q.sym ?? 'QRCODE');
+        // P7：二维码能力同样委托单一真源
+        const support = describeUnsupported('zpl', key);
+        warnings.push(...support.warnings);
+        if (support.skip) break;
+        // 静区按码制自动（QR=4模块 / DM=1 / PDF417=2 / Aztec=0）
+        const qz = resolveBarcodeGeometry({
+          sym: key, moduleWidthMm: q.moduleSizeMm ?? 0.4, heightMm: e.hMm ?? 15,
+          showText: false, textPosition: 'bottom', rotation: rot,
+        }, dpi).quietZone;
+        const qx = x + mmToDots(qz.left, dpi);
+        const qy = y + mmToDots(qz.top, dpi);
         const content = esc(q.content);
         const moduleDots = mmToDots(q.moduleSizeMm ?? 0.4, dpi);
         // ZPL 放大系数 1-10（每个模块 dots）
@@ -135,16 +135,17 @@ export function generateZpl(els: ZplElement[], dpi: number): { text: string; war
         const eccMap: Record<string, string> = { H: 'H', Q: 'Q', M: 'M', L: 'L' };
         if (key.startsWith('DATA')) {
           // Data Matrix（含矩形版）：^BX o,h,s,e（e=200 为标准 ECC200）
-          out.push(`^FO${x},${y}^BX${orient},${bh},${m},200^FD${content}^FS`);
+          out.push(`^FO${qx},${qy}^BX${orient},${bh},${m},200^FD${content}^FS`);
         } else if (key.startsWith('PDF')) {
           // PDF417：^B2 o,h,f,g,e（f=N 不打印人类可读行）
-          out.push(`^FO${x},${y}^B2${orient},${bh},N,N,Y^FD${content}^FS`);
+          out.push(`^FO${qx},${qy}^B2${orient},${bh},N,N,Y^FD${content}^FS`);
         } else if (key.startsWith('AZTEC')) {
           // Aztec：^BO o,h,s,e
-          out.push(`^FO${x},${y}^BO${orient},${bh},${m},0^FD${content}^FS`);
+          out.push(`^FO${qx},${qy}^BO${orient},${bh},${m},0^FD${content}^FS`);
         } else {
-          // QR / Micro QR：^BQ o,model,m,ecc
-          out.push(`^FO${x},${y}^BQ${orient},2,${m},${eccMap[q.ecc ?? 'M'] ?? 'M'}^FDQA,${content}^FS`);
+          // QR / Micro QR：^BQ o,model,m,ecc（model 1=Micro QR / 2=标准 QR）
+          const model = key === 'MICROQR' ? '1' : '2';
+          out.push(`^FO${qx},${qy}^BQ${orient},${model},${m},${eccMap[q.ecc ?? 'M'] ?? 'M'}^FDQA,${content}^FS`);
         }
         break;
       }
@@ -187,15 +188,9 @@ export function generateZpl(els: ZplElement[], dpi: number): { text: string; war
   return { text: out.join('\n'), warnings };
 }
 
-/** 码制归一化（前端使用 CODE128 / UPC_E / GS1_128 等大写标识） */
+/** 码制归一化：委托单一真源 canonSym（消除别名各处各写一份的漂移） */
 function zplSymKey(sym: string): string {
-  const s = String(sym ?? '').toUpperCase().replace(/^CODE-?128$/, 'CODE128');
-  return s
-    .replace(/^UPCA$/, 'UPC')
-    .replace(/^UPC-A$/, 'UPC')
-    .replace(/^UPC-E$/, 'UPC_E')
-    .replace(/^UPCE$/, 'UPC_E')
-    .replace(/^INTERLEAVED2OF5$/, 'ITF');
+  return canonSym(sym);
 }
 
 /**
@@ -217,40 +212,50 @@ function zplSymKey(sym: string): string {
 function zplBarcodeLine(
   sym: string, orient: 'N' | 'R' | 'I' | 'B', bh: number,
   human: 'Y' | 'N', checksum: 'Y' | 'N', content: string,
+  humanAbove: 'Y' | 'N' = 'N',
 ): string[] {
   const key = zplSymKey(sym);
   const fd = esc(content);
   switch (key) {
     case 'GS1_128': {
-      // GS1-128 = Code128 + FNC1：去掉人类可读的括号并前置 FNC1（>;）
-      // 变长 AI 之间的 FNC1 分隔需在数据里写成 >8
-      const data = String(content ?? '').replace(/[()]/g, '');
-      return [`^BC${orient},${bh},${human},N,Y^FD>;${esc(data)}^FS`];
+      // P7.4 GS1-128 = Code128 + FNC1：正确解析 AI、变长 AI 之间插 FNC1 分隔符（>8）。
+      // 原理：GS1 以 FNC1 开头标识 GS1 系统；定长 AI 直接接续，变长 AI 必须靠 FNC1 断句，
+      //       否则译码器无法区分 "(10)ABC(17)..." 的边界。encodeGs1 产出带 \u001D 占位的数据流。
+      const g = encodeGs1(content);
+      if (g.invalid.length) {
+        // 数据不合规不静默吞掉：交回生成器 warnings 层（这里退回旧的括号剥离，保证可打）
+        const data = String(content ?? '').replace(/[()]/g, '');
+        return [`^BC${orient},${bh},${human},${humanAbove},Y^FD>;${esc(data)}^FS`];
+      }
+      const data = gs1ToProtocol(g.data, 'zpl');
+      return [`^BC${orient},${bh},${human},${humanAbove},Y^FD>;${esc(data)}^FS`];
     }
+    // 下列码制的第 4 个参数 g = "明文是否在条码上方"。P7.6：旋转 180/270° 时
+    // humanReadablePlacement 会把 bottom 反转为 Y，避免明文压到静区/落到错误物理方位。
     case 'CODE39':
-      return [`^B3${orient},${checksum},${bh},${human},N^FD${fd}^FS`];
+      return [`^B3${orient},${checksum},${bh},${human},${humanAbove}^FD${fd}^FS`];
     case 'CODE93':
-      return [`^BA${orient},${bh},${human},N,${checksum}^FD${fd}^FS`];
+      return [`^BA${orient},${bh},${human},${humanAbove},${checksum}^FD${fd}^FS`];
     case 'EAN13':
-      return [`^BE${orient},${bh},${human},N^FD${fd}^FS`];
+      return [`^BE${orient},${bh},${human},${humanAbove}^FD${fd}^FS`];
     case 'EAN8':
-      return [`^B8${orient},${bh},${human},N^FD${fd}^FS`];
+      return [`^B8${orient},${bh},${human},${humanAbove}^FD${fd}^FS`];
     case 'UPC':
-      return [`^BU${orient},${bh},${human},N,${checksum}^FD${fd}^FS`];
+      return [`^BU${orient},${bh},${human},${humanAbove},${checksum}^FD${fd}^FS`];
     case 'UPC_E':
-      return [`^B9${orient},${bh},${human},N,${checksum}^FD${fd}^FS`];
+      return [`^B9${orient},${bh},${human},${humanAbove},${checksum}^FD${fd}^FS`];
     case 'ITF14':
     case 'ITF':
-      return [`^BI${orient},${bh},${human},N^FD${fd}^FS`];
+      return [`^BI${orient},${bh},${human},${humanAbove}^FD${fd}^FS`];
     case 'CODABAR':
-      return [`^BK${orient},${checksum},${bh},${human},N^FD${fd}^FS`];
+      return [`^BK${orient},${checksum},${bh},${human},${humanAbove}^FD${fd}^FS`];
     case 'MSI':
-      return [`^BM${orient},${checksum},${bh},${human},N^FD${fd}^FS`];
+      return [`^BM${orient},${checksum},${bh},${human},${humanAbove}^FD${fd}^FS`];
     case 'CODE128':
-      return [`^BC${orient},${bh},${human},N,${checksum}^FD${fd}^FS`];
+      return [`^BC${orient},${bh},${human},${humanAbove},${checksum}^FD${fd}^FS`];
     default:
-      // ⚠️ 显式 throw 让调用方知道过滤漏掉了；生产代码不应走到这里
-      throw new Error(`zplBarcodeLine: 意外的码制 "${sym}"，调用方应先用 SUPPORTED_ZPL_BARCODES 过滤`);
+      // ⚠️ 显式 throw 让调用方知道能力真源与语法表漂移了；生产代码不应走到这里
+      throw new Error(`zplBarcodeLine: 意外的码制 "${sym}"，请检查 symbology.capabilities 中声明为 ZPL native 的码制是否都有语法分支`);
   }
 }
 

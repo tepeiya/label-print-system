@@ -20,6 +20,9 @@ import { SaasModule } from './saas/saas.module';
 import { BillingModule } from './billing/billing.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { AgentModule } from './agent/agent.module';
+import { NotifyModule } from './notify/notify.module';
+import { JobsModule } from './jobs/jobs.module';
+import { TenantRoutingModule } from './common/tenant-routing.module';
 import { SnakeNamingStrategy } from './snake-naming.strategy';
 import { JWT_SECRET, redisConnection } from './common/config';
 
@@ -45,6 +48,8 @@ const ENTITIES = Object.values(entities).filter((e) => typeof e === 'function');
     AuthModule, TemplateModule, SerialModule, FormulaModule, BarcodeModule,
     PrinterModule, PrintModule, DataSourceModule, AuditModule, UserAdminModule, AiTemplateModule, BackupModule,
     SaasModule, BillingModule, InventoryModule, AgentModule,
+    NotifyModule, JobsModule,   // B2.5 站内信 + B2.4 定时任务（maintenance 队列）
+    TenantRoutingModule,        // P6.2 阶段 B：全局 Repository/事务租户路由（@Global）
   ],
 })
 export class AppModule {}

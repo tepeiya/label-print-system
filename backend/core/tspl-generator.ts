@@ -6,6 +6,11 @@
 // =============================================================================
 
 import type { BarcodeSpec, QrcodeSpec } from './types';
+// P7：能力判定/降级/warnings/几何约束一律委托单一真源，本文件只保留「TSPL 指令语法」。
+import {
+  canonSym, describeUnsupported, resolveBarcodeGeometry,
+  encodeGs1, gs1ToProtocol,
+} from './symbology.capabilities';
 
 export function mmToDots(mm: number, dpi: number): number {
   return Math.round((mm * dpi) / 25.4);
@@ -24,32 +29,11 @@ export interface TsplElement {
 }
 
 // =============================================================================
-// TSPL（TSC 指令）支持的码制集合（一维）。
-// TSPL BARCODE 指令完整覆盖 Code128/GS1-128/Code39/Code93/EAN-13/EAN-8
-// /UPC-A/UPC-E/ITF/ITF-14/Codabar/MSI（MSI10/MSI11）。
-// 二维码制只原生支持 QRCODE，MICROQR 用 QRCODE 命令降级（形状变但能扫），
-// DATAMATRIX/PDF417/AZTEC 无原生指令，走 warnings 引导换 ZPL 或图像通道。
-// PHARMACODE/CODE16K 也无原生指令。
+// P7 重构：原本这里维护 SUPPORTED_TSPL_BARCODES / TSPL_NO_NATIVE_QRCODES /
+// TSPL_NO_NATIVE_BARCODES / SUPPORTED_TSPL_QRCODES 四个 Set，与 ZPL 生成器、
+// 前端列表、buildWarnings 共四处漂移。现统一委托 symbology.capabilities.ts，
+// 本文件只保留 TSPL 指令语法（BARCODE / QRCODE 参数）。
 // =============================================================================
-const SUPPORTED_TSPL_BARCODES = new Set<string>([
-  '128', 'GS1_128', 'GS1-128', 'CODE128',
-  '39', 'CODE39',
-  '93', 'CODE93',
-  'EAN13', 'EAN8',
-  'UPC', 'UPCA', 'UPC_A', 'UPC_E', 'UPCE',
-  'ITF14', 'ITF', '2OF5', 'INTERLEAVED2OF5',
-  'CODABAR',
-  'MSI', 'MSI10', 'MSI11',
-]);
-
-/** TSPL 确实没有原生指令的二维码制（用于精确提示） */
-const TSPL_NO_NATIVE_QRCODES = new Set<string>(['DATAMATRIX', 'DATAMATRIX_RECT', 'PDF417', 'AZTEC']);
-
-/** TSPL 确实没有原生指令的一维码制 */
-const TSPL_NO_NATIVE_BARCODES = new Set<string>(['PHARMACODE', 'CODE16K']);
-
-/** TSPL 原生 QRCODE 指令支持 */
-const SUPPORTED_TSPL_QRCODES = new Set<string>(['QRCODE']);
 
 /**
  * 生成单张标签 TSPL（不含 SIZE/DIRECTION 等页头，由 buildJob 封装）。
@@ -75,42 +59,59 @@ export function generateTspl(els: TsplElement[], dpi: number): { text: string; w
       }
       case 'barcode': {
         const b = e.barcode!;
-        const mapped = tsplSym(b.sym);
+        const sym = canonSym(b.sym);
+        // P7：能力判定/降级统一走单一真源
+        const support = describeUnsupported('tspl', sym);
+        warnings.push(...support.warnings);
+        if (support.skip) break;
+        const mapped = tsplSym(sym);
         if (!mapped) {
-          const key = String(b.sym ?? '').toUpperCase();
-          const reason = TSPL_NO_NATIVE_BARCODES.has(key)
-            ? `TSPL 手册无原生 BARCODE 指令（${key} 小众码制）`
-            : `TSPL 暂未覆盖 ${key} 指令`;
-          warnings.push(`[TSPL] ${reason}，该元素已跳过输出。建议：①改用 ZPL 协议试试（ZPL ^B 家族覆盖更广）；②用 protocol=image 让后端走 bwip-js 位图下发（BITMAP）`);
+          warnings.push(`[TSPL] ${sym} 声明为可打印但缺 BARCODE 类型映射，该元素已跳过（能力真源与语法表漂移，请报障）`);
           break;
         }
+        // P7.6 几何：模块宽 DPI 对齐 + 静区自动（避免条宽不均与静区被裁）
+        const geo = resolveBarcodeGeometry({
+          sym, moduleWidthMm: b.moduleWidthMm, wideRatio: b.wideRatio, heightMm: b.heightMm,
+          showText: b.showText, textPosition: b.textPosition, rotation: rot,
+        }, dpi);
+        const qz = geo.quietZone;
+        const bx = x + mmToDots(qz.left, dpi);
+        const by = y + mmToDots(qz.top, dpi);
         // BARCODE x,y,"code",height,human,rotation,narrow,wide,alignment,content
         const h = Math.max(1, mmToDots(b.heightMm, dpi));
-        const narrow = Math.max(1, mmToDots(b.moduleWidthMm, dpi));
-        // 宽窄比缺省 2.5，避免 undefined 相乘产生 NaN
-        const ratio = Number.isFinite(b.wideRatio) ? Number(b.wideRatio) : 2.5;
-        const wide = Math.max(narrow, Math.round(narrow * ratio));
+        const narrow = Math.max(1, geo.moduleDots);
+        const wide = Math.max(narrow, Math.round(narrow * geo.wideRatio));
         const human = b.showText ? '1' : '0';
-        L.push(`BARCODE ${x},${y},"${mapped}",${h},${human},${rot},${narrow},${wide},1,"${esc(b.content)}"`);
+        // moduleWidth 对齐属静默规范化，不进 warnings（见 zpl-generator 同处说明）。
+        // P7.4：GS1-128 加 FNC1 前缀与变长 AI 分隔符；普通码制原样输出
+        let content = b.content;
+        if (sym === 'GS1_128') {
+          const g = encodeGs1(b.content);
+          if (g.invalid.length) warnings.push(`[TSPL] GS1 数据存疑：${g.invalid.join('；')}（已按原括号格式输出，请核对）`);
+          else content = gs1ToProtocol(g.data, 'tspl');
+        }
+        L.push(`BARCODE ${bx},${by},"${mapped}",${h},${human},${rot},${narrow},${wide},1,"${esc(content)}"`);
         break;
       }
       case 'qrcode': {
         const q = e.qrcode!;
-        const sym = String(q.sym ?? 'QRCODE').toUpperCase();
-        // MICROQR → 用 QRCODE 命令降级成标准 QR（形状变但能扫，不浪费元素）
-        if (sym === 'MICROQR') {
-          warnings.push(`[TSPL] MICROQR 无原生命令，降级为标准 QRCODE 输出（形状变但可扫）；如需真 Micro QR 请改用 ZPL 协议`);
-        } else if (!SUPPORTED_TSPL_QRCODES.has(sym)) {
-          const reason = TSPL_NO_NATIVE_QRCODES.has(sym)
-            ? `TSPL 手册无原生二维码指令（${sym}）`
-            : `TSPL 暂未覆盖 ${sym} 指令`;
-          warnings.push(`[TSPL] ${reason}，该元素已跳过输出。建议改用 ZPL 协议或 protocol=image 位图下发`);
-          break;
-        }
-        // QRCODE x,y,ECC,cell size,mode,rotation,[model],[mask],content
+        const sym = canonSym(q.sym ?? 'QRCODE');
+        // P7：能力判定统一走单一真源。MICROQR 在真源里声明为 degradeTo=QRCODE，
+        // 会由 describeUnsupported 回一条降级 warning，且这里按 QRCODE 指令输出。
+        const support = describeUnsupported('tspl', sym);
+        warnings.push(...support.warnings);
+        if (support.skip) break;
+        // P7.6 静区按码制自动（QR=4模块）
+        const qz = resolveBarcodeGeometry({
+          sym: 'QRCODE', moduleWidthMm: q.moduleSizeMm ?? 0.5, heightMm: 15,
+          showText: false, textPosition: 'bottom', rotation: rot,
+        }, dpi).quietZone;
+        const qx = x + mmToDots(qz.left, dpi);
+        const qy = y + mmToDots(qz.top, dpi);
+        // QRCODE x,y,ECC,cell size,mode,rotation,content
         const eccMap: Record<string, string> = { L: 'L', M: 'M', Q: 'Q', H: 'H' };
         const cell = Math.min(10, Math.max(1, mmToDots(q.moduleSizeMm ?? 0.5, dpi)));
-        L.push(`QRCODE ${x},${y},${eccMap[q.ecc ?? 'M'] ?? 'M'},${cell},A,${rot},"${esc(q.content)}"`);
+        L.push(`QRCODE ${qx},${qy},${eccMap[q.ecc ?? 'M'] ?? 'M'},${cell},A,${rot},"${esc(q.content)}"`);
         break;
       }
       case 'box': {
@@ -175,22 +176,22 @@ export function buildJob(
 }
 
 /**
- * 码制归一化 → TSPL 条码类型。
- * ⚠️ 不支持的码制**不再回落 '128'**（docs/05-api.md §8.3），改返回 undefined。
- * 调用方必须在返回 undefined 时出 warning，不能静默降级。
+ * 标准码制 → TSPL BARCODE 类型名。
+ * 别名归一化交给 canonSym（单一真源），本表只做「标准名 → TSPL 语法名」映射。
+ * ⚠️ 不支持的码制**不再回落 '128'**（docs/05-api.md §8.3），改返回 undefined，
+ *    由 generateTspl 的能力判定出 warning 并跳过。
  */
 function tsplSym(sym: string): string | undefined {
-  const raw = String(sym ?? '');
-  const upper = raw.toUpperCase().replace(/^CODE[-_]?/g, '');
+  const key = canonSym(sym);
   const map: Record<string, string> = {
-    '128': '128', 'GS1_128': '128', 'GS1-128': '128', 'CODE128': '128',
-    '39': '39', '93': '93', 'EAN13': 'EAN13', 'EAN8': 'EAN8',
-    'UPC': 'UPCA', 'UPCA': 'UPCA', 'UPC_A': 'UPCA', 'UPC_E': 'UPCE', 'UPCE': 'UPCE',
-    'ITF14': 'ITF14', 'ITF': 'ITF', '2OF5': 'ITF', 'INTERLEAVED2OF5': 'ITF',
-    'CODABAR': 'CODABAR', 'MSI': 'MSI', 'MSI10': 'MSI10', 'MSI11': 'MSI11',
+    CODE128: '128', GS1_128: '128',
+    CODE39: '39', CODE93: '93',
+    EAN13: 'EAN13', EAN8: 'EAN8',
+    UPC: 'UPCA', UPC_E: 'UPCE',
+    ITF14: 'ITF14', ITF: 'ITF',
+    CODABAR: 'CODABAR', MSI: 'MSI',
   };
-  // 先查去前缀后的大写（'128'/'39'/'93'），再查原始大写（CODE128/GS1_128/...），最后查原始（万一有人传 'MSI11' 原样）
-  return map[upper] ?? map[raw.toUpperCase()] ?? map[raw];
+  return map[key];
 }
 
 function esc(s: string): string { return s.replace(/"/g, '""'); }

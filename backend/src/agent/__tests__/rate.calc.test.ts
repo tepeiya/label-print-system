@@ -5,6 +5,9 @@ import assert from 'node:assert/strict';
 import {
   BATCH_MAX, DEFAULT_AGENT_RPM, RPM_MAX, RPM_MIN, WINDOW_MS,
   batchOverLimit, isLimited, rateLimitKey, rateLimitTtlMs, remaining, resolveRpm,
+  // B3 多维细分与响应头
+  makeOutcome, rateHeaders, resetSecOf, resolveRatePlan, retryAfterHeaders,
+  tightestOutcome, tokenRateLimitKey, toolRateLimitKey, toolRpmFor,
 } from '../rate.calc';
 
 const NOW = new Date('2026-11-05T08:00:30.000Z');
@@ -61,4 +64,83 @@ test('batchOverLimit: 单次批量 ≤500（copies 或 rows 超限都给中文�
 test('batchOverLimit: 自定义上限（低套餐收紧到 100 时生效）', () => {
   assert.equal(batchOverLimit(101, undefined, 100) !== null, true);
   assert.equal(batchOverLimit(100, undefined, 100), null);
+});
+
+// ========================= B3：多维细分 + 响应头 =========================
+
+test('B3 维度 key：agent key 保持 P5 原样，tool/token 各自独立且互不串桶', () => {
+  const bucket = Math.floor(NOW.getTime() / WINDOW_MS);
+  assert.equal(rateLimitKey(98, 7, NOW), `lf:agent:rl:98:7:${bucket}`, '验收 M 段直接查这个 key，不能改');
+  assert.equal(toolRateLimitKey(98, 7, 'print.submit_job', NOW), `lf:agent:rl:t:98:7:print.submit_job:${bucket}`);
+  assert.equal(tokenRateLimitKey(98, 321, NOW), `lf:agent:rl:k:98:321:${bucket}`);
+  assert.notEqual(toolRateLimitKey(98, 7, 'print.submit_job', NOW), toolRateLimitKey(98, 7, 'inventory.adjust', NOW));
+  assert.notEqual(toolRateLimitKey(98, 7, 'x', NOW), toolRateLimitKey(99, 7, 'x', NOW));
+  assert.notEqual(tokenRateLimitKey(98, 321, NOW), tokenRateLimitKey(98, 322, NOW));
+  assert.notEqual(toolRateLimitKey(98, 7, 'x', NOW), rateLimitKey(98, 7, NOW));
+  assert.ok(toolRateLimitKey(98, 7, 'bad tool/:*', NOW).includes('bad_tool___'), '危险字符白名单化');
+});
+
+test('B3 resolveRatePlan：旧配置 {"rpm":1} 完全兼容，tool/token 默认关闭', () => {
+  const p = resolveRatePlan({ rpm: 1 });
+  assert.equal(p.agent, 1);
+  assert.equal(p.tool, 0);
+  assert.equal(p.token, 0);
+  assert.deepEqual(p.perTool, {});
+  assert.equal(resolveRatePlan(null).agent, DEFAULT_AGENT_RPM);
+  assert.equal(resolveRatePlan({ rpm: 'abc' }).agent, DEFAULT_AGENT_RPM);
+});
+
+test('B3 resolveRatePlan：三维阈值 + per_tool 覆盖，脏值/越界被夹住', () => {
+  const p = resolveRatePlan({
+    rpm: 120, tool_rpm: 10, token_rpm: 30,
+    per_tool: { 'print.submit_job': 2, 'ai.generate': 0, 'bad': 'nope', 'huge': 9999 },
+  });
+  assert.equal(p.agent, 120);
+  assert.equal(p.tool, 10);
+  assert.equal(p.token, 30);
+  assert.equal(p.perTool['print.submit_job'], 2);
+  assert.equal(p.perTool['ai.generate'], undefined, '0/脏值不建覆盖');
+  assert.equal(p.perTool['bad'], undefined);
+  assert.equal(p.perTool['huge'], RPM_MAX);
+  // camelCase 别名同样生效（运营后台存法不统一时不会静默失效）
+  const p2 = resolveRatePlan({ toolRpm: 5, tokenRpm: 8, perTool: { 'x.y': 3 } });
+  assert.equal(p2.tool, 5);
+  assert.equal(p2.token, 8);
+  assert.equal(p2.perTool['x.y'], 3);
+});
+
+test('B3 toolRpmFor：精确覆盖优先于全局 tool_rpm，未配时回落', () => {
+  const p = resolveRatePlan({ tool_rpm: 10, per_tool: { 'print.submit_job': 2 } });
+  assert.equal(toolRpmFor(p, 'print.submit_job'), 2);
+  assert.equal(toolRpmFor(p, 'inventory.adjust'), 10);
+  assert.equal(toolRpmFor(resolveRatePlan({}), 'any.tool'), 0, '默认关闭，不能无预警收紧存量租户');
+});
+
+test('B3 makeOutcome / rateHeaders：标准头齐全，Reset 为下一分钟桶的 Unix 秒', () => {
+  const o = makeOutcome('tool', 10, 3, NOW);
+  assert.equal(o.remaining, 7);
+  assert.equal(o.scope, 'tool');
+  assert.equal(o.resetSec, Math.ceil(((Math.floor(NOW.getTime() / WINDOW_MS) + 1) * WINDOW_MS) / 1000));
+  assert.equal(resetSecOf(NOW), o.resetSec);
+  const h = rateHeaders(o);
+  assert.deepEqual(h, {
+    'X-RateLimit-Limit': '10',
+    'X-RateLimit-Remaining': '7',
+    'X-RateLimit-Reset': String(o.resetSec),
+    'X-RateLimit-Scope': 'tool',
+    'X-RateLimit-Window': '60',
+  });
+  assert.deepEqual(retryAfterHeaders(o, NOW), { 'Retry-After': String(Math.max(1, o.resetSec - Math.floor(NOW.getTime() / 1000))) });
+});
+
+test('B3 tightestOutcome：多头通过时响应头反映最紧的那一维', () => {
+  const agent = makeOutcome('agent', 60, 2, NOW);      // 剩余 96.7%
+  const tool = makeOutcome('tool', 5, 4, NOW);         // 剩余 20%
+  const token = makeOutcome('token', 30, 3, NOW);      // 剩余 90%
+  assert.equal(tightestOutcome([agent, tool, token]).scope, 'tool');
+  assert.equal(tightestOutcome([agent, token]).scope, 'token');
+  assert.equal(tightestOutcome([]).scope, 'agent');    // 空数组安全回退
+  const tie = makeOutcome('agent', 10, 9, NOW);        // 剩余 10%
+  const tie2 = makeOutcome('tool', 10, 9, NOW);        // 剩余 10%，取先出现的
+  assert.equal(tightestOutcome([tie, tie2]).scope, 'agent');
 });

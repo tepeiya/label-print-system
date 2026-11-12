@@ -99,14 +99,25 @@ export class IdempotencyConflictException extends BusinessException {
   }
 }
 
-/** Agent 限流（§11.7.7 护栏 5）：HTTP 429，Retry-After 由响应头给出 */
+/** Agent 限流（§11.7.7 护栏 5 + B3 多维细分）：HTTP 429，响应头由异常带出 */
 export class RateLimitedException extends BusinessException {
-  constructor(rpm: number, retryAfterSec: number) {
+  /** 由 AllExceptionsFilter 统一下发的响应头（X-RateLimit-* / Retry-After） */
+  readonly headers: Record<string, string>;
+
+  constructor(
+    rpm: number,
+    retryAfterSec: number,
+    extra: { scope?: string; headers?: Record<string, string> } = {},
+  ) {
     super(
       BizCode.RATE_LIMITED,
       `调用过于频繁（限流 ${rpm} 次/分钟），请 ${retryAfterSec} 秒后重试`,
-      { limit: rpm, window: 'minute', retry_after: retryAfterSec, action: 'retry_later' },
+      {
+        limit: rpm, window: 'minute', retry_after: retryAfterSec, action: 'retry_later',
+        ...(extra.scope ? { scope: extra.scope } : {}),
+      },
       429,
     );
+    this.headers = extra.headers ?? {};
   }
 }

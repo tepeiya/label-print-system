@@ -1,7 +1,8 @@
 import { Module, Injectable, Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { TypeOrmModule } from '@nestjs/typeorm';
+// 代理版 TypeOrmModule：forFeature 注入的 Repository 按 TenantCtx.dataSourceKey 路由
+import { TypeOrmModule } from '../common/tenant-typeorm.module';
 import { Response } from 'express';
 import { AuditLog } from '../entities/print.entity';
 import { TenantGuard } from '../common/tenant.guard';

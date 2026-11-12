@@ -16,6 +16,8 @@ import { RequirePermission } from '../common/permission.guard';
 import { generateZpl, mmToDots } from '../../core/zpl-generator';
 import { CreatePrintJobDto, PreviewRenderDto, PrintCommandsDto, RetryPrintDto } from './dto/print.dto';
 import { buildJob as buildTsplJob } from '../../core/tspl-generator';
+import { buildJob as buildEplJob } from '../../core/epl-generator';
+import { uiSymbologyList } from '../../core/symbology.capabilities';
 import { PrintEvents } from './events.event';
 import * as crypto from 'crypto';
 import { JWT_SECRET } from '../common/config';
@@ -90,7 +92,7 @@ export class PrintCommandsController {
     const rows: any[] = b.rows?.length ? b.rows : [{}];
     const copies = Math.max(1, Math.min(500, b.copies ?? 1));
     const dpi = b.dpi ?? tpl.page.dpi ?? 300;
-    const protocol: 'zpl' | 'tspl' = b.protocol === 'tspl' ? 'tspl' : 'zpl';
+    const protocol: 'zpl' | 'tspl' | 'epl' = b.protocol === 'tspl' ? 'tspl' : b.protocol === 'epl' ? 'epl' : 'zpl';
     const gapMm = b.gapMm ?? tpl.page.gapMm ?? 2;
     const offX = mmToDots(b.offsetXMm ?? 0, dpi);
     const offY = mmToDots(b.offsetYMm ?? 0, dpi);
@@ -114,6 +116,17 @@ export class PrintCommandsController {
         let out = zplOut.text.replace('^XA', `^XA^LH${offX},${offY}` + (density ? `~SD${density}` : '') + (speed ? `^PR${speed}` : ''));
         out = out.replace('^XZ', `^PQ${copies}^XZ`);
         frames.push(out);
+      } else if (protocol === 'epl') {
+        // P7.7：EPL2 通道。toTsplElements 产出的元素形状（xMm/yMm/barcode/...）
+        // 与 EplElement 兼容，直接复用；offset 通过元素起点平移在页头无法表达，
+        // 故 EPL 的 dx/dy 校准由打印机硬件设置处理，这里不注入（与 TSPL 一致）。
+        const eplOut = buildEplJob(this.render.toTsplElements(rendered) as any, dpi, {
+          widthMm: b.widthMm ?? tpl.page.widthMm,
+          heightMm: b.heightMm ?? tpl.page.heightMm,
+          gapMm, copies,
+        });
+        genWarnings.push(...eplOut.warnings);
+        frames.push(eplOut.buffer.toString('ascii'));
       } else {
         const tsplOut = buildTsplJob(this.render.toTsplElements(rendered), dpi, {
           widthMm: b.widthMm ?? tpl.page.widthMm,
@@ -141,18 +154,35 @@ export class PrintCommandsController {
   }
 }
 
+/**
+ * P7.5 码制能力查询 —— 前端下拉/属性面板从后端单一真源拉取「受限」标记。
+ * 这样 BARCODE_SYMS、生成器白名单、warnings 文案不再各写一份，前端只消费后端派生结果。
+ * 返回 { linear, 2d } 两个列表，每项含 printProtocols / degradeOn / previewOnly / badge。
+ */
+@Controller('print/symbologies')
+export class SymbologyController {
+  @Get()
+  list() {
+    return {
+      linear: uiSymbologyList('linear'),
+      '2d': uiSymbologyList('2d'),
+      protocols: ['zpl', 'tspl', 'epl', 'image'],
+    };
+  }
+}
+
 /** 指令导出能力提示（码制维度的提示已由生成器 warnings 精确产出，此处只保留字体维度） */
-function buildWarnings(protocol: 'zpl' | 'tspl', tpl: any): string[] {
+function buildWarnings(protocol: 'zpl' | 'tspl' | 'epl', tpl: any): string[] {
   const warnings: string[] = [];
-  if (protocol !== 'tspl') return warnings;
-  // TSPL 文本按 FONT001 输出，中文依赖打印机内置中文字库
+  // 只有位图字体通道（TSPL/EPL）才有中文字库依赖；ZPL ^CI28 是 UTF-8，不需提示
+  if (protocol === 'zpl') return warnings;
   const CJK = /[\u3400-\u9fff\uf900-\ufaff]/;
   const texts: string[] = [
     ...(tpl.elements ?? []).map((e: any) => e.text ?? e.rendered ?? e.barcode?.content ?? e.qrcode?.content ?? ''),
     ...(tpl.variables ?? []).map((v: any) => v.defaultValue ?? ''),
   ];
   if (texts.some((s) => CJK.test(String(s)))) {
-    warnings.push('TSPL 文本使用 FONT001，中文需打印机内置中文字库；无字库时请改用 ZPL(^CI28) 或图像通道');
+    warnings.push(`${protocol.toUpperCase()} 文本使用内置点阵字体，中文需打印机内置中文字库；无字库时请改用 ZPL(^CI28) 或图像通道`);
   }
   return warnings;
 }

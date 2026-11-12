@@ -1,6 +1,7 @@
 // AI 模板生成模块
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
+// 代理版 TypeOrmModule：forFeature 注入的 Repository 按 TenantCtx.dataSourceKey 路由
+import { TypeOrmModule } from '../common/tenant-typeorm.module';
 import { AiModelConfig, AiTemplateJob } from '../entities/ai-template.entity';
 import { Template } from '../entities/template.entity';
 import { AiQuota } from '../entities/ai-quota.entity';

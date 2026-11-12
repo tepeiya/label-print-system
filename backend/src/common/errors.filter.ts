@@ -36,6 +36,15 @@ export class AllExceptionsFilter implements ExceptionFilter {
     if (detail && typeof detail === 'object') {
       for (const [k, v] of Object.entries(detail)) if (!(k in body)) body[k] = v;
     }
+    // B3：异常自带的响应头（目前只有 RateLimitedException 的 X-RateLimit-* / Retry-After）。
+    // 放在这里而不是 Controller 里，是因为 429 在 Controller 拿到结果之前就抛出了。
+    // 用通用字段而非 instanceof 判定，后续别的异常要带头不用再改过滤器。
+    const headers = (exception as any)?.headers;
+    if (headers && typeof headers === 'object') {
+      for (const [k, v] of Object.entries(headers)) {
+        if (typeof v === 'string' || typeof v === 'number') res.setHeader(k, String(v));
+      }
+    }
     res.status(status).json(body);
   }
 }

@@ -171,7 +171,7 @@
       <FGroup v-else-if="el!.type === 'barcode'" title="一维码内容">
         <FRow>
           <FLabel text="码制" />
-          <FSelect :model-value="bc!.sym ?? 'CODE128'" :options="BARCODE_SYMS" @update:model-value="setBarcode({ sym: $event })" />
+          <FSelect :model-value="bc!.sym ?? 'CODE128'" :options="BARCODE_SYM_OPTIONS" @update:model-value="setBarcode({ sym: $event })" />
         </FRow>
         <FField label="内容">
           <FText :model-value="bc!.content ?? ''" placeholder="支持 {{变量}}" @update:model-value="setBarcode({ content: $event })" />
@@ -213,7 +213,7 @@
       <FGroup v-else-if="el!.type === 'qrcode'" title="二维码内容">
         <FRow>
           <FLabel text="码制" />
-          <FSelect :model-value="qr!.sym ?? 'QRCODE'" :options="QRCODE_SYMS" @update:model-value="setQr({ sym: $event })" />
+          <FSelect :model-value="qr!.sym ?? 'QRCODE'" :options="QRCODE_SYM_OPTIONS" @update:model-value="setQr({ sym: $event })" />
         </FRow>
         <FField label="内容">
           <FText :model-value="qr!.content ?? ''" placeholder="支持 {{变量}}" @update:model-value="setQr({ content: $event })" />
@@ -325,7 +325,7 @@
 // =============================================================================
 import { computed } from 'vue';
 import { useDesignerStore } from '../store';
-import { BARCODE_SYMS, QRCODE_SYMS, SYSVAR_KEYS, TYPE_LABELS } from '../model';
+import { BARCODE_SYM_OPTIONS, QRCODE_SYM_OPTIONS, SYSVAR_KEYS, TYPE_LABELS } from '../model';
 import {
   FORMULA_FUNCTIONS, buildContext, evalFormula, interpolate, sampleRowOf,
 } from '../engine/context';

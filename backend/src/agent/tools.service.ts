@@ -43,6 +43,8 @@ import {
   QuotaExceededException, RateLimitedException,
 } from '../common/business.errors';
 import { argsHash } from './agent.calc';
+// P6 上线前加固 B2.6：护栏 7 工具返回字段脱敏（出域前统一裁剪敏感业务字段）
+import { redact, redactionWarning, shouldRedact } from './redaction.calc';
 
 export interface ToolResult {
   summary: string;
@@ -85,6 +87,23 @@ export class ToolsService {
     private idem: IdempotencyService,
     private rate: AgentRateService,
   ) {}
+
+  /**
+   * 护栏 7（B2.6）：所有出域 ToolResult 统一经过这里做字段级脱敏。
+   * 存储/审计保留原始结果（幂等重放与合规追溯需要原值），只在**返回给 LLM 时**裁剪。
+   * 脱敏命中时在 warnings 里显式标注，让模型与审计都知道数据被裁剪过。
+   */
+  private egress(result: ToolResult, toolName: string): ToolResult {
+    if (!shouldRedact(toolName)) return result;
+    const r = redact(result.data);
+    if (!r.redacted) return result;
+    const w = redactionWarning(r);
+    return {
+      ...result,
+      data: r.data,
+      warnings: w ? [...(result.warnings ?? []), w] : result.warnings,
+    };
+  }
 
   /** GET /agent/v1/tools：当前 token 可见的工具（MCP 启动注册就靠它） */
   async listTools(ctx: AgentCtx) {
@@ -138,7 +157,7 @@ export class ToolsService {
     }
     // 5) 限流（§11.7.7 护栏 5：默认 60 次/分，可按租户 rollout.rpm 覆盖）
     try {
-      await this.rate.hit(ctx.tenantId, ctx.clientId);
+      await this.rate.hit(ctx.tenantId, ctx.clientId, { toolName: tool.name, tokenId: ctx.tokenId });
     } catch (e) {
       if (e instanceof RateLimitedException) await this.auditCall(ctx, action, args, 'denied_rate');
       throw e;
@@ -168,7 +187,9 @@ export class ToolsService {
         const replayed = this.replay(existing.result as ToolResult, idemKey);
         await this.meter(ctx, tool, true);
         await this.auditCall(ctx, action, args, 'idempotent_replay', { idemKey });
-        return replayed;
+        // 幂等记录里存的是原始结果（审计/重放一致性需要），出域前统一脱敏；
+        // 与下方 claim 分支、need_approval 分支、正常返回共用同一个 egress 出口，避免旁路泄露。
+        return this.egress(replayed, tool.name);
       }
     }
     // 8) 审批（§11.7.6：高危 + 非 dry_run 才需要；dry_run 无副作用，免审批）
@@ -179,7 +200,8 @@ export class ToolsService {
         const row = await this.approvals.request(ctx, tool.name, args, hash);
         await this.meter(ctx, tool, true);
         await this.auditCall(ctx, action, args, 'need_approval', { approvalId: Number(row.id) });
-        return this.needApprovalResult(tool, row, args);
+        // 审批参数预览也可能含敏感字段（客户名/地址/单价），出域前同样脱敏
+        return this.egress(this.needApprovalResult(tool, row, args), tool.name);
       }
       const approvalId = Number(rawId);
       if (!Number.isFinite(approvalId) || approvalId <= 0) {
@@ -210,7 +232,8 @@ export class ToolsService {
         const replayed = this.replay(claim.row.result as ToolResult, idemKey);
         await this.meter(ctx, tool, true);
         await this.auditCall(ctx, action, args, 'idempotent_replay', { idemKey });
-        return replayed;
+        // 幂等记录里存的是原始结果（审计/重放一致性需要），出域前统一脱敏
+        return this.egress(replayed, tool.name);
       }
     }
     // 10) 执行 —— 业务失败也计量（§11.7.7「每次 MCP 工具调用」），成功/失败都写审计
@@ -233,7 +256,10 @@ export class ToolsService {
     await this.auditCall(ctx, action, args, 'ok', {
       durationMs: Date.now() - started, approvalId, idemKey: idemKey || undefined,
     });
-    return approvalId ? { ...result, data: { ...result.data, approval_id: approvalId, approval_consumed: true } } : result;
+    const final = approvalId
+      ? { ...result, data: { ...result.data, approval_id: approvalId, approval_consumed: true } }
+      : result;
+    return this.egress(final, tool.name);
   }
 
   /** 幂等重放：结果原样回，额外标记 replay（模型据此知道「上次已生效，别再重试」） */
@@ -366,7 +392,7 @@ export class ToolsService {
       }
     }
     try {
-      await this.rate.hit(ctx.tenantId, ctx.clientId);
+      await this.rate.hit(ctx.tenantId, ctx.clientId, { toolName: tool.name, tokenId: ctx.tokenId });
     } catch (e) {
       if (e instanceof RateLimitedException) await this.auditCall(ctx, this.toolAction(tool), args, 'denied_rate');
       throw e;
@@ -535,7 +561,7 @@ export class ToolsService {
   }
 
   private async execTemplatesGet(ctx: AgentCtx, args: Record<string, any>): Promise<ToolResult> {
-    let tpl: Template | null = null;
+    let tpl: Template | null;
     if (args.id !== undefined && args.id !== null && String(args.id) !== '') {
       tpl = await this.templates.findOne({ where: { id: Number(args.id), tenantId: ctx.tenantId } });
     } else if (args.name) {

@@ -1,6 +1,7 @@
 // SaaS P0 模块：注册 10 个 Repository + 5 个 Service + 2 个 Controller
 import { Module as NestModule } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
+// 代理版 TypeOrmModule：forFeature 注入的 Repository 按 TenantCtx.dataSourceKey 路由
+import { TypeOrmModule } from '../common/tenant-typeorm.module';
 import {
   ModuleRecord, Plan, PlanModule, Subscription,
   TenantModule, Permission, RolePermission,
@@ -21,6 +22,7 @@ import { PlatformAdminService } from './platform-admin/platform-admin.service';
 import { PlatformAuditService } from './platform-admin/platform-audit.service';
 import { TenantDataService } from './platform-admin/tenant-data.service';
 import { DedicatedDataSourceService } from './platform-admin/dedicated.service';
+import { DedicatedProvisionService } from './platform-admin/dedicated.provision.service';
 import { TenantDomain } from './branding/tenant-domain.entity';
 import { BrandingService } from './branding/branding.service';
 import { BrandingController } from './branding/branding.controller';
@@ -43,13 +45,14 @@ import { BillingModule } from '../billing/billing.module';
     ModulesService, SubscriptionService, PermissionsService,
     TenantConfigService, ProvisionService, TenantDataSourceManager,
     PlatformAdminService, PlatformAuditService, TenantDataService, BrandingService,
-    DedicatedDataSourceService,
+    DedicatedDataSourceService, DedicatedProvisionService,
   ],
   controllers: [SubscriptionController, PlatformController, PlatformAdminController, PlatformAuthController, BrandingController],
   // AuthModule（/auth/me）与全局拦截器都要用，必须导出
   exports: [
     ModulesService, SubscriptionService, PermissionsService,
     TenantConfigService, ProvisionService, TenantDataSourceManager, BrandingService,
+    DedicatedProvisionService, DedicatedDataSourceService,
   ],
 })
 export class SaasModule {}

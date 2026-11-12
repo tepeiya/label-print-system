@@ -14,6 +14,8 @@ import { TenantCtx } from './tenant.context';
 import {
   REQUIRED_TABLES, dsnTarget, isPostgresUrl, parseDedicatedDsns, schemaVerdict, validateKey,
 } from '../saas/platform-admin/dedicated.calc';
+// P6.2 阶段 B 运维面：每租户池上限 / SSL / 健康检查判定（纯函数）
+import { dedicatedPoolOptions, healthVerdict, HealthVerdict } from '../saas/platform-admin/dedicated.ops.calc';
 
 /** 能执行带参 SQL 的对象即可（QueryRunner 和 EntityManager 都有 query()） */
 export type SqlRunner = Pick<QueryRunner, 'query'> | EntityManager;
@@ -104,6 +106,38 @@ export class TenantDataSourceManager implements OnModuleInit {
   }
 
   /**
+   * B1.4：单个独立库的健康检查（探活 + 表结构自检 + 延迟）。
+   * 判定用纯函数 healthVerdict，连接池异常一律 unhealthy，不把异常抛给平台接口。
+   */
+  async healthCheck(key: string): Promise<HealthVerdict & { key: string }> {
+    const ds = this.dedicated.get(key);
+    if (!ds?.isInitialized) {
+      return { key, level: 'unhealthy', ok: false, message: '数据源未注册或连接已断开' };
+    }
+    const started = Date.now();
+    try {
+      await ds.query('select 1');
+      const inspect = await this.inspectSchema(ds);
+      return {
+        key,
+        ...healthVerdict({
+          reachable: true,
+          latencyMs: Date.now() - started,
+          tableCount: inspect.tableCount,
+          missing: inspect.missing,
+        }),
+      };
+    } catch (e: any) {
+      return { key, level: 'unhealthy', ok: false, message: `探活失败：${e?.message ?? e}` };
+    }
+  }
+
+  /** 全部已注册独立库的健康快照（平台后台轮询用） */
+  async healthAll(): Promise<(HealthVerdict & { key: string })[]> {
+    return Promise.all(this.dedicatedKeys().map((k) => this.healthCheck(k)));
+  }
+
+  /**
    * 按 DSN 注册（env 启动与平台接口共用）。
    * 先连、再自检库结构、最后才落进注册表 —— 半初始化的库不许进来，
    * 否则租户会被导出一个空包还显示成功。
@@ -146,6 +180,8 @@ export class TenantDataSourceManager implements OnModuleInit {
 
   /** 建池（不注册）：拆出来是为了「连得上但结构不合格」时能干净地 destroy */
   private async buildDedicated(key: string, url: string): Promise<DataSource> {
+    // B1.4：池上限/超时/SSL 支持 per-key 配置（dedicated.ops.calc 纯函数，默认仍是全局 4）
+    const pool = dedicatedPoolOptions(key);
     const ds = new DataSource({
       type: 'postgres',
       url,
@@ -153,8 +189,12 @@ export class TenantDataSourceManager implements OnModuleInit {
       synchronize: false,
       migrationsRun: false,
       logging: false,
-      connectTimeoutMS: 5000,
-      extra: { max: +(process.env.DB_DEDICATED_POOL || 4), idleTimeoutMillis: 30_000 },
+      connectTimeoutMS: pool.connectTimeoutMS,
+      extra: {
+        max: pool.max,
+        idleTimeoutMillis: pool.idleTimeoutMillis,
+        ...(pool.ssl ? { ssl: pool.ssl } : {}),
+      },
     });
     try {
       await ds.initialize();

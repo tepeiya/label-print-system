@@ -11,7 +11,7 @@ import { ModuleNotSubscribedException, PermissionDeniedException } from '../busi
 
 /**  captured 里拿到最终写出的 status + body */
 function runFilter(exception: unknown) {
-  let captured: { status?: number; body?: any } = {};
+  const captured: { status?: number; body?: any } = {};
   const response = {
     status: (s: number) => {
       captured.status = s;

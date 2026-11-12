@@ -5,6 +5,7 @@ import { PlatformJwtGuard } from './platform-jwt.guard';
 import { PlatformAdminService } from './platform-admin.service';
 import { TenantDataService } from './tenant-data.service';
 import { DedicatedDataSourceService } from './dedicated.service';
+import { DedicatedProvisionService } from './dedicated.provision.service';
 import { PlatformAuditService } from './platform-audit.service';
 import { BrandingService } from '../branding/branding.service';
 import { AddModuleDto, CreateInvoiceDto, CreatePaymentDto, FeatureFlagDto, IssueInvoiceDto, PlatformLoginDto, ProvisionTenantDto, UpsertPlanDto, UpsertQuotaDto } from '../dto/platform.dto';
@@ -29,6 +30,7 @@ export class PlatformAdminController {
     private modSvc: ModulesService,
     private dataSvc: TenantDataService,
     private dsSvc: DedicatedDataSourceService,
+    private dedicatedProvision: DedicatedProvisionService,
     private brandingSvc: BrandingService,
     private platformAudit: PlatformAuditService,
   ) {}
@@ -218,6 +220,47 @@ export class PlatformAdminController {
     return this.dataSvc.purgeTenant(+id, req.platformUser, body ?? {});
   }
 
+  // ---------- P6.2 阶段 B：独立库开通编排 ----------
+
+  /**
+   * 一条命令开通独立库租户：先在共享库建租户，再建库 → DDL → 搬数据 → 行数校验 → 切 key。
+   * ⚠️ dedicatedDsn 只在进程内存使用，绝不写入任何表或审计（审计只记脱敏形式）。
+   */
+  @Post('tenants/dedicated')
+  provisionDedicated(@Body() body: any, @Request() req: any) {
+    if (!body?.dataSourceKey || !body?.dedicatedDsn) {
+      throw new BadRequestException('dataSourceKey 与 dedicatedDsn 必填');
+    }
+    return this.dedicatedProvision.provisionNew(body, req.platformUser);
+  }
+
+  /** 编排计划预览（不执行、不接触 DSN） */
+  @Post('tenants/:id/dedicated/plan')
+  dedicatedPlan(@Param('id') id: string, @Body() body: { key?: string }) {
+    if (!/^\d+$/.test(String(id))) throw new BadRequestException('tenant id 必须是数字');
+    if (!body?.key) throw new BadRequestException('key 必填');
+    return this.dedicatedProvision.plan(body.key, +id);
+  }
+
+  /** 把已有共享库租户迁移到独立库（失败自动回滚，租户仍留在共享库） */
+  @Post('tenants/:id/dedicated/provision')
+  migrateToDedicated(
+    @Param('id') id: string,
+    @Body() body: { key?: string; dsn?: string; adminDsn?: string; createDatabase?: boolean },
+    @Request() req: any,
+  ) {
+    if (!/^\d+$/.test(String(id))) throw new BadRequestException('tenant id 必须是数字');
+    if (!body?.key || !body?.dsn) throw new BadRequestException('key 与 dsn 必填（dsn 不落库）');
+    return this.dedicatedProvision.migrate({
+      tenantId: +id,
+      dataSourceKey: body.key,
+      dsn: body.dsn,
+      adminDsn: body.adminDsn,
+      createDatabase: body.createDatabase,
+      actor: req.platformUser,
+    });
+  }
+
   // ---------- 独立库数据源（P6.2 D2）：注册 / 诊断 / 注销 ----------
 
   /** 已注册独立库（脱敏）+ env 错误 + 被引用但未注册的 key（这类租户查询会 503） */
@@ -232,6 +275,19 @@ export class PlatformAdminController {
   registerDataSource(@Body() body: { key?: string; url?: string }, @Request() req: any) {
     if (!body?.key || !body?.url) throw new BadRequestException('key 与 url 必填');
     return this.dsSvc.register(body.key, body.url, req.platformUser);
+  }
+
+  /** P6.2 阶段 B：所有独立库的健康快照（探活 + 表结构 + 延迟） */
+  @Get('datasources/health')
+  dataSourcesHealth() { return this.dsSvc.health(); }
+
+  /**
+   * P6.2 阶段 B 退库回收：注销「无活跃租户引用」的连接池（不 DROP 物理库）。
+   * 与 DELETE 的区别：DELETE 要求先手工迁走租户，reclaim 面向「租户已硬删」的孤儿库。
+   */
+  @Post('datasources/:key/reclaim')
+  reclaimDataSource(@Param('key') key: string, @Request() req: any) {
+    return this.dsSvc.reclaim(key, req.platformUser);
   }
 
   /** 注销；仍有租户引用该 key 时 400（先迁走再注销，避免线上 503） */

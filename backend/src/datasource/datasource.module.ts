@@ -3,7 +3,8 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import * as XLSX from 'xlsx';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { TypeOrmModule } from '@nestjs/typeorm';
+// 代理版 TypeOrmModule：forFeature 注入的 Repository 按 TenantCtx.dataSourceKey 路由
+import { TypeOrmModule } from '../common/tenant-typeorm.module';
 import { DataSource as DS, DataRow } from '../entities/print.entity';
 import { TenantGuard } from '../common/tenant.guard';
 import { Roles, RoleName } from '../common/roles.guard';

@@ -56,7 +56,7 @@ export class PreviewRenderDto {
   copies?: number;
 }
 
-/** /print/commands 指令导出（ZPL / TSPL） */
+/** /print/commands 指令导出（ZPL / TSPL / EPL）——P7.7 新增 EPL 通道 */
 export class PrintCommandsDto {
   @IsObject({ message: '缺少 templateContent' })
   templateContent!: any;
@@ -70,8 +70,8 @@ export class PrintCommandsDto {
   copies?: number;
 
   @IsOptional()
-  @IsIn(['zpl', 'tspl'])
-  protocol?: 'zpl' | 'tspl';
+  @IsIn(['zpl', 'tspl', 'epl'])
+  protocol?: 'zpl' | 'tspl' | 'epl';
 
   @IsOptional()
   @IsNumber()

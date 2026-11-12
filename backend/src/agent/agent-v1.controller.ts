@@ -13,6 +13,9 @@ import { AgentTokenGuard } from './agent-token.guard';
 import { AgentCtx } from './agent.service';
 import { ToolsService } from './tools.service';
 import { PromptsService } from './prompts.service';
+// B3：限流响应头（成功响应从请求级上下文取最紧维度的 outcome 生成）
+import { rateHeaders } from './rate.calc';
+import { currentRateOutcome } from './rate.context';
 
 @Controller('agent/v1')
 @Public()
@@ -45,6 +48,12 @@ export class AgentV1Controller {
     @Res({ passthrough: true }) res: Response,
   ) {
     const result = await this.tools.call(req.agentCtx, tool, args ?? {});
+    // B3：成功/202 也下发 X-RateLimit-*，让客户端在触发 429 之前就能主动退避。
+    // 429 由 AllExceptionsFilter 从异常自带 headers 下发（异常在拿到 result 前就抛出）。
+    const outcome = currentRateOutcome();
+    if (outcome) {
+      for (const [k, v] of Object.entries(rateHeaders(outcome))) res.setHeader(k, v);
+    }
     if (result?.data?.need_approval === true) res.status(202);
     return result;
   }

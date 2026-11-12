@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
+// 代理版 TypeOrmModule：forFeature 注入的 Repository 按 TenantCtx.dataSourceKey 路由
+import { TypeOrmModule } from '../common/tenant-typeorm.module';
 import { Template, TemplateVersion } from '../entities/template.entity';
 import { TemplateService } from './template.service';
 import { TemplateController } from './template.controller';

@@ -13,6 +13,8 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { TenantDataSourceManager } from '../../common/tenant-data-source.manager';
 import { PlatformAuditService } from './platform-audit.service';
 import { dsnTarget, isPostgresUrl, maskDsn, validateKey } from './dedicated.calc';
+// P6.2 阶段 B：退库回收巡检（纯函数）
+import { canReclaimAfterPurge, reclaimScan } from './dedicated.ops.calc';
 
 interface KeyRef { key: string; count: number; codes: string[] }
 
@@ -34,6 +36,15 @@ export class DedicatedDataSourceService {
     const byKey = new Map(refs.map((r) => [r.key, r]));
     const registered = this.tdsm.describeDedicated();
 
+    // B1.3 退库回收巡检：已硬删的租户行已从 tenants 表消失，仍被引用的 key 不算孤儿。
+    const activeRows: any[] = await pool.query(
+      `select code, data_source_key from public.tenants where data_source_key is not null`,
+    );
+    const scan = reclaimScan(
+      registered.map((d) => ({ key: d.key, source: d.source })),
+      activeRows.map((r) => ({ code: String(r.code), dataSourceKey: r.data_source_key })),
+    );
+
     return {
       rlsEnabled: this.tdsm.rlsEnabled,
       envErrors: this.tdsm.envRegisterErrors(),
@@ -46,6 +57,44 @@ export class DedicatedDataSourceService {
       missing: refs
         .filter((r) => !registered.some((d) => d.key === r.key))
         .map((r) => ({ ...r, hint: '配 DB_DEDICATED_DSNS 或调 POST /platform/datasources 注册' })),
+      /** 「库还在、租户已删」：可调 POST /platform/datasources/:key/reclaim 回收连接池 */
+      reclaimable: scan.orphanKeys,
+      unregisteredRefs: scan.unregisteredRefs,
+    };
+  }
+
+  /** B1.4：所有独立库的健康快照（探活 + 表结构 + 延迟） */
+  async health() {
+    return { items: await this.tdsm.healthAll() };
+  }
+
+  /**
+   * B1.3 退库回收：注销**无活跃租户引用**的连接池。
+   * 只回收进程内连接池，**绝不 DROP DATABASE** —— 物理库可能还有逻辑备份价值，
+   * 删库是不可逆动作，必须运维人工确认（编排器同样不自动删库）。
+   */
+  async reclaim(key: string, actor: { id: number; username?: string }) {
+    const k = String(key ?? '').trim();
+    const chk = validateKey(k);
+    if (!chk.ok) throw new BadRequestException(chk.reason);
+    const pool = this.tdsm.get({ dataSourceKey: 'default' });
+    const all: any[] = await pool.query(`select code, data_source_key from public.tenants`);
+    const refs = all.map((r) => ({ code: String(r.code), dataSourceKey: r.data_source_key }));
+    // 判定走纯函数（可单测），SQL 只负责取数，避免两处口径漂移
+    if (!canReclaimAfterPurge(k, refs)) {
+      const codes = refs.filter((r) => String(r.dataSourceKey ?? '') === k).map((r) => r.code);
+      throw new BadRequestException(
+        `数据源 "${k}" 仍被 ${codes.length} 家租户引用（${codes.join('、')}），不可回收`,
+      );
+    }
+    const info = this.tdsm.describeDedicated().find((d) => d.key === k);
+    if (!info) throw new NotFoundException(`数据源 "${k}" 未注册，无需回收`);
+    await this.tdsm.unregisterDedicated(k);
+    await this.audit.write(actor, 'platform.datasource.reclaim',
+      { key: k, target: { host: info.host, port: info.port, database: info.database, user: info.user } }, 'data_source');
+    return {
+      key: k, reclaimed: true,
+      note: '进程内连接池已注销；物理库未删除，需运维确认后再决定是否 DROP DATABASE',
     };
   }
 

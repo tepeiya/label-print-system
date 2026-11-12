@@ -10,6 +10,21 @@
 > Playwright 18 项 E2E 全绿。
 > **接手先读 §10.1.5「交付状态总表」：已完成 15 项、未完成按 🔴/🟡/⚪ 分级列全。**）
 >
+> ## 🔄 2026-11-13 本轮增量（隐性重点补齐，详见新增 §10.27）
+>
+> 按「未完成的隐性重点」逐项收口，新增/改动均在 `backend/`，**前端本轮未改**：
+> - **B2.2 配置 fail-fast**：`common/config.guard.ts` 接入 `main.ts` bootstrap，生产带 dev 密钥/弱口令拒绝启动；
+> - **B2.6 护栏 7 脱敏**：`agent/redaction.calc.ts` + `ToolsService.egress()`，**四个出域返回点全部覆盖**（补上了此前漏掉的幂等重放分支）；
+> - **B3 限流细分**：agent/tool/token 三维 + `X-RateLimit-*` / `Retry-After` 响应头，后两维默认关闭（不无预警收紧存量租户）；
+> - **B2.4 定时任务 + B2.5 通知基建**：`jobs/`（BullMQ `maintenance` 队列三个 repeatable 任务）+ `notify/`（站内信 + 可扩展通道）+ `scripts/saas_p7_notifications.sql`；
+> - **B1 P6.2 阶段 B**：`common/tenant-routing.*` 全局 Repository/事务代理（16 个模块接入）、`TenantContextInterceptor` 读真实 `data_source_key`、
+>   `dedicated.orchestration.calc.ts` 状态机 + `dedicated.provision.service.ts` 开通编排、`dedicated.ops.calc.ts` 池/SSL/健康检查 + 退库回收巡检。
+>
+> **实跑基线**：`npm run typecheck` 0 error、`npm test` **297 条全绿**（290 pass / 7 skip / 0 fail）、
+> `tsc -p tsconfig.json` 全量编译通过、Nest DI 图构建通过（已走到 TypeOrmModule 连接阶段，无依赖解析错误）。
+> ⚠️ **沙盒无 PostgreSQL / Redis 实例**，因此「独立库真连库验收」「定时任务真实触发」「站内信真实落库」**未实跑**，
+> 只能确认纯逻辑与 DI；不得据此对外宣称这些链路已验收，见 §10.27.4。
+>
 > ⚠️ **2026-11-05 历史瘦身**：`.pnpm-store`（232 MB pnpm 包缓存，被 `95b4970` 误提交）已从
 > `feat/dev-base` 的**全部历史**中移除，`.git` 从 54 MB 降到 1.4 MB。
 > 后果：`95b4970` 及其之后所有 commit 的哈希都变了（P0/P1 那批提交现在是新哈希），
@@ -90,10 +105,11 @@ curl -s http://localhost:3200/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 ### 10.1.5 交付状态总表（2026-11-08 复核更新，交接以本节为准）
 
 > 结论先说：**P0–P5 六个阶段已完整交付；P6 的五个子项里，P6.1 / P6.3 / P6.4 / P6.5 四项完整**。
-> **P6.2 独立库只交付了阶段 A**（注册 + 平台侧按库导出/删除），**阶段 B（开通编排 / 业务读写接管 / 退库回收）未做**——
-> 这是目前唯一挡在「私有化独立库」对外承诺前面的东西，清单见 B1。
+> **2026-11-13 更新：P6.2 阶段 B 的代码已全部落地**（业务读写路由 / 开通编排 / 退库巡检 / 运维面，见 §10.27），
+> B2.2 / B2.4 / B2.5 / B2.6 / B3 也同步收口。**但阶段 B 缺少真连库验收**（沙盒只有一套 PG、无 Redis），
+> 所以对外承诺口径仍是「独立库能力已实现、待真连库验收」，不是「独立库已交付」。清单见 B1 与 §10.27.4。
 > 下面「未完成」按「会挡住什么」排序，不按工作量排序；标 🔴 的会挡住对外承诺，标 🟡 的是上线前必须处理，
-> 标 ⚪ 的是功能缺口（不影响已交付主线）。
+> 标 ⚪ 的是功能缺口（不影响已交付主线）。本轮之后剩余项以 §10.27.4 的「待验收 / 未做」表为准。
 
 > **⚠️ 2026-11-08 最新优先级调整**：SaaS/Agent 主线（P0–P6）已基本闭环，下一轮开发回到**条码设计与打印核心能力**——
 > 这是产品的"命根子"，目前与 BarTender / ZebraDesigner / NiceLabel 等专业系统差距显著，详见后续待补 §10.7.3。
@@ -119,6 +135,10 @@ curl -s http://localhost:3200/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 | 13 | **P6.5 Prompt 库（D8）** | 系统默认在代码、租户覆盖/自定义、`/agent-prompts` CRUD+预览、MCP 动态下发、Console 页面 | `agent/prompt.*`、`scripts/saas_p6_prompts.sql`、`views/PromptLibrary.vue` | 验收 Q 段 18 项 + 单测 8 条 |
 | 14 | **设计器 Vue 化** | render/interactions/store 三件套搬进 Console：12 类元素 WYSIWYG、手势（拖动/八向缩放/旋转/框选/平移/吸附）、标尺参考线、四页签检查器、撤销重做、快捷键、模板库与版本弹窗、打印预览；iframe 已删除 | `apps/console/src/views/designer/`、`views/Designer.vue` | Playwright 18 项 E2E 全绿（0 JS 错误）+ `pnpm build`/`lint` 0 问题，见 §10.7.2 |
 | 15 | **质量基线** | 单测 217、验收 267、RLS 冒烟 22、lint 0 error、console 构建、MCP 双 selftest | 命令见 §10.1.4 / §10.15.6 | 2026-11-06 全绿 |
+| 16 | **WP1 码制单一真源** | `core/symbology.capabilities.ts` + EPL 生成器、ZPL/TSPL 对齐、Console 属性面板同步 | `backend/core/`、`apps/console/src/views/designer/` | 单测 +19（P7 码制测试） |
+| 17 | **上线前加固（B2.2 / B2.6 / B3）** | 启动期配置强校验、Agent 出域字段脱敏（四个返回点全覆盖）、三维限流 + `X-RateLimit-*` 响应头 | `common/config.guard.ts`、`agent/redaction.calc.ts`、`agent/rate.calc.ts`、`agent/agent-rate.service.ts` | 单测 +25 / typecheck 0 |
+| 18 | **定时任务 + 通知基建（B2.4 / B2.5）** | `maintenance` 队列三个 repeatable 任务、站内信表/实体/通道接口/API、调度计划纯函数 | `jobs/`、`notify/`、`scripts/saas_p7_notifications.sql` | 单测 +9 / 编译通过（真触发待验收） |
+| 19 | **P6.2 阶段 B（B1）** | 全局 Repository/事务租户路由（16 模块）、拦截器读真实 key、开通编排状态机与执行器、退库巡检、per-key 池/SSL/健康检查 | `common/tenant-routing.*`、`saas/platform-admin/dedicated.*.calc.ts`、`dedicated.provision.service.ts` | 单测 +21 / DI 图构建通过（真连库待验收，见 §10.27.4） |
 
 #### B. 未完成清单（按「会挡住什么」排序）
 
@@ -132,20 +152,31 @@ curl -s http://localhost:3200/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 | 4 | 运维面 | 只有全局 `DB_DEDICATED_POOL`（默认 4） | 每租户池上限、SSL 参数、DSN 轮换、健康检查 | `tenant-data-source.manager.ts` |
 | 5 | 备份 | 只有逻辑 JSON gzip，不是 PITR；独立库物理备份没有 | 独立库物理备份/恢复方案，或明确写入合同「只保证逻辑导出」 | 运维文档 |
 
+> **2026-11-13 阶段 B 落地说明（逐项对照上表，详细见 §10.27）**
+> 1️⃣ 业务读写接管：`common/tenant-routing.ts` 的动态 Repository 代理 + `tenant-typeorm.module.ts`（16 个模块统一改 import 一行，业务 Service 零改动）；
+> `TenantContextInterceptor` 从目录库读真实 `data_source_key`（此前硬编码 `'default'`，是路由闭环的关键缺口）；事务走 `TENANT_DATASOURCE` 代理。
+> 2️⃣ 开通编排：`dedicated.orchestration.calc.ts` 状态机（`switch_key` 仅在 `verify_counts` 通过后可达）+ `dedicated.provision.service.ts`（建库 → DDL → 搬数据 → 行数校验 → 注册 → 切 key → 逆序回滚），
+> 平台端点 `POST /platform/tenants/dedicated`（一条命令开通）与 `POST /platform/tenants/:id/dedicated/plan|provision`。**失败时租户仍留在共享库，天然回滚；绝不自动 DROP DATABASE。**
+> 3️⃣ 退库回收：`GET /platform/datasources` 新增 `reclaimable`（库还在、租户已删）、`unregisteredRefs`；`POST /platform/datasources/:key/reclaim` 注销孤儿连接池（不删物理库）。
+> 4️⃣ 运维面：`dedicated.ops.calc.ts` 的 per-key 池上限 / 超时 / SSL（严格校验证书）已接入 `TenantDataSourceManager.buildDedicated`；`GET /platform/datasources/health` 出健康快照。
+> 5️⃣ 备份：**仍未做**（独立库物理备份 / PITR 依旧缺，需运维文档明确「只保证逻辑导出」）。
+>
+> ⚠️ 上述 1–4 项的**代码与纯逻辑已验证，真连库验收未做**（沙盒无第二套 PG / 无 Redis）。因此本表 🔴 状态从「未做」改为「已实现、待真连库验收」，**不是「已交付」**。
+
 **🟡 B2. 上线前必须处理（不挡开发，但挡上线）**
 
 1. **主链路仍是 owner 连库**：RLS 目前只是第二道防线，`labelflow` 是 owner/超管会绕过策略。
    切到 `labelflow_app` 的条件与顺序见 §10.22.4；切的时候必须同时把「按域名公开解析租户」改走平台角色连接，否则 fail-closed 会让白标静默失效。
-2. **弱口令/密钥**：`labelflow_app` / `labelflow_platform` 的口令是沙盒 dev 值，`JWT_SECRET` / `SQL_SECRET_KEY` / `DB_*` 必须走密钥管理；`BRANDING_DEV_VERIFY=1` 只能存在于 dev。
+2. ~~**弱口令/密钥**~~ → **2026-11-13 已收口**：`common/config.guard.ts` 在 `main.ts` bootstrap 最前面做 fail-fast（生产带 dev 密钥/弱口令拒绝启动），dev/test 只 warn；密钥明文绝不进日志/错误。**仍需运维侧**用密钥管理注入真实值（代码不再允许默认值上生产）。
 3. **白标真实 DNS 未验证**：TXT 比对只有单测 + 平台强校验通道覆盖；上线前拿真域名走一遍并关掉逃生口，ACME 证书自动化未做。
-4. **定时任务缺失**：D12 的「到期前 7 天提醒」只有看板 `warn` 标记，没有消息/邮件；审批过期靠**读时判定**回写（无批量任务）；`tool_idempotency` 没有 TTL 清理（长跑会一直攒行）。
-5. **消息/通知基建缺失**：续费、逾期、审批待办都没有站内信/邮件/飞书通道（P3/P5 的共同前置）。
-6. **敏感数据**：Agent 护栏 7 的「工具返回字段脱敏」仍未做；`print`/`inventory` 返回的业务字段目前原样下发。
+4. ~~**定时任务缺失**~~ → **2026-11-13 已收口**：`jobs/` 的 BullMQ `maintenance` 队列注册三个 repeatable 任务（订阅到期前 7 天提醒 / 审批过期批量回写 / `tool_idempotency` 30 天 TTL 分批清理），判定逻辑在纯函数 `jobs/schedule.calc.ts`。**待验收**：沙盒无 Redis，未真实触发过调度（见 §10.27.4）。
+5. ~~**消息/通知基建缺失**~~ → **2026-11-13 已落地 V1**：`notifications` 表（含 RLS 兜底与 dedupe 唯一索引）、站内信通道、`NotificationChannel` 扩展接口、`/api/v1/notifications` 四个端点。**邮件/飞书/短信仍未提供实现**，只有接口与注册中心。
+6. ~~**敏感数据**~~ → **2026-11-13 已收口**：`agent/redaction.calc.ts` 字段级脱敏经 `ToolsService.egress()` 覆盖**全部四个出域返回点**（正常返回 / need_approval / 两处幂等重放），命中时写 `warnings` 显式告知模型数据被裁剪。
 
 **⚪ B3. 功能缺口（不影响已交付主线，按需排期）**
 
 - MCP 工具未注册：`print.estimate`、`print.wait_for_job`、`print.cancel_job`、`ai.*`、`alerts.*`（目录里没有条目，调用是 404，不是占位）。
-- 限流只有 Agent 维度（tenant+client+分钟），无 per-tool / per-token 细分，也没有 `X-RateLimit-*` 响应头（只有 `retry_after`）。
+- ~~限流只有 Agent 维度~~ → **2026-11-13 已收口**：`rate.calc.ts` 扩到 agent / tool / token 三维（后两维默认关闭，靠 `rollout.tool_rpm|token_rpm|per_tool` 按需开启，不无预警收紧存量租户），成功与 429 都下发 `X-RateLimit-*` + `Retry-After`；agent 维度 key 保持 `lf:agent:rl:<tenant>:<client>:<桶>` 不变以兼容验收 M 段。
 - D10 反向 MCP（`external_mcp_servers`）只有表，不实现。
 - P6.5 Prompt：无版本历史/回滚、不按角色或用户分、无调用量/采纳率统计。
 - P3：税务发票开具、支付回调/自动扣款、退款红字冲正、续费提醒、按量计费、账单 PDF、多币种均未做（V1 口径见 §10.19.5）。
@@ -173,7 +204,7 @@ redis-server --port 6380 --daemonize yes
 #    docs/03-database.sql → backend/scripts/seed.sql → saas_p0.sql → saas_p0_roles.sql
 #    → saas_p2_platform.sql → saas_p3_billing.sql → saas_p4_agent.sql → saas_p5_agent_tools.sql
 #    → saas_p6_rls.sql → saas_p6_tenant_data.sql → saas_p6_branding.sql → saas_p6_dedicated.sql
-#    → saas_p6_prompts.sql
+#    → saas_p6_prompts.sql → saas_p7_notifications.sql
 
 # 3) 后端
 cd backend && npx tsc -p tsconfig.json
@@ -2044,11 +2075,13 @@ env 入口：`DB_DEDICATED_DSNS='{"acme":"postgres://..."}'`，单条失败只�
 
 ### 10.25.8 阶段 B 必做清单（不要按当前状态对外承诺「独立库已交付」）
 
-1. **业务读写接管**：Repository 代理 / 事务路由到 `tdsm.get(ctx)`；这一步不做，客户业务数据仍写在共享库。
-2. **开通编排**：建库 → 跑全部 DDL → 迁移租户行及业务数据 → 校验行数 → 切 `data_source_key` → 回滚预案。
-3. **退订回收**：`purge` 完独立库后决定保留/销毁；至少要有「库还在、租户已删」的巡检。
-4. **运维面**：每租户连接池上限（当前 `DB_DEDICATED_POOL` 全局默认 4）、SSL 参数、DSN 轮换、健康检查。
-5. **备份**：独立库的物理备份/恢复不在 `tenant_backups` 里；当前导出是逻辑 JSON gzip，不是 PITR。
+> **2026-11-13 状态**：1–4 项代码已落地（详见 §10.27），第 5 项仍未做；1–4 项**缺真连库验收**，口径仍是「已实现、待验收」。
+
+1. **业务读写接管** ✅ 代码已落地：Repository 代理 / 事务路由到 `tdsm.get(ctx)`（`common/tenant-routing.*`），16 个模块统一接入；拦截器读真实 key。**待验收**：独立库租户建模板 / 打库存时共享库 0 行。
+2. **开通编排** ✅ 代码已落地：建库 → DDL → 搬数据 → 行数校验 → 切 `data_source_key` → 逆序回滚（状态机保证校验不过不切 key）。**待验收**：一条命令开通 + 失败可回滚。
+3. **退订回收** ✅ 代码已落地：`reclaimable` 巡检 + `reclaim` 端点；物理库保留不自动删。**待验收**：硬删后巡检能列出孤儿 key。
+4. **运维面** ✅ 代码已落地：per-key 池上限 / 超时 / SSL / 健康检查（DSN 轮换沿用 `register` 覆盖）。**仍缺**：独立库物理备份/PITR。
+5. **备份** ❌ 仍未做：独立库的物理备份/恢复不在 `tenant_backups` 里；当前导出是逻辑 JSON gzip，不是 PITR。
 
 ## 10.26 P6.5 Prompt 库（D8）（2026-11-06 落地）
 
@@ -2139,3 +2172,107 @@ env 入口：`DB_DEDICATED_DSNS='{"acme":"postgres://..."}'`，单条失败只�
   （`prompts/get(inventory.health_check, days=45)` 正文含 45）。
 - ⚠️ 新增实体必须**同时**加到 `src/entities/index.ts`（`app.module` 的 `ENTITIES` 只从那里批量注册）：
   漏了会报 `EntityMetadataNotFoundError: No metadata for "AgentPrompt"`，接口表现是 500 而不是 400。
+
+---
+
+## 10.27 隐性重点补齐（2026-11-13 落地）
+
+一句话：把 §10.1.5 B 清单里「上线前必须处理 / 挡住对外承诺」的隐性重点按工程标准逐项收口，
+**纯逻辑全部抽成可单测函数，IO 层只做编排**；同时诚实标出哪些只是「代码已实现」而非「已验收」。
+
+### 10.27.1 本轮做了什么（按工作包）
+
+| WP | 对应缺口 | 交付 | 主要落点 |
+| --- | --- | --- | --- |
+| WP1 | 码制能力单一真源 + P7 剩余 | 能力表驱动 ZPL/TSPL/EPL、Console 属性面板同步 | `backend/core/symbology.capabilities.ts`、`epl-generator.ts`、`apps/console/src/views/designer/` |
+| WP2 | B2.2 / B2.6 / B3 | 配置 fail-fast、出域脱敏、三维限流 + 响应头 | `common/config.guard.ts`、`agent/redaction.calc.ts`、`agent/rate.calc.ts` |
+| WP3 | B2.4 / B2.5 | 三个 repeatable 定时任务、站内信与通道扩展点 | `jobs/`、`notify/`、`scripts/saas_p7_notifications.sql` |
+| WP4 | B1（P6.2 阶段 B） | 业务读写路由、开通编排、退库巡检、运维面 | `common/tenant-routing.*`、`saas/platform-admin/dedicated.*` |
+| WP5 | 回归与交接 | 全量单测 / typecheck / 编译 / DI 探针 / 文档 | 本节 |
+
+### 10.27.2 几个关键设计决策（改之前先读）
+
+1. **配置守卫放在 `NestFactory.create()` 之前**，不是做成 Nest Provider：Provider 初始化时连接池可能已经用弱口令连上了，
+   必须在任何外部连接建立之前拒绝启动。dev/test 只 warn 不抛，不打断本地开发与单测；错误消息只报「哪项不合规」，不回显密钥。
+   `BRANDING_DEV_VERIFY` 的 dev 逃生口只在严格模式判 block（旧写法恒为 block，已修）。
+2. **脱敏只在出域做**：幂等记录与审计保留原始结果（重放一致性 / 合规追溯需要原值），
+   `ToolsService.egress()` 统一裁剪返回给 LLM 的 `data`。本轮补齐了此前漏掉的**幂等重放分支**，四个返回点全覆盖。
+   掩码保留「有值 + 类型 + 长度量级」，命中时把字段清单写进 `warnings`，模型知道数据被裁剪过。
+3. **限流新维度默认关闭**：`tool_rpm` / `token_rpm` / `per_tool` 不配就不检查，避免无预警收紧存量租户；
+   agent 维度 key 保持 `lf:agent:rl:<tenant>:<client>:<桶>` 不变（验收 M 段直接查这个键）。
+   成功响应头通过 `rate.context.ts`（AsyncLocalStorage）传，429 通过异常自带 headers 由 `AllExceptionsFilter` 下发——
+   不把传输层元数据混进 `ToolResult` 业务信封。
+4. **定时任务用 BullMQ repeatable 而不是 `@Cron`**：复用打印队列同一套 Redis，repeatable 按 name+cron 去重，
+   API 进程与 worker 进程同时注册也不会重复触发；判定（第 7 天边界、审批过期、TTL 边界）全在 `jobs/schedule.calc.ts` 纯函数。
+5. **站内信通道分层**：`InAppChannel` 是必须成功且带 `dedupe_key` 幂等的落库通道；
+   `NotificationChannel` 是外部通道扩展点，投递失败只记日志，绝不阻断主流程或回滚已落库的站内信。
+6. **业务读写接管用注入层代理，不改业务代码**：`tenant-typeorm.module.ts` 导出同名 `TypeOrmModule`，
+   16 个模块只需把那一行 import 指向它，`@InjectRepository` 注入的 Repository 就是动态 Proxy ——
+   每次方法调用按 `TenantCtx.dataSourceKey` 解析 `tdsm.get(ctx)`。无 ALS 上下文（定时任务 / 平台任务 / seed）回落共享库，
+   独立库 key 未注册则抛 503，**绝不静默回落**。事务通过 `TENANT_DATASOURCE` 代理在目标库起事务并打 `app.tenant_id`。
+   ⚠️ 关键闭环：`TenantContextInterceptor` 原来把 `dataSourceKey` 硬编码成 `'default'`，本轮改为从**目录库** `tenants.data_source_key` 读取；
+   不改这里，代理永远走共享库。
+7. **开通编排的两道闸门**：状态机 `canSwitchKey()` 要求「前置步骤全完成 + `verify_counts` 通过 + 处于 verifying/switching 态」，
+   编排器在真正 `UPDATE tenants` 前再调一次。任何失败进逆序回滚，**建库是唯一不可逆步骤，只标 manual 不自动 DROP DATABASE**；
+   新建场景即使编排失败，租户仍留在共享库且 key 未切，业务不中断（天然回滚）。DSN 只活在进程内存，审计只记 `maskDsn`。
+
+### 10.27.3 实跑验证（2026-11-13）
+
+| 项 | 命令 | 结果 |
+| --- | --- | --- |
+| 类型检查 | `cd backend && npm run typecheck` | **0 error** |
+| 全量单测 | `cd backend && npm test` | **297 条全绿**（290 pass / 7 skip / 0 fail），较 217 基线 +80 |
+| 全量编译 | `./node_modules/.bin/tsc -p tsconfig.json` | 通过（含装饰器元数据） |
+| lint | `cd backend && npm run lint` | **0 error / 11 warning**，与基线完全一致（本轮新增文件 0 warning） |
+| DI 图 | 编译产物上 `NestFactory.createApplicationContext(AppModule)` | **依赖解析全部通过**，走到 TypeOrmModule 连接阶段才因沙盒无 PG 停止（非 DI 错误） |
+| 前端构建 | `cd apps/console && pnpm build` | **未复跑**：沙盒无前端 `node_modules`、仓库根也没有 `pnpm-lock.yaml`（`vue-tsc: not found`）；本轮前端零改动，历史构建记录见 §10.8 / §10.26.8 |
+
+本轮新增单测文件：`config.guard.test.ts`、`redaction.calc.test.ts`、`rate.calc.test.ts`（B3 追加）、
+`schedule.calc.test.ts`、`tenant-routing.test.ts`、`tenant-context.interceptor.test.ts`、
+`dedicated.orchestration.test.ts`、`dedicated.ops.test.ts`。
+
+### 10.27.4 诚实边界：待验收 / 仍未做
+
+> **不要按本节把系统写成「独立库已交付」或「定时任务已上线」。**
+
+| 类别 | 具体内容 | 为什么没验 / 还缺什么 |
+| --- | --- | --- |
+| 🔴 待真连库验收 | 独立库租户建模板/打库存后共享库 0 行；开通编排一条命令跑通且失败可回滚；跨库 `INSERT` 与 `session_replication_role` | 沙盒只有一套 PostgreSQL（且本轮环境连 PG/Redis 都没装），没有第二套实例与 superuser admin DSN |
+| 🔴 待真连库验收 | BullMQ repeatable 三个任务真实触发、站内信真实落库、429 响应头在真实 HTTP 上出现 | 沙盒无 Redis / 无运行中的 API 进程 |
+| 🟡 上线前仍缺 | 主链路切到 `labelflow_app`（B2.1）、白标真实 DNS 验证（B2.3） | 需运维配合，见 §10.22.4 / §10.24 |
+| 🟡 上线前仍缺 | 独立库物理备份 / PITR（B1.5） | 目前只有逻辑 JSON gzip 导出，需在合同或运维文档里明确「只保证逻辑导出」 |
+| ⚪ 未做 | 邮件 / 飞书 / 短信通知通道 | 只有 `NotificationChannel` 接口与 `ChannelRegistry`，V1 仅站内信 |
+| ⚪ 未做 | 广播站内信的逐用户已读位图 | V1 `read_at` 单值 → 一人标记即全租户已读；需要时加 `notification_reads` 表 |
+| ⚪ 未做 | Agent 工具路径的独立库路由 | `inAgentTenant()` 显式设 `dataSourceKey:'default'`（P5 语义保持），Agent 写工具仍落共享库 |
+
+### 10.27.5 部署 / 运维增量清单
+
+**新 SQL 脚本**（幂等，接在 `saas_p6_prompts.sql` 之后）：
+`backend/scripts/saas_p7_notifications.sql` —— 建 `notifications` 表、dedupe 唯一索引、RLS 兜底策略
+（角色 `labelflow_app` 不存在时自动跳过，不影响建表）。新表带 `tenant_id`，会自动纳入 P6.3 导出/硬删表清单。
+
+**新增环境变量**（都有默认，不配不影响启动）：
+
+| 变量 | 默认 | 用途 |
+| --- | --- | --- |
+| `LABELFLOW_STRICT_CONFIG` | 未设 | `=1` 时在非 production 也启用配置 fail-fast（灰度验收用） |
+| `MAINTENANCE_SCHEDULER_ENABLED` | `1` | `=0` 关闭维护任务调度注册（只想让 worker 进程跑时） |
+| `DB_DEDICATED_POOL_<KEY>` / `DB_DEDICATED_POOLS` | 回落 `DB_DEDICATED_POOL=4` | per-key 连接池上限（夹到 1–50） |
+| `DB_DEDICATED_SSL` / `DB_DEDICATED_SSL_REJECT` | 关 / 严格 | 独立库 SSL 开关与自签证书容忍 |
+| `DB_DEDICATED_IDLE_MS` / `DB_DEDICATED_CONNECT_MS` | 30000 / 5000 | 空闲回收与连接超时 |
+| `DEDICATED_DDL_FILES` | 内置 12 份脚本 | 覆盖新库 DDL 清单（逗号分隔）；默认**跳过** `saas_p6_rls.sql`（库边界即隔离）与 `seed.sql`（会插默认租户） |
+
+**新增端点**：
+
+| 端点 | 说明 |
+| --- | --- |
+| `GET/POST /api/v1/notifications…` | 站内信列表 / 未读数 / 标已读 / 全部已读（租户 JWT） |
+| `GET /platform/datasources/health` | 所有独立库健康快照 |
+| `POST /platform/datasources/:key/reclaim` | 回收无租户引用的孤儿连接池（不删物理库） |
+| `GET /platform/datasources` | 新增 `reclaimable` / `unregisteredRefs` 巡检字段 |
+| `POST /platform/tenants/dedicated` | 一条命令开通独立库租户（需 `dataSourceKey` + `dedicatedDsn`，DSN 不落库） |
+| `POST /platform/tenants/:id/dedicated/plan` | 编排计划预览 |
+| `POST /platform/tenants/:id/dedicated/provision` | 迁移已有租户到独立库（失败自动回滚） |
+
+> ⚠️ `ProvisionService.provision` 仍**拒绝** `type='dedicated'` 与 `dataSourceKey` 入参（防止绕过编排造成假隔离），
+> 文案已改为指向上述专用端点。
