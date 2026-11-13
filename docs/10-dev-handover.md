@@ -110,6 +110,8 @@ curl -s http://localhost:3200/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 > 所以对外承诺口径仍是「独立库能力已实现、待真连库验收」，不是「独立库已交付」。清单见 B1 与 §10.27.4。
 > 下面「未完成」按「会挡住什么」排序，不按工作量排序；标 🔴 的会挡住对外承诺，标 🟡 的是上线前必须处理，
 > 标 ⚪ 的是功能缺口（不影响已交付主线）。本轮之后剩余项以 §10.27.4 的「待验收 / 未做」表为准。
+> **2026-11-13 追加**：按专业条码软件收费清单重新盘点的 P8 补齐路线见 **§10.28**（顺序表在 `docs/08-plan.md §8.6`）；
+> 本轮执行 P8.0 + P8.1 + P8.2，其验收边界以 §10.28.4 为准，不要与 §10.27 的独立库验收混为一谈。
 
 > **⚠️ 2026-11-08 最新优先级调整**：SaaS/Agent 主线（P0–P6）已基本闭环，下一轮开发回到**条码设计与打印核心能力**——
 > 这是产品的"命根子"，目前与 BarTender / ZebraDesigner / NiceLabel 等专业系统差距显著，详见后续待补 §10.7.3。
@@ -2276,3 +2278,108 @@ env 入口：`DB_DEDICATED_DSNS='{"acme":"postgres://..."}'`，单条失败只�
 
 > ⚠️ `ProvisionService.provision` 仍**拒绝** `type='dedicated'` 与 `dataSourceKey` 入参（防止绕过编排造成假隔离），
 > 文案已改为指向上述专用端点。
+
+---
+
+### 10.28 收费能力对照与 P8 补齐路线（2026-11-13 新增）
+
+> 触发：用户给出「专业条码打印软件收费功能清单」（BarTender / NiceLabel / CODESOFT / 中琅 / ZebraDesigner 通用，8 大类约 40 项），要求逐项核对本系统有无。
+> 本节是**核对结论 + 补齐顺序 + 验收边界**，排序理由与阶段表在 `docs/08-plan.md §8.6`；两者必须同步更新。
+
+#### 10.28.1 对照结论（按 8 大类，✅ 具备 / 🟡 部分 / ❌ 缺失）
+
+| 类别 | ✅ | 🟡 | ❌ | 一句话结论 |
+| --- | --- | --- | --- | --- |
+| 一 数据源与数据库 | 1 | 3 | 2 | 自定义 SQL / 只读强制 / 参数化完整；**仅 PostgreSQL**，无 ODBC/OLE、无自动刷新与外盘监听 |
+| 二 高级条码/标识 | 0 | 4 | 1 | 20 种码制 + GS1 FNC1 + DPI 几何调优较强；**无 RFID**、无 MaxiCode/HIBC/PZN、无 GS1 向导 |
+| 三 自动化与集成 | 1 | 3 | 1 | REST/MCP/CLI/浏览器打印完整；**无 HotFolder、无触发器、无 ERP 预置连接器** |
+| 四 模板管控与追溯 | 1 | 3 | 1 | 版本快照回滚、RBAC/ACL、逐张打印日志完整；**无模板发布审批、无防重打印、无水印** |
+| 五 输出与排版 | 0 | 3 | 2 | 矩阵拼版完整；**无整标签矢量导出、无 PDF/CMYK 印刷级输出** |
+| 六 授权与多用户 | 1 | 2 | 1 | **SaaS 订阅/套餐/席位/计费/白标是强项**；无浮动授权/加密狗/按打印机授权/本地客户端 |
+| 七 增值服务 | — | — | 5 | 支持/定制开发/维保/实施属**商务交付**，不是软件功能，不按「缺功能」计 |
+| 八 参考对照 | 入门版全覆盖 | 专业版约半 | 企业版约半 | 短板精确落在「本地硬件 + 无人值守 + 印刷输出」一条线 |
+
+关键落点（逐项可复核）：`backend/src/datasource/datasource.module.ts:149`（只收 `postgresql://`）、`backend/core/symbology.capabilities.ts`（20 种码制能力表）、`backend/printer/printer-provider.interface.ts:194`（只注册 `raw_tcp` + `image`，`windows_spooler` 仅在枚举里）、`backend/src/print/html-renderer.ts:287`（浏览器 `@page`）、`backend/src/template/template.service.ts:68`（版本快照）、`backend/src/print/print.service.ts:205`（重打/补打，但无防重拦截）、`backend/src/agent/approval.service.ts`（**Agent 工具审批，不是模板审批**）。
+
+#### 10.28.2 补齐顺序（详见 `docs/08-plan.md §8.6`）
+
+**P8.0 文档与基线 → P8.1 自动化触发层 → P8.2 印刷级输出 → P8.3 企业治理 → P8.4 数据源与码制深化 → P8.5 硬件层**。
+
+排序三原则：**依赖闭包（复用 jobs/PrintService/html-renderer/approval/audit/ACL）→ 可验收性（沙盒无 PG/Redis/打印机，先做纯函数可测零硬件项）→ 收费密度**。硬件项排最后并强制写「需真机验收」。
+
+形态差异说明：Web/SaaS 原生系统里 COM/.NET/加密狗/按打印机授权是**桌面 License 形态**，由 REST + MCP + CLI + SaaS 席位承担等价职责，不算功能缺失；但「离线自动触发」与「本地硬件直连」是真缺口，不能用形态差异搪塞。
+
+#### 10.28.3 未完成清单增量（并入 B3）
+
+| 编号 | 缺口 | 阶段 | 状态 |
+| --- | --- | --- | --- |
+| B3-1 | HotFolder / 事件触发器 / 出站 Webhook | P8.1 | **代码已落地 + 纯函数单测全绿**，待真库/Redis 验收，见 §10.28.5 |
+| B3-2 | 整标签矢量 SVG / PDF 导出 | P8.2 | **代码已落地 + 真实 SVG→PDF 冒烟通过**，中文字体/印前链路待真机验收，见 §10.28.5 |
+| B3-3 | 模板发布审批 / 防重打印 / 水印 / 发布锁定 / 数量策略 | P8.3 | 路线已定，代码未做 |
+| B3-4 | MySQL/SQLServer 驱动、SQL 分页与自动刷新、GS1 完整 AI 字典、MaxiCode/HIBC/PZN | P8.4 | 路线已定，代码未做 |
+| B3-5 | Windows 本地打印代理 / USB / RFID / 喷码机 | P8.5 | 路线已定，**必须真机验收** |
+| B3-6 | CMYK 专色、出血/裁切线、PDF 拆分与交叉合并、批量图片变量、弧形条码 | 后置 | 未做（印刷级细项，P8.2 只交付矢量骨架） |
+
+> 本表与 §10.1.5 的 B3 段并存：那里是历史缺口，这里是按收费清单重新归并后的 P8 增量，勿重复计工时。
+
+#### 10.28.4 验收边界（不许按「已交付」表述）
+
+| 项 | 现状 |
+| --- | --- |
+| 纯函数 / 单测 | 可实跑，作为主要验收依据 |
+| typecheck / tsc 全量编译 / lint | 可实跑 |
+| 触发器 CRUD、delivery 落库、Webhook 真实出站 | **未实跑**（沙盒无 PostgreSQL / Redis；`fs.watch` 可用临时目录单测） |
+| PDF 在真实浏览器/印刷链路的效果 | 未实跑（可校验页数、页尺寸、字节签名） |
+| P8.3–P8.5 | 仅路线与验收口径，无代码 |
+
+#### 10.28.5 本轮落地清单（P8.0 + P8.1 + P8.2）
+
+**新增/修改文件**（后端为主，前端本轮零改动）：
+
+| 工作包 | 文件 | 职责 |
+| --- | --- | --- |
+| P8.1 判定层 | `src/jobs/trigger.calc.ts` | 事件源/动作白名单、规则归一化、SSRF URL 校验、条件求值（fail-closed）、循环防护、dedupe 指纹、HMAC 签名/验签、文件稳定化、退避、`planDeliveries`、`printProgressToTrigger` |
+| P8.1 | `src/jobs/file-parse.ts` | HotFolder 落盘文件解析：JSON（裸数组/`{rows}`/单对象）、CSV/TSV（引号内逗号与换行、自动分隔符）、TXT；行数/单元格截断 |
+| P8.1 | `src/jobs/webhook.sender.ts` | 出站 Webhook：投递前二次 SSRF 校验、HMAC 签名、5s 超时、失败不外抛 |
+| P8.1 | `src/jobs/trigger.entity.ts` / `scripts/saas_p8_triggers.sql` | `print_triggers` / `trigger_deliveries` 两张带 `tenant_id` 的表 + RLS 兜底 + dedupe 部分唯一索引 |
+| P8.1 | `src/jobs/trigger.service.ts` | CRUD（secret 密文落库、列表脱敏）、事件编排、去重 claim、三种动作执行、投递留痕与审计 |
+| P8.1 | `src/jobs/trigger.processor.ts` | 触发队列消费；查目录库构造 `TenantCtx`（含真实 `data_source_key`），后台上下文显式注入 |
+| P8.1 | `src/jobs/hotfolder.service.ts` | `fs.watch` 热目录、文件稳定化、归档/失败目录、事件入队 |
+| P8.1 | `src/jobs/trigger.controller.ts` / `dto/trigger.dto.ts` | 7 个端点（含 dryRun 试跑） |
+| P8.1 接线 | `jobs.module.ts` / `entities/index.ts` / `print.module.ts` / `print.processor.ts` | 注册队列与模块；打印完成事件入 trigger 队列；顺手修正 SSE `completed` 事件 `status` 恒为 `running` 的笔误 |
+| P8.2 | `src/print/vector-renderer.ts` | 整标签真矢量 SVG、矩阵拼版、变量/公式/系统变量求值、警告与上限 |
+| P8.2 | `src/print/pdf-export.ts` | pdf-lib 多页 PDF（mm→pt）、sharp 600dpi 栅格化、失败如实计数 |
+| P8.2 | `src/print/export.controller.ts` | `/print/export/svg` 与 `/print/export/pdf` |
+| 单测 | `src/jobs/__tests__/{trigger.calc,file-parse,webhook.sender}.test.ts`、`src/print/__tests__/{vector-renderer,pdf-export}.test.ts` | 52 条新增用例 |
+
+新增端点见 `docs/05-api.md §5.14`。
+
+**部署增量**：
+
+1. 建表脚本 `backend/scripts/saas_p8_triggers.sql` 接在 `saas_p7_notifications.sql` 之后（含 RLS；不跑会导致新表在 `labelflow_app` 下无策略）。
+2. 新增环境变量：`HOTFOLDER_ENABLED=0` 可关闭热目录监听；`MAINTENANCE_SCHEDULER_ENABLED` 沿用。
+3. 触发队列 `trigger` 复用现有 Redis；Worker 进程需加载 `AppModule`（`TriggerProcessor` 已注册），否则队列只积压不消费。
+4. 无需新装依赖：`pdf-lib`、`sharp`、`@bwip-js/node` 均已在 `backend/package.json`。
+
+**实跑基线（2026-11-13）**：
+
+| 项 | 结果 |
+| --- | --- |
+| `npm run typecheck` | **0 error** |
+| `npm test` | **349 全绿**（342 pass / 7 skip / 0 fail，较 217 基线 +132、较上轮 297 +52） |
+| `npm run lint` | **0 error / 11 warning**（与基线一致，新增文件 0 warning） |
+| `tsc -p tsconfig.json` 全量编译 | 通过（含装饰器元数据） |
+| Nest DI 图 | 编译产物上 `createApplicationContext(AppModule)` 走到数据库连接阶段，**无依赖解析/循环错误** |
+| 真实 SVG→PDF 冒烟 | 2 行数据 × 2 列拼版 → 82×30mm sheet → **94516 字节合法 PDF**（`%PDF-`，1 页） |
+
+**仍待验收 / 明确未做**（口径与 §10.28.4 一致，不许按「已交付」表述）：
+
+| 项 | 状态 |
+| --- | --- |
+| 触发器 CRUD / delivery 落库 / Webhook 真实出站 / HotFolder 自动触发 | **未实跑**（沙盒无 PostgreSQL / Redis）；判定层 100% 单测覆盖，`fs.watch` 与 `parseDropFile` 有单测 |
+| 多实例 HotFolder | `fs.watch` 是单进程监听；多 worker 需共享存储 + 队列 jobId 指纹去重或分布式锁（V1 只做后者） |
+| 模板发布审批 / 防重打印 / 水印 / 数量策略（P8.3） | 路线已定，无代码 |
+| MySQL/SQLServer 驱动、GS1 完整 AI 字典、MaxiCode/HIBC/PZN（P8.4） | 路线已定，无代码 |
+| Windows 本地打印代理 / USB / RFID / 喷码机（P8.5） | 路线已定，必须真机验收 |
+| CMYK 专色、出血/裁切线、PDF 拆分与交叉合并、批量图片变量、弧形条码 | 未做；PDF 明确是 600dpi 位图而非矢量 |
+| 中文文本 | SVG `<text>` 依赖渲染端字体；缺中文字体时 PDF 栅格化会退化为方块，`warnings` 已提示 |

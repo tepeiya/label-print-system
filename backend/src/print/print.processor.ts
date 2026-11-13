@@ -1,7 +1,7 @@
 // BullMQ 消费端（Worker）：逐张标签渲染 → 调用 PrinterProvider 下发（异步、不阻塞 API）
 // 支持：模板重新加载（重打）、指定序号补打、ZPL/TSPL 协议、偏移/浓度/速度、逐张日志。
-import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Job } from 'bullmq';
+import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
+import { Job, Queue } from 'bullmq';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PrintJob, PrintLog, Printer } from '../entities/print.entity';
@@ -9,6 +9,8 @@ import { Template } from '../entities/template.entity';
 import { RenderService } from './render.service';
 import { PrinterProviderRegistry } from '../../printer/printer-provider.interface';
 import { PrintEvents } from './events.event';
+// P8.1：把打印结果转成触发器事件，入 BullMQ 让其它进程也能消费
+import { TRIGGER_JOB, TRIGGER_QUEUE, printProgressToTrigger } from '../jobs/trigger.calc';
 import * as crypto from 'crypto';
 
 @Processor('print')
@@ -19,6 +21,7 @@ export class PrintProcessor extends WorkerHost {
     @InjectRepository(Template) private tpls: Repository<Template>,
     private render: RenderService,
     private events: PrintEvents,
+    @InjectQueue(TRIGGER_QUEUE) private triggerQueue: Queue,
   ) { super(); }
 
   async process(job: Job) {
@@ -145,12 +148,31 @@ export class PrintProcessor extends WorkerHost {
       this.events.publish(tenantId, { type: 'progress', jobId, seqNo, done, failed, total: processed, status: done + failed === wanted?.length ? 'running' : 'running' });
     }
 
+    const finalStatus = failed === 0 ? 'success' : done === 0 ? 'failed' : 'partial';
     await this.jobs.update(jobId, {
-      done, failed, total: processed,
-      status: failed === 0 ? 'success' : done === 0 ? 'failed' : 'partial',
-      finishedAt: new Date(),
+      done, failed, total: processed, status: finalStatus, finishedAt: new Date(),
     });
-    this.events.publish(tenantId, { type: 'completed', jobId, done, failed, total: processed, status: failed === 0 ? 'success' : done === 0 ? 'failed' : 'partial' });
+    // 顺手修正原实现里 SSE completed 事件的 status 恒为 'running'（两个三元分支写了同一个值）
+    const completedEv = {
+      type: 'completed', tenantId, jobId, done, failed, total: processed,
+      status: finalStatus, at: Date.now(),
+    };
+    this.events.publish(tenantId, completedEv);
+
+    // P8.1：打印结果 → 触发器事件。失败只记日志，绝不因触发器不可用而影响打印结果。
+    const trigEv = printProgressToTrigger(completedEv);
+    if (trigEv) {
+      try {
+        await this.triggerQueue.add(TRIGGER_JOB, { event: trigEv }, {
+          jobId: `trig:print:${jobId}`,
+          attempts: 2,
+          removeOnComplete: { count: 200 },
+          removeOnFail: { count: 200 },
+        });
+      } catch (e: any) {
+        console.warn(`[print] 触发事件入队失败（不影响打印结果）：${e?.message ?? e}`);
+      }
+    }
     return { done, failed, processed };
   }
 

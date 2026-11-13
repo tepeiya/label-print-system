@@ -230,3 +230,40 @@ node tools/labelctl.mjs audit --limit 10
 ```
 
 环境变量：`LABELFLOW_API`（默认 `http://localhost:3200/api/v1`）、`LABELFLOW_USER` / `LABELFLOW_PASS`、`LABELFLOW_TOKEN`。
+
+---
+
+## 5.14 P8 新增端点（2026-11-13）
+
+### 5.14.1 自动化触发器（P8.1，租户 JWT）
+
+| 方法 | 路径 | 入参 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/triggers` | — | 本租户触发器列表（`config` 已剔除 `secret`/`secretEnc`） |
+| GET | `/triggers/:id` | — | 单条详情 |
+| GET | `/triggers/:id/deliveries?limit=50` | — | 投递历史（去重/成功/失败可追溯） |
+| POST | `/triggers` | `{name,source,action,conditionExpr?,config,enabled?}` | 新建；写操作限 admin/operator |
+| PATCH | `/triggers/:id` | 同上（可只传部分字段） | 更新；未重填 `secret` 时保留旧密文 |
+| DELETE | `/triggers/:id` | — | 删除规则（保留 delivery 历史供审计） |
+| POST | `/triggers/:id/test` | `{payload?}` | **dryRun**：只返回命中计划，不打印、不发 Webhook |
+
+- `source`：`print.job.completed` / `print.job.failed` / `template.updated` / `hotfolder.file` / `subscription.expiring`。
+- `action`：`webhook` / `notification` / `print`。条件表达式用公式引擎语法，变量写 `{{name}}`（与模板 `printIf` 同源）。
+- `config` 按动作不同：
+  - `webhook`：`{url, secret?}`（**仅 https**；`http://localhost` 需 `allowHttpLoopback:true` 且仅调试用；内网/回环/云元数据地址一律拒绝）。请求带 `X-LabelFlow-Timestamp` + `X-LabelFlow-Signature: sha256=<hmac>`，5s 超时。
+  - `notification`：`{title, body, category?}` → 站内信。
+  - `print`：`{templateId, printerId?, copies?}` → 文件到达即打印。
+  - `hotfolder.file` 额外支持：`{directory, onSuccess?: archive|delete|keep}`。
+- 后台事件统一走 BullMQ `trigger` 队列（进程内 EventEmitter 跨 worker 不生效）；`dedupe_key` 部分唯一索引兜并发，命中重复不重复打印。
+- V1 **未接订阅模块 gating**（`menu.catalog` 无 `automation` 模块码，误挂会让所有租户 4031），权限只用角色，P8.3 统一补 permission 码。
+
+### 5.14.2 印刷级导出（P8.2，与 `/print/commands` 同口径：自带模板 JSON，不读业务库）
+
+| 方法 | 路径 | 入参 | 出参 |
+| --- | --- | --- | --- |
+| POST | `/print/export/svg` | `{templateContent, rows?, copies?, serialMap?}` | `{format:'svg', sheets[], sheetWidthMm, sheetHeightMm, labelCount, perSheet, cols, rows, warnings[]}` |
+| POST | `/print/export/pdf` | 同上 + `dpi?`（72–1200，默认 600） | `application/pdf` 二进制；响应头 `X-LabelFlow-Pages` / `X-LabelFlow-Warning-Count` / `X-LabelFlow-Warnings`（URI 编码） |
+
+- SVG 是**整标签真矢量**：文本 `<text>`、图形 `<rect>/<ellipse>/<line>`、码制内联 bwip-js 的 `<path>`；矩阵拼版（`columns`/`rows`/`gapXMm`/`gapYMm`/`marginMm`）与浏览器打印口径一致。
+- PDF 由 SVG 按 600dpi 栅格化嵌入 pdf-lib，页面尺寸按 `mm→pt`（1mm = 72/25.4pt）精确换算；**PDF 内部不是矢量**、无 CMYK/专色/出血，`warnings` 会显式声明。
+- 总标签数上限 5000、PDF 页数上限 200，超限报错不静默截断。中文文本依赖渲染端系统字体，缺字时 `warnings` 提示。

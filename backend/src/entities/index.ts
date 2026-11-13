@@ -17,3 +17,5 @@ export { TenantDomain } from '../saas/branding/tenant-domain.entity';
 export { Warehouse, Material, StockBatch, Bom, BomItem } from '../inventory/inventory.entity';
 // P7 / B2.5 站内信（DDL: scripts/saas_p7_notifications.sql）
 export { Notification } from '../notify/notification.entity';
+// P8.1 自动化触发器（DDL: scripts/saas_p8_triggers.sql）
+export { PrintTrigger, TriggerDelivery } from '../jobs/trigger.entity';

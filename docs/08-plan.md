@@ -85,3 +85,36 @@ services:
 ## 8.5 后端类型检查
 
 `cd backend && npx tsc -p tsconfig.json --noEmit` → **0 错误**（NestJS 应用骨架 + 核心引擎全部通过类型检查）。前端为 `web/` 原生 HTML5 无构建，`node web/serve.mjs 5180` 静态服务即可运行。
+
+---
+
+## 8.6 P8 收费能力补齐路线（2026-11-13 定稿）
+
+> 输入：与「专业条码打印软件收费功能清单」（BarTender / NiceLabel / CODESOFT / 中琅 / ZebraDesigner 通用）逐项核对当前仓库的结果，逐项证据见 `docs/10-dev-handover.md §10.28`。
+> 结论先说：系统在**多租户治理、权限审计、订阅计费、码制覆盖**上强于传统桌面软件；缺口集中在**无人值守自动化、印刷级输出、模板发布治理、本地硬件直连**。
+
+### 8.6.1 排序原则（不要按「看起来重要」排）
+
+1. **依赖闭包**：能复用现有 `jobs/`（BullMQ maintenance 队列）、`PrintService`、`PrintEvents`、`html-renderer`、`approval.calc`、`audit`、`ACL` 的先做；禁止为单个功能另造一套调度器 / 事件总线 / 状态机。
+2. **可验收性**：沙盒只有代码运行时，无 PostgreSQL / Redis / 打印机。**优先「纯函数可测 + 零硬件依赖」**；必须真机或真库的项后置，并在交付时写「需真机/真库验收」，不许按「已交付」表述。
+3. **收费密度**：优先直击专业版/企业版付费点——无人值守自动化（HotFolder / 触发器 / Webhook）、印刷级输出（整标签矢量 / PDF）、模板发布审批与防重打印。
+4. **形态差异不等于缺口**：LabelFlow 是 Web/SaaS 原生，COM / .NET / 加密狗 / 按打印机授权这类**桌面 License 形态不适用**，由 REST API + MCP + CLI + SaaS 席位承担等价职责；但「本地硬件直连」与「离线自动触发」是真缺口，必须补齐，不能拿形态差异搪塞。
+5. 每个阶段沿用 P7 / WP2–WP5 的工程口径：**单一真源 + 纯函数可测核心 + 真实接入 + 诚实标注验收边界**。
+
+### 8.6.2 阶段表（按执行顺序）
+
+| 阶段 | 内容 | 为什么排这个位置 | 主要交付物 | 验收口径 | 沙盒边界 |
+| --- | --- | --- | --- | --- | --- |
+| **P8.0** | 文档与基线 | 先把顺序、验收口径、诚实边界钉死，避免边做边改口径 | 本 §8.6、`docs/10 §10.28`、状态总表同步 | 文档与代码现状一致 | — |
+| **P8.1** | 自动化触发层：HotFolder + 事件触发器 + 出站 Webhook | 复用 `jobs`/BullMQ/`PrintService`/`PrintEvents`；纯函数可测；是 ERP/MES「无人值守」的必付费项；零硬件依赖 | `trigger.calc` / `file-parse` / `trigger.service` / `hotfolder.service` / `webhook` / DDL / 端点 / 单测 | 规则匹配、条件求值、循环防护、SSRF 拦截、文件稳定化、去重键全部有单测；端点 typecheck 通过 | 无 Redis → 队列不真实消费；无 PG → 触发器 CRUD / delivery 落库未实跑；`fs.watch` 可在沙盒用临时目录单测 |
+| **P8.2** | 印刷级输出：整标签矢量 SVG + PDF 导出 | 复用 `html-renderer` 元素语义、`bwip-js` SVG、`pdf-lib`（已在 dependencies）；专业版收费点；纯软件可验 | `vector-renderer` / `pdf-export` / 导出端点 / 单测 | SVG 结构、mm→pt 换算、拼版矩阵、PDF 页数/尺寸、字节签名有单测 | 无 CMYK/专色/出血/裁切线；PDF 中文依赖嵌入字体，未内嵌字体时明确 warnings；浏览器端真实打印效果未实跑 |
+| **P8.3** | 企业治理：模板发布审批 + 防重打印 + 水印/发布锁定 + 数量策略 | 复用 `approval.calc` 状态机、`audit`、`ACL`、`PrintLog`；企业版收费点；但要改模板与打印主链路，风险高于 P8.1/8.2，故后置 | 模板状态机、dedupe 表、审批端点、水印渲染、打印前置校验 | 状态迁移、防重判定、水印位置、越权拦截可单测 | 需真库验证并发防重与审批事务 |
+| **P8.4** | 数据源与核心码制深化：MySQL/SQLServer 驱动、SQL 分页/字段查找/自动刷新、GS1 完整 AI 字典与向导、MaxiCode/HIBC/PZN 位图通道 | 高频付费；但需换 SQL 驱动抽象 + 真连库验收 + 码制手册核对，改动面与验证成本最高 | `sql-executor` driver 抽象、GS1 字典、能力表扩充 | 各驱动只读/参数化回归、GS1 AI 校验 golden | 沙盒无第二套数据库；MaxiCode/HIBC/PZN 需真机译码验证 |
+| **P8.5** | 硬件层：Windows 本地打印代理（spooler/USB）、RFID 读写、喷码机输出 | 真机依赖最重，沙盒完全无法验收；只能交付协议层 + 客户端骨架 + 明确的真机验收清单，最后做 | `windows_spooler` Provider、本地代理协议、RFID 接口 | 协议单测 + 真机验收清单 | **必须标注「未验收」**，禁止对外承诺可用 |
+
+### 8.6.3 本轮范围与后续
+
+- **本轮执行 P8.0 + P8.1 + P8.2**，P8.3–P8.5 只落路线与验收口径，代码留待后续。
+- 本轮实跑结果（2026-11-13）：`typecheck 0 error` / `npm test 349 全绿`（342 pass / 7 skip）/ `lint 0 error 11 warning`（基线一致）/ 全量 `tsc` 编译通过 / DI 图无解析错误 / 真实 SVG→PDF 冒烟产出合法 PDF。逐项交付与待验收边界见 `docs/10 §10.28.5`。
+- 每轮收口动作：`npm run typecheck` → `npm test` → `npm run lint` → `tsc -p tsconfig.json` 全量编译 → `git commit`；文档状态总表随代码同步，不写「已完成」而写「代码已落地 / 待真库或真机验收」。
+- 新增端点与部署增量必须同步 `docs/05-api.md` 与 `docs/10 §10.28`，避免交接失真。
