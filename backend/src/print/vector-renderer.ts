@@ -35,6 +35,11 @@ export interface ExportInput {
   rows?: Record<string, any>[];
   copies?: number;
   serialMap?: Record<string, string[]>;
+  /**
+   * P8.3 水印 SVG 层（已由 governance.calc.watermarkSvgLayer 生成并转义）。
+   * 渲染器只负责拼接到标签最上层，不重新计算几何 —— 预览/导出/打印同源。
+   */
+  watermarkLayer?: string;
 }
 
 export interface SheetLayout {
@@ -202,10 +207,14 @@ function renderElement(e: any, warnings: Set<string>): string {
 }
 
 /** 单个标签 → SVG（不含背景，背景由 sheet 层统一铺，避免百分比 rect 在 <g> 里画满整页） */
-export function renderLabelSvg(elements: any[], page: { widthMm: number; heightMm: number }): { svg: string; warnings: string[] } {
+export function renderLabelSvg(
+  elements: any[], page: { widthMm: number; heightMm: number }, watermarkLayer?: string,
+): { svg: string; warnings: string[] } {
   const warnings = new Set<string>();
   const body = (elements ?? []).map((e) => renderElement(e, warnings)).filter(Boolean).join('');
-  return { svg: svgDocument(n(page.widthMm), n(page.heightMm), body, false), warnings: [...warnings] };
+  // 水印放最后 → 叠在所有元素之上；来自治理层的字符串已 XML 转义，此处不再处理
+  const withWatermark = watermarkLayer ? `${body}${watermarkLayer}` : body;
+  return { svg: svgDocument(n(page.widthMm), n(page.heightMm), withWatermark, false), warnings: [...warnings] };
 }
 
 /** 矩阵拼版：把 N 个标签按 cols×rows 排到 sheet 上（与 html-renderer 的口径一致） */
@@ -257,11 +266,12 @@ export function buildExportSvgs(input: ExportInput): SheetLayout {
       uuid: `export-${i + 1}`,
     };
     const rendered = render.renderRow(tpl.elements, row, input.serialMap ?? {}, sysVars, i);
-    const one = renderLabelSvg(rendered, tpl.page);
+    const one = renderLabelSvg(rendered, tpl.page, input.watermarkLayer);
     one.warnings.forEach((w) => warnings.add(w));
     labels.push(one.svg);
   }
   const layout = layoutSheets(labels, tpl.page);
+  if (input.watermarkLayer) warnings.add('已叠加水印层（SVG / PDF 输出通道）；指令通道不叠加水印');
   // 文本字形依赖渲染端字体，中文缺字会在栅格化时退化为方块，必须显式告知
   const hasCjk = (tpl.elements ?? []).some((e) => /[\u3400-\u9fff]/.test(String(e.text ?? e.rendered ?? '')));
   if (hasCjk) warnings.add('模板含中文文本：SVG 字形依赖渲染端系统字体，PDF 栅格化时缺中文字体会退化为方块，请安装中文字体或改用图像通道');

@@ -1,9 +1,12 @@
-import { Module, Controller, Post, Body, Res, Get } from '@nestjs/common';
+import { Module, Controller, Post, Body, Res, Get, Param } from '@nestjs/common';
+import { IsString, Length } from 'class-validator';
 import { Response } from 'express';
 import {
   renderBarcodeToPng, renderQrcodeToPng, validateBarcode,
   renderBarcodeSvg, renderQrcodeSvg, supportedSymbologies, is2d,
 } from '../../core/barcode-renderer';
+// P8.4：GS1 AI 字典与合规校验（单一真源在 core/gs1-ai.ts）
+import { gs1Catalog, gs1FieldHelp, validateGs1 } from '../../core/gs1-ai';
 import { BarcodeRenderDto, BarcodeValidateDto } from '../common/dto/render-and-ai.dto';
 
 @Controller('barcode')
@@ -48,5 +51,42 @@ export class BarcodeController {
   }
 }
 
-@Module({ controllers: [BarcodeController] })
+// =============================================================================
+// P8.4 GS1 向导 / 合规校验端点
+// 与 /barcode/* 同为无状态端点：不读业务库、不产生副作用，前端可离线调用。
+// 高级 GS1 向导的 UI 由这些结构化数据驱动（AI 目录 + 字段提示 + 校验结果），
+// 不在前端另写一份 AI 表，避免与生成器漂移。
+// =============================================================================
+export class Gs1ValidateDto {
+  @IsString()
+  @Length(1, 4000, { message: 'content 必填且不超过 4000 字符' })
+  content!: string;
+}
+
+@Controller('gs1')
+export class Gs1Controller {
+  /** AI 目录：分组、长度、类型、示例、模式族说明与「非全量字典」声明 */
+  @Get('ai-catalog')
+  catalog() { return gs1Catalog(); }
+
+  /** 单个 AI 的输入提示（选中 AI 后显示「定长 14 位 · 含模 10 校验位」） */
+  @Get('ai/:ai/help')
+  help(@Param('ai') ai: string) { return gs1FieldHelp(String(ai ?? '')); }
+
+  /** 整串合规校验：errors / warnings / 字段解析 / 编码数据流 / FNC1 分隔数 */
+  @Post('validate')
+  validate(@Body() b: Gs1ValidateDto) {
+    const v = validateGs1(b.content);
+    return {
+      ...v,
+      encodable: v.ok,
+      hint: v.ok
+        ? '校验通过，可直接用于 GS1-128 / GS1 DataMatrix 编码'
+        : '存在错误，请先修正后再编码（data 字段仍返回供排查）',
+      disclaimer: 'AI 字典覆盖常用项，非 GS1 General Specifications 全量；行业专用码请以最新官方手册复核',
+    };
+  }
+}
+
+@Module({ controllers: [BarcodeController, Gs1Controller] })
 export class BarcodeModule {}

@@ -112,9 +112,11 @@ services:
 | **P8.4** | 数据源与核心码制深化：MySQL/SQLServer 驱动、SQL 分页/字段查找/自动刷新、GS1 完整 AI 字典与向导、MaxiCode/HIBC/PZN 位图通道 | 高频付费；但需换 SQL 驱动抽象 + 真连库验收 + 码制手册核对，改动面与验证成本最高 | `sql-executor` driver 抽象、GS1 字典、能力表扩充 | 各驱动只读/参数化回归、GS1 AI 校验 golden | 沙盒无第二套数据库；MaxiCode/HIBC/PZN 需真机译码验证 |
 | **P8.5** | 硬件层：Windows 本地打印代理（spooler/USB）、RFID 读写、喷码机输出 | 真机依赖最重，沙盒完全无法验收；只能交付协议层 + 客户端骨架 + 明确的真机验收清单，最后做 | `windows_spooler` Provider、本地代理协议、RFID 接口 | 协议单测 + 真机验收清单 | **必须标注「未验收」**，禁止对外承诺可用 |
 
-### 8.6.3 本轮范围与后续
+### 8.6.3 执行记录与收口基线
 
-- **本轮执行 P8.0 + P8.1 + P8.2**，P8.3–P8.5 只落路线与验收口径，代码留待后续。
-- 本轮实跑结果（2026-11-13）：`typecheck 0 error` / `npm test 349 全绿`（342 pass / 7 skip）/ `lint 0 error 11 warning`（基线一致）/ 全量 `tsc` 编译通过 / DI 图无解析错误 / 真实 SVG→PDF 冒烟产出合法 PDF。逐项交付与待验收边界见 `docs/10 §10.28.5`。
-- 每轮收口动作：`npm run typecheck` → `npm test` → `npm run lint` → `tsc -p tsconfig.json` 全量编译 → `git commit`；文档状态总表随代码同步，不写「已完成」而写「代码已落地 / 待真库或真机验收」。
-- 新增端点与部署增量必须同步 `docs/05-api.md` 与 `docs/10 §10.28`，避免交接失真。
+- **第一轮执行 P8.0 + P8.1 + P8.2**（2026-11-13）：`typecheck 0 error` / `npm test 349 全绿`（342 pass / 7 skip）/ `lint 0 error 11 warning`（基线一致）/ 全量 `tsc` 编译通过 / DI 图无解析错误 / 真实 SVG→PDF 冒烟产出 94516 字节合法 PDF。逐项交付见 `docs/10 §10.28.5`。
+- **第二轮执行 P8.3 + P8.4 + P8.5**：三个阶段的代码全部落地，阶段表里的「主要交付物」已逐项实现；但**阶段表的「沙盒边界」列不因此失效** —— P8.3 并发防重、P8.4 第二套数据库与调度端到端、P8.5 全部硬件项仍需真库/真机验收。逐项交付见 `docs/10 §10.29`（P8.3/8.4）与 `§10.30`（P8.5 + 14 项真机验收清单）。
+- **最终收口基线**：`npm run typecheck` 0 error / `npm test 442 全绿`（435 pass / 7 skip / 0 fail，较 349 基线 +93）/ 定向 lint 0 error（本轮新增文件 0 warning）/ `tsc -p tsconfig.json` 全量编译通过 / Nest DI 图无依赖解析错误 / P8.5 真实链路冒烟验证 `windows_spooler` 注册生效且**凭证零出域**。
+- 每轮收口动作：`npm run typecheck` → `npm test` → 定向 `lint` → `tsc -p tsconfig.json` 全量编译 → DI 图探测 → `git commit`；文档状态总表随代码同步，不写「已完成」而写「代码已落地 / 待真库或真机验收」。
+- 新增端点与部署增量必须同步 `docs/05-api.md §5.14/§5.15` 与 `docs/10 §10.28–§10.30`，避免交接失真。
+- **部署增量顺序**：`saas_p7_notifications.sql` → `saas_p8_triggers.sql` → `saas_p8_governance.sql` → `saas_p8_hardware.sql`；缺任一脚本会让对应新表在 `labelflow_app` 角色下无 RLS 策略。新增开关：`HOTFOLDER_ENABLED`、`MAINTENANCE_SCHEDULER_ENABLED`、`DATASOURCE_REFRESH_SCHEDULER_ENABLED`、`HARDWARE_AGENT_SIGNATURE_REQUIRED`（默认 0，不收紧存量租户）。

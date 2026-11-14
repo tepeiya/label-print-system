@@ -54,6 +54,11 @@ export class PreviewRenderDto {
   @IsOptional()
   @IsNumber()
   copies?: number;
+
+  /** P8.3 水印规格（可选）；由 governance.calc.normalizePolicy 夹取后生效 */
+  @IsOptional()
+  @IsObject()
+  watermark?: any;
 }
 
 /** /print/commands 指令导出（ZPL / TSPL / EPL）——P7.7 新增 EPL 通道 */

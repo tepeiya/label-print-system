@@ -149,7 +149,6 @@ export class ImageProvider implements PrinterProvider {
   private renderWithCanvasOrFallback(frame: LabelFrame, printer: PrintJobInput['printer']): Buffer {
     try {
       // 懒加载可选依赖 canvas（未安装时回退到内置编码器）
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { createCanvas } = require('canvas');
       const w = Math.round((printer.widthMm * printer.dpi) / 25.4);
       const h = Math.round((printer.heightMm * printer.dpi) / 25.4);
@@ -179,6 +178,49 @@ export class ImageProvider implements PrinterProvider {
 }
 
 // =============================================================================
+// 实现 3：WindowsSpoolerProvider —— P8.5 Windows 本地驱动 / USB / 串口通道
+//
+// 服务端在 Linux 容器里看不到用户本机的驱动打印机，因此这里**不开 socket、
+// 不假装打印**，而是把已渲染任务交给「本地打印代理」队列（见 src/hardware/）：
+//   服务端 → 生成脱敏任务信封 → 存库 → 代理主动出站拉取 → 调本地驱动 → 回执。
+//
+// 注册表是静态的（new C()，无 DI），所以用一次性注入的 AgentEnqueuePort 做桥接：
+// HardwareModule 启动时注册实现；未注册时 print() 明确返回错误，绝不静默丢弃任务。
+// =============================================================================
+export interface AgentEnqueuePort {
+  /** 入队成功返回 agentJobId；失败返回 error（不抛异常，由打印 Worker 记失败日志） */
+  enqueue(job: PrintJobInput): Promise<{ queued: boolean; agentJobId: string; error?: string }>;
+}
+
+let agentEnqueuePort: AgentEnqueuePort | null = null;
+export function setAgentEnqueuePort(port: AgentEnqueuePort | null): void {
+  agentEnqueuePort = port;
+}
+export function hasAgentEnqueuePort(): boolean { return agentEnqueuePort !== null; }
+
+export class WindowsSpoolerProvider implements PrinterProvider {
+  readonly type: ProviderType = 'windows_spooler';
+
+  async validate(printer: PrintJobInput['printer']): Promise<void> {
+    if (!printer.connection?.driverName) {
+      throw new Error('windows_spooler 需要 connection.driverName（本地代理所用的 Windows 驱动名）');
+    }
+  }
+
+  async print(job: PrintJobInput): Promise<PrintResult> {
+    if (!agentEnqueuePort) {
+      return { ok: false, jobId: job.jobId, error: '本地打印代理桥接未注册（HardwareModule 未启动）' };
+    }
+    try {
+      const r = await agentEnqueuePort.enqueue(job);
+      return { ok: r.queued, jobId: job.jobId, error: r.error };
+    } catch (e: any) {
+      return { ok: false, jobId: job.jobId, error: String(e?.message ?? e) };
+    }
+  }
+}
+
+// =============================================================================
 // 注册表（插件化扩展点）
 // =============================================================================
 export class PrinterProviderRegistry {
@@ -193,4 +235,5 @@ export class PrinterProviderRegistry {
 // 默认注册
 PrinterProviderRegistry.register('raw_tcp', RawTcpProvider);
 PrinterProviderRegistry.register('image', ImageProvider);
-// 浏览器通道由前端 @page 完成，无需服务端 Provider；windows_spooler 由本地代理对接。
+PrinterProviderRegistry.register('windows_spooler', WindowsSpoolerProvider);
+// 浏览器通道由前端 @page 完成，无需服务端 Provider。

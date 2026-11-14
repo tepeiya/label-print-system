@@ -40,6 +40,14 @@ export const BWIP_MAP: Record<string, string> = {
   PDF417: 'pdf417',
   AZTEC: 'azteccode',
   AZTECCODE: 'azteccode',
+  // P8.4 工业码制（bwip-js 已实测可渲染）：仅位图通道，无 ZPL/TSPL/EPL 原生指令
+  MAXICODE: 'maxicode',
+  HIBC: 'hibccode128',              // HIBC 默认用 Code 128 载体
+  HIBC_128: 'hibccode128',
+  HIBC_CODE39: 'hibccode39',
+  HIBC_DATAMATRIX: 'hibcdatamatrix',
+  HIBC_QR: 'hibcqrcode',
+  PZN: 'pzn',                      // 德国药品中央编号（Code 39 约定）
 };
 
 export function bcidOf(sym: string): string {
@@ -48,9 +56,11 @@ export function bcidOf(sym: string): string {
   return bcid;
 }
 
-/** 判断是否为二维码 */
+/** 判断是否为二维码（P8.4：HIBC 家族按具体载体区分，避免把 HIBC_128 当二维渲染） */
 export function is2d(sym: string): boolean {
-  return /^(QR|QRCODE|MICRO|DATAMATRIX|PDF417|AZTEC)/i.test(String(sym));
+  const s = String(sym).toUpperCase();
+  if (/^(MAXICODE|HIBC_QR|HIBC_DATAMATRIX|HIBC_QRCODE)/.test(s)) return true;
+  return /^(QR|QRCODE|MICRO|DATAMATRIX|PDF417|AZTEC)/i.test(s);
 }
 
 // ----------------------------- 字符集/长度校验 -----------------------------
@@ -77,6 +87,14 @@ const RULES: Record<string, { maxLen?: number; charset?: RegExp; note: string }>
   DATAMATRIX: { maxLen: 2000, note: '建议 ≤ 1500 字符' },
   PDF417: { maxLen: 1800, note: '建议 ≤ 1800 字符' },
   AZTEC: { maxLen: 1800, note: '建议 ≤ 1800 字符' },
+  // P8.4 工业码制位图通道（预览/导出可用，指令通道见 symbology.capabilities.ts 的 hint）
+  MAXICODE: { maxLen: 93, note: 'UPS MaxiCode：需按 mode 组织结构化数据；仅位图通道' },
+  HIBC: { maxLen: 100, note: 'HIBC LIC（Code 128 载体），bwip 自动补校验字符' },
+  HIBC_128: { maxLen: 100, note: 'HIBC 基于 Code 128' },
+  HIBC_CODE39: { maxLen: 100, note: 'HIBC 基于 Code 39' },
+  HIBC_DATAMATRIX: { maxLen: 100, note: 'HIBC 基于 Data Matrix（二维）' },
+  HIBC_QR: { maxLen: 100, note: 'HIBC 基于 QR Code（二维）' },
+  PZN: { charset: /^\d{6,8}$/, note: '德国 PZN 药品编号：6–8 位数字（含校验位）' },
 };
 
 export interface BarcodeValidation {
@@ -194,7 +212,10 @@ export async function renderQrcodeToPng(spec: QrcodeSpec, dpi: number): Promise<
 /** 列出支持的码制（前端下拉/文档用） */
 export function supportedSymbologies() {
   return {
-    linear: ['CODE128', 'GS1_128', 'CODE39', 'CODE93', 'EAN13', 'EAN8', 'UPC', 'UPC_E', 'ITF14', 'ITF', 'CODABAR', 'MSI', 'PHARMACODE', 'CODE16K'],
-    twod: ['QRCODE', 'MICROQR', 'DATAMATRIX', 'DATAMATRIX_RECT', 'PDF417', 'AZTEC'],
+    linear: ['CODE128', 'GS1_128', 'CODE39', 'CODE93', 'EAN13', 'EAN8', 'UPC', 'UPC_E', 'ITF14', 'ITF', 'CODABAR', 'MSI', 'PHARMACODE', 'CODE16K',
+      // P8.4 工业码制（位图通道，前端须标「预览仅」）
+      'HIBC_128', 'HIBC_CODE39', 'PZN'],
+    twod: ['QRCODE', 'MICROQR', 'DATAMATRIX', 'DATAMATRIX_RECT', 'PDF417', 'AZTEC',
+      'MAXICODE', 'HIBC_DATAMATRIX', 'HIBC_QR'],
   };
 }

@@ -1,8 +1,12 @@
-import { Module, Injectable, NotFoundException, Controller, Get, Post, Delete, Body, Param, Query, UseGuards, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
+// =============================================================================
+// DataSourceModule —— 数据源 HTTP 层 + 模块装配（P8.4）
+// DataSourceService 已抽到 datasource.service.ts（见该文件注释），此处 re-export 保持兼容。
+// P8.4 新增：自动刷新 repeatable 调度器与 Worker 均装配在本模块内，依赖单向无环。
+// =============================================================================
+import { Module, Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import * as XLSX from 'xlsx';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { BullModule } from '@nestjs/bullmq';
 // 代理版 TypeOrmModule：forFeature 注入的 Repository 按 TenantCtx.dataSourceKey 路由
 import { TypeOrmModule } from '../common/tenant-typeorm.module';
 import { DataSource as DS, DataRow } from '../entities/print.entity';
@@ -10,194 +14,27 @@ import { TenantGuard } from '../common/tenant.guard';
 import { Roles, RoleName } from '../common/roles.guard';
 import { RequireModule } from '../common/module.guard';
 import { RequirePermission } from '../common/permission.guard';
-import { useTenantId } from '../common/tenant.context';
-import { AuditModule, AuditService } from '../audit/audit.module';
-import { encrypt, decrypt, hasProdKey } from './sql-crypto';
-import { DsPreviewDto, SaveRowsDto, SaveSqlDto, SqlExecDto, UploadCsvDto, UploadExcelMetaDto } from './dto/datasource.dto';
-import * as sqlx from './sql-executor';
+import { AuditModule } from '../audit/audit.module';
+import { DsPreviewDto, LookupDto, RefreshConfigDto, SaveRowsDto, SaveSqlDto, SqlExecDto, UploadCsvDto, UploadExcelMetaDto } from './dto/datasource.dto';
+import { DataSourceService } from './datasource.service';
+import { DatasourceRefreshService } from './refresh-scheduler.service';
+import { DatasourceRefreshProcessor } from './refresh.processor';
+import { REFRESH_QUEUE, REFRESH_SCHEDULER_ENV } from './refresh-scheduler.calc';
+
+// 兼容原有 import 路径（datasource.module.ts 曾内联导出这两个符号）
+export { DataSourceService, parseCsv } from './datasource.service';
 
 const DS_WRITE: RoleName[] = ['admin', 'operator'];
 const SQL_ROLES: RoleName[] = ['admin', 'sql'];
-
-/**
- * 健壮 CSV 解析：支持引号包裹、引号内换行/逗号、"" 转义、CRLF，
- * 自动识别分隔符（逗号 / Tab / 分号）。
- */
-export function parseCsv(text: string, delimiter?: string): { header: string[]; rows: string[][] } {
-  const raw = String(text ?? '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
-  const delim = delimiter ?? detectDelimiter(raw);
-  const rows: string[][] = [];
-  let field = '';
-  let row: string[] = [];
-  let inQuotes = false;
-
-  for (let i = 0; i < raw.length; i++) {
-    const ch = raw[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (raw[i + 1] === '"') { field += '"'; i++; }
-        else inQuotes = false;
-      } else field += ch;
-      continue;
-    }
-    if (ch === '"') { inQuotes = true; continue; }
-    if (ch === delim) { row.push(field); field = ''; continue; }
-    if (ch === '\n') { row.push(field); field = ''; rows.push(row); row = []; continue; }
-    field += ch;
-  }
-  if (field.length || row.length) { row.push(field); rows.push(row); }
-
-  const cleaned = rows.filter((r) => r.some((c) => c.trim() !== ''));
-  if (!cleaned.length) return { header: [], rows: [] };
-  const header = cleaned[0].map((h) => h.trim());
-  return { header, rows: cleaned.slice(1) };
-}
-
-function detectDelimiter(text: string): string {
-  const firstLine = text.split('\n').find((l) => l.trim()) ?? '';
-  const counts: Record<string, number> = {
-    ',': (firstLine.match(/,/g) ?? []).length,
-    '\t': (firstLine.match(/\t/g) ?? []).length,
-    ';': (firstLine.match(/;/g) ?? []).length,
-  };
-  return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
-}
-
-@Injectable()
-export class DataSourceService {
-  constructor(
-    @InjectRepository(DS) private ds: Repository<DS>,
-    @InjectRepository(DataRow) private rows: Repository<DataRow>,
-    private audit: AuditService,
-  ) {}
-
-  list() {
-    return this.ds.find({ where: { tenantId: useTenantId() }, order: { createdAt: 'DESC' } });
-  }
-
-  async get(id: number) {
-    const s = await this.ds.findOne({ where: { id, tenantId: useTenantId() } });
-    if (!s) throw new NotFoundException('数据源不存在');
-    return s;
-  }
-
-  async remove(id: number) {
-    const src = await this.get(id);
-    // SQL 数据源：释放连接池
-    if (src.type === 'sql' && src.config?.encryptedUrl) {
-      try { await sqlx.releasePool(decrypt(src.config.encryptedUrl)); } catch { /* ignore */ }
-    }
-    await this.rows.delete({ sourceId: id, tenantId: useTenantId() });
-    await this.ds.delete({ id, tenantId: useTenantId() });
-    await this.audit.write(useTenantId(), 'data_source.delete', { id }, undefined, 'data_source', id);
-    return { ok: true };
-  }
-
-  async saveRows(dto: { name?: string; type?: string; headers?: string[]; rows: any[]; fieldMap?: Record<string, string>; config?: any }) {
-    const name = dto.name || `数据源 ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`;
-    const fieldMap = dto.fieldMap ?? {};
-    const rawType = String(dto.type ?? 'csv').toLowerCase();
-    const type = ['csv', 'excel', 'sql'].includes(rawType) ? rawType : 'csv';
-    const payloads = (dto.rows ?? []).map((r) => {
-      const out: Record<string, any> = {};
-      for (const [k, v] of Object.entries(r)) out[fieldMap[k] ?? k] = v;
-      return out;
-    });
-    const src = await this.ds.save({
-      tenantId: useTenantId(),
-      name,
-      type,
-      config: { headers: dto.headers ?? Object.keys(payloads[0] ?? {}), fieldMap, sourceType: rawType, ...(dto.config ?? {}) },
-    });
-    if (payloads.length) {
-      await this.rows.save(payloads.map((p) => ({ tenantId: useTenantId(), sourceId: src.id, payload: p })));
-    }
-    await this.audit.write(useTenantId(), 'data_source.create', { id: src.id, name, rows: payloads.length }, undefined, 'data_source', src.id);
-    return { sourceId: src.id, rows: payloads.length, columns: Object.keys(payloads[0] ?? {}), headers: dto.headers ?? [] };
-  }
-
-  async uploadCsv(name: string, csvText: string, fieldMap: Record<string, string> = {}) {
-    const { header, rows } = parseCsv(csvText);
-    if (!header.length) throw new BadRequestException('CSV 内容为空');
-    const payloads = rows.map((cells) => {
-      const row: Record<string, any> = {};
-      header.forEach((h, i) => { row[fieldMap[h] ?? h] = cells[i] ?? ''; });
-      return row;
-    });
-    return this.saveRows({ name, type: 'csv', headers: header, rows: payloads, fieldMap: {} });
-  }
-
-  async rowsOf(sourceId: number, limit = 500, offset = 0) {
-    await this.get(sourceId);
-    return this.rows.find({
-      where: { sourceId, tenantId: useTenantId() },
-      order: { id: 'ASC' },
-      take: Math.min(2000, limit),
-      skip: offset,
-    });
-  }
-
-  preview(sourceId: number, templateId: number, limit = 10) {
-    return this.rows.find({ where: { sourceId, tenantId: useTenantId() }, take: limit });
-  }
-
-  // ================== SQL 数据源 ==================
-
-  /** 保存 SQL 数据源定义（连接串加密） */
-  async saveSql(dto: { name: string; connectionUrl: string; queryTemplate?: string; description?: string }) {
-    if (!dto.connectionUrl) throw new BadRequestException('缺少 connectionUrl');
-    if (!dto.connectionUrl.startsWith('postgresql://') && !dto.connectionUrl.startsWith('postgres://')) {
-      throw new BadRequestException('仅支持 postgresql:// 连接串（需带用户名/密码/端口）');
-    }
-    const encryptedUrl = encrypt(dto.connectionUrl);
-    const src = await this.ds.save({
-      tenantId: useTenantId(),
-      name: dto.name || `SQL 数据源`,
-      type: 'sql',
-      config: {
-        driver: 'postgres',
-        encryptedUrl,
-        queryTemplate: dto.queryTemplate || '',
-        description: dto.description || '',
-        createdAt: new Date().toISOString(),
-        envKeySet: hasProdKey(),
-      },
-    });
-    await this.audit.write(useTenantId(), 'data_source.save_sql', { id: src.id, name: src.name }, undefined, 'data_source', src.id);
-    return { sourceId: src.id, envKeySet: hasProdKey() };
-  }
-
-  /** 测试 SQL 数据源连接（SELECT 1） */
-  async testSql(id: number) {
-    const src = await this.get(id);
-    if (src.type !== 'sql') throw new BadRequestException('该数据源不是 SQL 类型');
-    const url = decrypt(src.config.encryptedUrl);
-    return sqlx.ping({ connection: url });
-  }
-
-  /** 执行 SQL（参数化 + 只读强制） */
-  async execSql(id: number, params: any[] = [], limit = 1000): Promise<sqlx.SqlExecResult> {
-    const src = await this.get(id);
-    if (src.type !== 'sql') throw new BadRequestException('该数据源不是 SQL 类型');
-    const query = String(src.config.queryTemplate || '').trim();
-    if (!query) throw new BadRequestException('该 SQL 数据源尚未配置查询模板');
-    const url = decrypt(src.config.encryptedUrl);
-    let result: sqlx.SqlExecResult;
-    try {
-      result = await sqlx.execute({ connection: url }, query, params, limit);
-    } catch (e: any) {
-      throw new BadRequestException(e?.message || String(e));
-    }
-    await this.audit.write(useTenantId(), 'data_source.exec_sql', { id, rowCount: result.rowCount, durationMs: result.durationMs, paramCount: params.length }, undefined, 'data_source', id);
-    return result;
-  }
-}
 
 @Controller('data-sources')
 @UseGuards(TenantGuard)
 @RequireModule('datasource')   // 订阅层：BASIC 没开 datasource → 403
 export class DataSourceController {
-  constructor(private svc: DataSourceService) {}
+  constructor(
+    private svc: DataSourceService,
+    private scheduler: DatasourceRefreshService,
+  ) {}
 
   @RequirePermission('datasource:read')
   @Get() list() { return this.svc.list(); }
@@ -242,6 +79,38 @@ export class DataSourceController {
     return this.svc.saveSql(b);
   }
 
+  /** P8.4：支持的 SQL 驱动清单（前端建源向导用） */
+  @Get('drivers')
+  drivers() {
+    return {
+      drivers: [
+        { code: 'postgres', urlPrefix: 'postgresql://', placeholder: '$1', driverPackage: 'pg（内置）' },
+        { code: 'mysql', urlPrefix: 'mysql://', placeholder: '?', driverPackage: 'mysql2（按需 npm i mysql2）' },
+        { code: 'mssql', urlPrefix: 'mssql://', placeholder: '@p1', driverPackage: 'mssql（按需 npm i mssql）' },
+      ],
+      note: 'MySQL / SQL Server 驱动懒加载，未安装时明确报错；真连库回归需第二套数据库实例',
+    };
+  }
+
+  /**
+   * P8.4 运维端点：查看当前队列里已登记的自动刷新任务。
+   * 只暴露 job name 与周期，不返回 DSN / 查询模板。
+   */
+  @Roles('admin')
+  @Get('refresh-schedule')
+  async refreshSchedule(@Query('limit') limit?: number) {
+    return {
+      queue: REFRESH_QUEUE,
+      schedulerEnabled: String(process.env[REFRESH_SCHEDULER_ENV] ?? '1') !== '0',
+      jobs: await this.scheduler.scheduled(limit ? +limit : 100),
+    };
+  }
+
+  /** P8.4 运维端点：手动触发一次启动期对齐（Redis 恢复后无需重启进程） */
+  @Roles('admin')
+  @Post('refresh-bootstrap')
+  refreshBootstrap() { return this.scheduler.bootstrap(); }
+
   @Roles(...SQL_ROLES)
   @Post(':id/sql-test') testSql(@Param('id') id: number) { return this.svc.testSql(+id); }
 
@@ -251,7 +120,7 @@ export class DataSourceController {
     @Param('id') id: number,
     @Body() b: SqlExecDto = new SqlExecDto(),
   ) {
-    return this.svc.execSql(+id, Array.isArray(b.params) ? b.params : [], b.limit ?? 1000);
+    return this.svc.execSql(+id, Array.isArray(b.params) ? b.params : [], b.limit ?? 1000, b.offset ?? 0);
   }
 
   @Roles(...SQL_ROLES)
@@ -260,7 +129,28 @@ export class DataSourceController {
     @Param('id') id: number,
     @Body() b: SqlExecDto = new SqlExecDto(),
   ) {
-    return this.svc.execSql(+id, Array.isArray(b.params) ? b.params : [], b.limit ?? 200);
+    return this.svc.execSql(+id, Array.isArray(b.params) ? b.params : [], b.limit ?? 200, b.offset ?? 0);
+  }
+
+  @Roles(...SQL_ROLES)
+  @Post(':id/lookup')
+  lookup(@Param('id') id: number, @Body() b: LookupDto = new LookupDto()) {
+    return this.svc.lookup(+id, b.filters ?? {}, b.limit ?? 200);
+  }
+
+  /** P8.4：手动刷新（真执行 SQL 并落库），自动刷新 Worker 复用同一 Service 方法 */
+  @Roles(...DS_WRITE)
+  @Post(':id/refresh')
+  refresh(@Param('id') id: number) { return this.svc.refresh(+id); }
+
+  @Roles(...DS_WRITE)
+  @Get(':id/refresh-plan')
+  refreshPlan(@Param('id') id: number) { return this.svc.refreshPlanOf(+id); }
+
+  @Roles(...DS_WRITE)
+  @Put(':id/refresh-config')
+  setRefreshConfig(@Param('id') id: number, @Body() b: RefreshConfigDto = new RefreshConfigDto()) {
+    return this.svc.setRefreshConfig(+id, b.refresh ?? {});
   }
 
   @Get(':id/rows') rowsOf(@Param('id') id: number, @Query() q: any) {
@@ -276,9 +166,13 @@ export class DataSourceController {
 }
 
 @Module({
-  imports: [TypeOrmModule.forFeature([DS, DataRow]), AuditModule],
+  imports: [
+    TypeOrmModule.forFeature([DS, DataRow]),
+    AuditModule,
+    BullModule.registerQueue({ name: REFRESH_QUEUE }),
+  ],
   controllers: [DataSourceController],
-  providers: [DataSourceService],
+  providers: [DataSourceService, DatasourceRefreshService, DatasourceRefreshProcessor],
   exports: [DataSourceService],
 })
 export class DataSourceModule {}

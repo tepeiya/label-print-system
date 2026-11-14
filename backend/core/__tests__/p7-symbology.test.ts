@@ -12,7 +12,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  SYMBOLOGIES, canonSym, capabilityFor, describeUnsupported, hasNative,
+  SYMBOLOGIES, canonSym, describeUnsupported, hasNative,
   uiSymbologyList, snapModuleWidth, quietZoneMm, humanReadablePlacement,
   resolveBarcodeGeometry, encodeGs1, gs1ToProtocol, dotMm,
 } from '../symbology.capabilities';
@@ -33,7 +33,8 @@ const twoD = (sym: string, content = 'HELLO-中文'): QrcodeSpec => ({
 // ---------------------- 1. 单一真源自洽性 ----------------------
 test('P7-能力真源：前端可选码制全部登记且无重复', () => {
   const items = uiSymbologyList();
-  assert.equal(items.length, 20, '14 种一维 + 6 种二维');
+  // P7 基线 20 种（14 一维 + 6 二维）；P8.4 新增 6 种工业码制（位图通道，见 industrial-symbology.test.ts）
+  assert.equal(items.length, 26, 'P7 基线 20 + P8.4 工业码制 6');
   assert.equal(new Set(items.map((i) => i.sym)).size, items.length);
   // 每个码制至少要有位图通道（预览）
   for (const c of Object.values(SYMBOLOGIES)) assert.equal(c.bitmap, true, `${c.sym} 必须能位图预览`);

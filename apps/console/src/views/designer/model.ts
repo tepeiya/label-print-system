@@ -23,10 +23,14 @@ export const DPI_OPTIONS = [203, 300, 600];
 export const BARCODE_SYMS = [
   'CODE128', 'GS1_128', 'CODE39', 'CODE93', 'EAN13', 'EAN8', 'UPC', 'UPC_E',
   'ITF14', 'ITF', 'CODABAR', 'MSI', 'PHARMACODE', 'CODE16K',
+  // P8.4 工业码制（位图预览，无打印机原生指令）
+  'HIBC_128', 'HIBC_CODE39', 'PZN',
 ];
 
 export const QRCODE_SYMS = [
   'QRCODE', 'MICROQR', 'DATAMATRIX', 'DATAMATRIX_RECT', 'PDF417', 'AZTEC',
+  // P8.4 工业码制（位图预览，无打印机原生指令）
+  'MAXICODE', 'HIBC_DATAMATRIX', 'HIBC_QR',
 ];
 
 // -----------------------------------------------------------------------------
@@ -48,6 +52,8 @@ const PRINT_PROTOCOLS: Record<string, string[]> = {
   QRCODE: ['ZPL', 'TSPL', 'EPL'], MICROQR: ['ZPL'],
   DATAMATRIX: ['ZPL'], DATAMATRIX_RECT: ['ZPL'],
   PDF417: ['ZPL'], AZTEC: ['ZPL'],
+  // P8.4 工业码制：位图通道可用，ZPL/TSPL/EPL 均无原生指令 → 标「预览仅·需图像通道」
+  MAXICODE: [], HIBC_128: [], HIBC_CODE39: [], HIBC_DATAMATRIX: [], HIBC_QR: [], PZN: [],
 };
 
 /** 生成 [value, label] 元组选项（FSelect 原生支持），label 带受限标记 */

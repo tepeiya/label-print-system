@@ -18,6 +18,8 @@ import { CreatePrintJobDto, PreviewRenderDto, PrintCommandsDto, RetryPrintDto } 
 import { buildJob as buildTsplJob } from '../../core/tspl-generator';
 import { buildJob as buildEplJob } from '../../core/epl-generator';
 import { uiSymbologyList } from '../../core/symbology.capabilities';
+// P8.3：水印层（纯函数夹取 + 转义，指令通道不叠加）
+import { normalizePolicy, watermarkHtmlLayer } from '../governance/governance.calc';
 import { PrintEvents } from './events.event';
 import * as crypto from 'crypto';
 import { JWT_SECRET } from '../common/config';
@@ -67,10 +69,23 @@ export class PrintController {
 export class PrintPreviewController {
   @Post()
   render(@Body() body: PreviewRenderDto): HtmlRenderOutput {
+    // P8.3 水印：预览是无状态端点（不挂 TenantGuard），规格由调用方从
+    // GET /governance/policy 取得后传入；生产打印由服务端在 createJob 强制注入，不可绕过。
+    // 这里再过一次 normalizePolicy，脏配置（非法颜色/超界透明度/注入文本）一律夹掉。
+    const spec = body.watermark ? normalizePolicy({ watermark: body.watermark }).watermark : null;
+    const page = body.templateContent?.page ?? { widthMm: 40, heightMm: 30 };
+    const now = new Date();
+    const watermarkHtml = spec?.enabled
+      ? watermarkHtmlLayer(spec, page, {
+          printDate: now.toISOString().slice(0, 10),
+          printTime: now.toISOString().slice(11, 19),
+        })
+      : '';
     return renderPrintHtml({
       templateContent: body.templateContent,
       rows: body.rows ?? [{}],
       copies: body.copies ?? 1,
+      watermarkHtml,
     });
   }
 }

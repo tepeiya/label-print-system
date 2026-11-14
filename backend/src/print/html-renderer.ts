@@ -32,6 +32,8 @@ export interface HtmlRenderInput {
   };
   rows?: Record<string, any>[];
   copies?: number;
+  /** P8.3 水印 HTML 层（governance.calc.watermarkHtmlLayer 已转义，直接拼到 .lbl 内） */
+  watermarkHtml?: string;
 }
 
 export interface HtmlRenderOutput {
@@ -44,7 +46,7 @@ export interface HtmlRenderOutput {
 }
 
 export function renderPrintHtml(input: HtmlRenderInput): HtmlRenderOutput {
-  const { templateContent, rows = [{}], copies = 1 } = input;
+  const { templateContent, rows = [{}], copies = 1, watermarkHtml = '' } = input;
   const page = templateContent.page;
   const dpi = page.dpi || 300;
   const mmToPx = dpi / 25.4;            // 1mm ≈ dpi/25.4 px（精准）
@@ -70,7 +72,7 @@ export function renderPrintHtml(input: HtmlRenderInput): HtmlRenderOutput {
     };
     const serials: Record<string, string[]> = {}; // 预览不预分配，留空
     const rendered = render.renderRow(templateContent.elements, row, serials, sysVars, copyIndex);
-    labels.push(renderedToLabel(rendered, mmToPx));
+    labels.push(renderedToLabel(rendered, mmToPx, watermarkHtml));
   }
 
   // --- 多联拼版：与前端 buildPrintHtml 保持一致 ---
@@ -111,12 +113,13 @@ export function renderPrintHtml(input: HtmlRenderInput): HtmlRenderOutput {
 }
 
 // -----------------------------------------------------------------------------
-function renderedToLabel(elements: any[], mmToPx: number): string {
+function renderedToLabel(elements: any[], mmToPx: number, watermarkHtml = ''): string {
   const parts: string[] = [];
   for (const e of elements) {
     parts.push(renderElement(e, mmToPx));
   }
-  return `<div class="lbl">${parts.join('')}</div>`;
+  // .lbl 已是 position:relative，水印绝对定位落在标签内；放最后保证在最上层
+  return `<div class="lbl">${parts.join('')}${watermarkHtml}</div>`;
 }
 
 function renderElement(e: any, mmToPx: number): string {

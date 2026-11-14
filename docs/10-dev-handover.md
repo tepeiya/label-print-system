@@ -111,7 +111,9 @@ curl -s http://localhost:3200/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 > 下面「未完成」按「会挡住什么」排序，不按工作量排序；标 🔴 的会挡住对外承诺，标 🟡 的是上线前必须处理，
 > 标 ⚪ 的是功能缺口（不影响已交付主线）。本轮之后剩余项以 §10.27.4 的「待验收 / 未做」表为准。
 > **2026-11-13 追加**：按专业条码软件收费清单重新盘点的 P8 补齐路线见 **§10.28**（顺序表在 `docs/08-plan.md §8.6`）；
-> 本轮执行 P8.0 + P8.1 + P8.2，其验收边界以 §10.28.4 为准，不要与 §10.27 的独立库验收混为一谈。
+> **P8.0–P8.5 六个阶段的代码现已全部落地**（P8.0/8.1/8.2 见 §10.28.5，P8.3/8.4 见 §10.29，P8.5 见 §10.30），
+> 全量单测 442 全绿 / typecheck 0 / DI 图成立；但 P8.3 并发防重、P8.4 第二套数据库与调度端到端、P8.5 全部硬件项
+> **仍需真库/真机验收**，验收边界以 §10.28.4 与 §10.30.3 为准，不要与 §10.27 的独立库验收混为一谈，也不要写「已交付」。
 
 > **⚠️ 2026-11-08 最新优先级调整**：SaaS/Agent 主线（P0–P6）已基本闭环，下一轮开发回到**条码设计与打印核心能力**——
 > 这是产品的"命根子"，目前与 BarTender / ZebraDesigner / NiceLabel 等专业系统差距显著，详见后续待补 §10.7.3。
@@ -2315,9 +2317,9 @@ env 入口：`DB_DEDICATED_DSNS='{"acme":"postgres://..."}'`，单条失败只�
 | --- | --- | --- | --- |
 | B3-1 | HotFolder / 事件触发器 / 出站 Webhook | P8.1 | **代码已落地 + 纯函数单测全绿**，待真库/Redis 验收，见 §10.28.5 |
 | B3-2 | 整标签矢量 SVG / PDF 导出 | P8.2 | **代码已落地 + 真实 SVG→PDF 冒烟通过**，中文字体/印前链路待真机验收，见 §10.28.5 |
-| B3-3 | 模板发布审批 / 防重打印 / 水印 / 发布锁定 / 数量策略 | P8.3 | 路线已定，代码未做 |
-| B3-4 | MySQL/SQLServer 驱动、SQL 分页与自动刷新、GS1 完整 AI 字典、MaxiCode/HIBC/PZN | P8.4 | 路线已定，代码未做 |
-| B3-5 | Windows 本地打印代理 / USB / RFID / 喷码机 | P8.5 | 路线已定，**必须真机验收** |
+| B3-3 | 模板发布审批 / 防重打印 / 水印 / 发布锁定 / 数量策略 | P8.3 | **代码已落地**（22 条判定层单测 + 水印双通道冒烟），待真库验证并发防重，见 §10.29.1 |
+| B3-4 | MySQL/SQLServer 驱动、SQL 分页与自动刷新、GS1 完整 AI 字典、MaxiCode/HIBC/PZN | P8.4 | **代码已落地**（方言层 14 条 + GS1 16 条 + 工业码制 6 条 + 刷新调度 9 条单测；真实 BullMQ repeatable 接入），待第二套数据库与真机译码验收，见 §10.29.2 |
+| B3-5 | Windows 本地打印代理 / USB / RFID / 喷码机 | P8.5 | **协议层与服务端接入已落地**（Provider 注册闭环 + 脱敏信封冒烟 + 26 条单测）；**真机未验收，禁止对外承诺可用**，见 §10.30 |
 | B3-6 | CMYK 专色、出血/裁切线、PDF 拆分与交叉合并、批量图片变量、弧形条码 | 后置 | 未做（印刷级细项，P8.2 只交付矢量骨架） |
 
 > 本表与 §10.1.5 的 B3 段并存：那里是历史缺口，这里是按收费清单重新归并后的 P8 增量，勿重复计工时。
@@ -2330,7 +2332,12 @@ env 入口：`DB_DEDICATED_DSNS='{"acme":"postgres://..."}'`，单条失败只�
 | typecheck / tsc 全量编译 / lint | 可实跑 |
 | 触发器 CRUD、delivery 落库、Webhook 真实出站 | **未实跑**（沙盒无 PostgreSQL / Redis；`fs.watch` 可用临时目录单测） |
 | PDF 在真实浏览器/印刷链路的效果 | 未实跑（可校验页数、页尺寸、字节签名） |
-| P8.3–P8.5 | 仅路线与验收口径，无代码 |
+| P8.3 发布审批 / 防重并发 / 水印在生产打印链路 | 代码已落地、判定层单测全绿、SVG/HTML 水印冒烟通过；**真库并发 `ON CONFLICT` 未实跑** |
+| P8.4 MySQL / SQL Server 驱动 | 方言层与分页/占位符/标识符引用单测全绿；驱动懒加载，沙盒无第二套数据库实例，**真连库未实跑** |
+| P8.4 自动刷新 repeatable 调度 | 注册/撤销/启动对齐链路真实接入，纯函数单测全绿；**到期 → Worker 消费 → 真执行 SQL 的端到端时序未实跑**（无 Redis / 真库） |
+| P8.4 MaxiCode / HIBC / PZN | `bwip-js` 真实 SVG 渲染单测通过（位图通道）；**真机打印与解码未验**，能力表明确「预览仅·需图像通道」 |
+| P8.5 本地代理 / Windows 驱动 / USB / 串口 / RFID / 喷码 | **真机完全未验收**。服务端只交付协议层、脱敏信封、EPC 数据层、厂商中立作业载荷；清单见 §10.30.3 |
+| 纯函数 / 单测 / typecheck / tsc 全量编译 / lint / DI 图 | 可实跑，且本轮全绿（见 §10.29.3） |
 
 #### 10.28.5 本轮落地清单（P8.0 + P8.1 + P8.2）
 
@@ -2378,8 +2385,115 @@ env 入口：`DB_DEDICATED_DSNS='{"acme":"postgres://..."}'`，单条失败只�
 | --- | --- |
 | 触发器 CRUD / delivery 落库 / Webhook 真实出站 / HotFolder 自动触发 | **未实跑**（沙盒无 PostgreSQL / Redis）；判定层 100% 单测覆盖，`fs.watch` 与 `parseDropFile` 有单测 |
 | 多实例 HotFolder | `fs.watch` 是单进程监听；多 worker 需共享存储 + 队列 jobId 指纹去重或分布式锁（V1 只做后者） |
-| 模板发布审批 / 防重打印 / 水印 / 数量策略（P8.3） | 路线已定，无代码 |
-| MySQL/SQLServer 驱动、GS1 完整 AI 字典、MaxiCode/HIBC/PZN（P8.4） | 路线已定，无代码 |
-| Windows 本地打印代理 / USB / RFID / 喷码机（P8.5） | 路线已定，必须真机验收 |
+| 模板发布审批 / 防重打印 / 水印 / 数量策略（P8.3） | **代码已落地**，待真库并发验收，见 §10.29.1 |
+| MySQL/SQLServer 驱动、GS1 完整 AI 字典、MaxiCode/HIBC/PZN（P8.4） | **代码已落地**，待第二套数据库与真机译码验收，见 §10.29.2 |
+| Windows 本地打印代理 / USB / RFID / 喷码机（P8.5） | **协议层与服务端接入已落地，真机未验收**，见 §10.30 |
 | CMYK 专色、出血/裁切线、PDF 拆分与交叉合并、批量图片变量、弧形条码 | 未做；PDF 明确是 600dpi 位图而非矢量 |
 | 中文文本 | SVG `<text>` 依赖渲染端字体；缺中文字体时 PDF 栅格化会退化为方块，`warnings` 已提示 |
+
+---
+
+### 10.29 P8.3 / P8.4 落地清单（代码已落地，验收边界见 §10.28.4）
+
+> 两节沿用同一工程口径：**单一真源 + 纯函数可测核心 + 真实接入 + 诚实标注验收边界**。
+> 全部新增业务表带 `tenant_id` 并纳入 RLS 兜底；默认策略全宽松，存量租户零行为变化。
+
+#### 10.29.1 P8.3 企业治理
+
+| 文件 | 职责 |
+| --- | --- |
+| `src/governance/governance.calc.ts` | 判定层单一真源：模板状态机（`draft/in_review/published/rejected/archived`）、迁移表、编辑/打印前置判定、`printFingerprint`（显式带 `tenantId`，复用 `trigger.calc.fingerprint`）、防重与配额判定、水印位置与 SVG/HTML 层生成（`escapeXml` + 变量展开防注入） |
+| `src/governance/governance.entity.ts` / `scripts/saas_p8_governance.sql` | `governance_settings` / `template_governance` / `template_reviews` / `print_dedupe`；`uq_print_dedupe_tenant_key` 唯一索引是并发防重最终防线 |
+| `src/governance/governance.service.ts` | 策略读写、审批编排（含通知/审计）、`prePrint()`、`recordPrint()`（`INSERT ... ON CONFLICT` 兜并发）、dedupe 清理 |
+| `src/governance/governance.controller.ts` | 7 个端点，见 `docs/05-api.md §5.15.1` |
+| `src/template/template.service.ts` | `update()` 保存前 `assertEditable()`；`rollback()` 走 `update()`，同样受发布锁定约束 |
+| `src/print/print.service.ts` | `createJob()` 前置治理校验（不通过写 `print.job.blocked_by_governance` 审计并 403），返回 `governanceWarnings` / `watermarkApplied` |
+| `src/print/vector-renderer.ts` / `html-renderer.ts` / `export.controller.ts` | 水印只叠加在 SVG / HTML / PDF 通道；**指令通道（ZPL/TSPL/EPL）不叠加水印**，响应里明确 `watermarkChannelNote` |
+| `src/governance/__tests__/governance.calc.test.ts` | 22 条状态机 / 防重 / 水印判定单测 |
+
+**关键不变量**：`DEFAULT_POLICY` 全部关闭，未写策略的租户行为与 P8.3 之前完全一致；水印层只负责「叠加」，策略归一化只在 `governance.calc.ts`，渲染层不另算一套。
+
+#### 10.29.2 P8.4 数据源与码制深化
+
+| 文件 | 职责 |
+| --- | --- |
+| `core/gs1-ai.ts` | GS1 AI 字典与合规校验单一真源：约 60 个精确 AI + 5 类模式族，定长/变长、字符集、YYMMDD 日期、模 10 校验位、未登记 AI warning、向导目录、整串 FNC1 校验。**明确声明非 GS1 General Specifications 全量** |
+| `core/symbology.capabilities.ts` | `encodeGs1()` 改为委托 `validateGs1()`（消除两套定长表漂移）；能力表从 20 扩到 26 种，新增 MaxiCode / HIBC 系列 / PZN，全部 `bitmap: true`、无原生指令、前端标「预览仅·需图像通道」 |
+| `core/barcode-renderer.ts` | 工业码制 `BWIP_MAP` + `is2d()` 判定，bwip-js 真实 SVG 出图 |
+| `src/datasource/sql-driver.calc.ts` | 方言层单一真源：postgres/mysql/mssql 占位符 `$1`/`?`/`@p1`、分页 `LIMIT OFFSET` / `OFFSET FETCH`（SQL Server 用 `ORDER BY (SELECT NULL)` 满足语法）、标识符引用、字段查找、`refreshPlan()` |
+| `src/datasource/sql-executor.ts` | 多驱动执行器：只读强制 + 参数化 + 懒加载 mysql2/mssql（未安装明确报错，不静默假装成功）+ `wrapSqlError()` 挂 cause |
+| `src/datasource/refresh-scheduler.calc.ts` | **自动刷新调度判定层**：job name 带 `tenant_id:source_id`、repeatable key 稳定化、`reconcileRepeat()` 五分支（含「参数相同绝不重复注册」「改参数必须先 remove 再 add」）、`bootstrapCandidates()` 启动期对齐 |
+| `src/datasource/refresh-scheduler.service.ts` | 真实 BullMQ 接入：`sync()` / `unschedule()` / `bootstrap()` / `scheduled()`；独立队列 `datasource_refresh`，`DATASOURCE_REFRESH_SCHEDULER_ENABLED=0` 可关 |
+| `src/datasource/refresh.processor.ts` | Worker：name/data 双重租户校验 → 目录库构造 `TenantCtx`（含真实 `data_source_key`）→ `tenantStorage.run()` 复用 `DataSourceService.refresh()`；单源失败只写回 `lastError`，不拖住其它租户 |
+| `src/datasource/datasource.service.ts` | 从 module 抽出（避免 ESM 循环）；`saveSql` / `setRefreshConfig` / `remove` 同步调度，Redis 不可用只告警、配置仍可保存；新增 `markRefreshError()` |
+| `src/barcode/barcode.module.ts` | `Gs1Controller`：`/gs1/ai-catalog` / `/gs1/ai/:ai/help` / `/gs1/validate` |
+| 单测 | `gs1-ai.test.ts` 16 条、`industrial-symbology.test.ts` 6 条、`sql-driver.calc.test.ts` 14 条、`refresh-scheduler.calc.test.ts` 9 条 |
+
+**架构决策**：刷新调度全部收在 `DataSourceModule` 内，不放 `JobsModule` —— 否则 `JobsModule → DataSourceModule`（Worker 要拿 Service）与 `DataSourceService → 调度器` 形成循环 DI。当前依赖单向：`DataSourceService → DatasourceRefreshService → Queue/catalog`、`Processor → DataSourceService`。
+
+**已知边界**：`bootstrap()` 从目录库扫 `data_sources`，**独立库租户的数据源在独立库，扫不到**，故启动期对齐只覆盖共享库租户；`catalog` 扫描失败只告警不阻断启动，配置变更时的即时 `sync()` 仍是可用链路。真 Redis / 真库端到端触发未实跑。
+
+#### 10.29.3 本轮实跑基线（P8.3 + P8.4 + P8.5 收口）
+
+| 项 | 结果 |
+| --- | --- |
+| `npm run typecheck` | **0 error** |
+| `npm test` | **442 全绿**（435 pass / 7 skip / 0 fail；P8.0–8.2 基线 349 → P8.3 371 → P8.4 416 → P8.5 442） |
+| 定向 lint（本轮全部新增/改动文件） | **0 error**；`src/datasource/`、`src/hardware/`、`src/governance/` 新增文件 0 warning |
+| `tsc -p tsconfig.json` 全量编译 | 通过（含装饰器元数据） |
+| Nest DI 图 | `createApplicationContext(AppModule)` 未在超时前出现依赖解析/循环错误，卡在沙盒无 PG/Redis 的外部连接，依赖图成立 |
+| P8.3 水印冒烟 | `SVG_WATERMARK_COUNT:1` / `HTML_WATERMARK_COUNT:1` / `NO_WM_BASELINE:true` |
+| P8.5 链路冒烟 | `PROVIDER_TYPE: windows_spooler` / `PRINT_RESULT: {"ok":true}` / `NO_SECRETS:true` / `REDACTED_FIELDS:["host","port","user","password","dsn"]` / `ZPL_HAS_XA:true` / `NO_PORT_FAILS_LOUDLY:true` |
+
+---
+
+### 10.30 P8.5 硬件层：协议落地与真机验收清单
+
+> **对外口径：协议层与服务端接入已落地，真机未验收，禁止承诺可用。**
+> 服务端在 Linux 沙盒里看不到用户 Windows 机器上的驱动打印机、USB 口、串口、RFID 读写器，
+> 因此不写任何「连 socket 到本机驱动」的假实现。正确形态是**本地代理主动出站**。
+
+#### 10.30.1 已落地内容
+
+| 文件 | 职责 |
+| --- | --- |
+| `src/hardware/agent-protocol.calc.ts` | 本地代理协议判定层：注册归一化（能力白名单 + agentId fail-closed）、心跳存活、确定性选代理、`agentJobEnvelope()` **字段白名单脱敏**（connection 只留 `driverName`；host/port/账号/密码/DSN/token 一律剔除并记 `redactedFields`）、回执状态机（终态不可改写）、`verifyReceipt()` 三重匹配、HMAC 签名（复用 P8.1 `verifySignature` 真源）、认领超时回收 |
+| `src/hardware/epc.calc.ts` | GS1 EPC TDS **SGTIN-96** 编解码（分区表、96bit 位拼接/反解、模 10 校验位复用 `core/checksum`）、`rfidWriteJob()` 写操作信封、`verifyEpcWrite()` 写后读回比对（归一化 + 不一致判失败）、`epcDedupeVerdict()` 防重写 |
+| `src/hardware/inkjet.calc.ts` | 厂商中立喷码作业：`{{varName}}` 同源占位、控制字符剔除、行/字符/件数夹取并 warnings、`validateInkjetJob()` 终检、`inkjetPayload()` 下发文本载荷。**不含任何厂商私有指令** |
+| `printer/printer-provider.interface.ts` | 新增 `WindowsSpoolerProvider` 并注册 —— 修复此前 `get('windows_spooler')` 直接抛「未注册的打印 Provider」的实质缺口；静态 `AgentEnqueuePort` 桥接静态注册表与 Nest DI，未注册时 `print()` 明确返回 `ok:false` |
+| `src/print/print.processor.ts` | 修复真实缺陷：Provider 返回 `ok:false` 时不再被记成 `success`，改走失败分支 |
+| `src/hardware/hardware.service.ts` / `hardware.entity.ts` / `hardware.module.ts` | 注册/心跳/拉取/回执/回收、入队幂等（jobKey 唯一索引 + 23505 兜并发）、RFID 编码/写任务/读回留痕、喷码作业端点；`HardwareModule.onModuleInit()` 注册 `AgentEnqueuePort` |
+| `scripts/saas_p8_hardware.sql` | `hardware_agents` / `hardware_agent_jobs` / `hardware_rfid_logs`，均带 `tenant_id` + RLS 兜底；`secret_enc` 用 `SQL_SECRET_KEY` AES-256-GCM 存密文（HMAC 需明文，只存 hash 不够） |
+| `src/hardware/__tests__/*.test.ts` | 26 条单测：脱敏、状态机、签名、EPC 位布局往返、写后读回、喷码夹取 |
+
+**协议要点**：代理注册时下发明文 `secret`（**仅此一次**，服务端只存密文 + SHA-256 指纹）；主鉴权用现有租户 JWT，HMAC 签名默认关闭（`HARDWARE_AGENT_SIGNATURE_REQUIRED=1` 开启，与 WP2 限流同款「新维度默认不影响存量租户」）；任务信封脱敏是硬约束，冒烟已验证 `NO_SECRETS:true`。
+
+#### 10.30.2 明确未做（不许含糊）
+
+- 没有 Windows 驱动打印、USB / 串口真实写入、RFID 读写器指令（LLRP / 厂商 SDK）、喷码机品牌协议（Videojet / Domino / Markem-Imaje / Linx）的任何实现。
+- 没有本地代理客户端程序（可执行文件 / 安装包 / 心跳守护进程），只有服务端协议与 API 契约。
+- EPC 只覆盖 SGTIN-96；SSCC-96 / GRAI-96 / GIAI-96 / DOD-96 等编码族未实现，需按 TDS 扩展。
+- 独立库租户的硬件表按 `tenant_id` 路由，但**跨库代理调度未做**（与 §10.29.2 的 bootstrap 边界同源）。
+- 新建表需执行 `scripts/saas_p8_hardware.sql`，否则 `labelflow_app` 角色下无 RLS 策略。
+
+#### 10.30.3 真机验收清单（逐项打勾，未全绿前不得对外承诺可用）
+
+| # | 验收项 | 环境 | 通过标准 |
+| --- | --- | --- | --- |
+| 1 | 建表 + RLS | PostgreSQL，先跑 `saas_p8_governance.sql` 再跑 `saas_p8_hardware.sql` | `labelflow_app` 下三张新表均有 `tenant_isolation` 策略；跨租户查询返回 0 行 |
+| 2 | 代理注册 / 密钥轮换 | Windows 10/11 + 服务端 | 注册返回 `secret` 一次；重新注册后旧密钥签名的请求被拒；库里无明文 secret |
+| 3 | 心跳与在线判定 | 同上 | 断网 90s 后 `GET /hardware/agents` 显示 `offline` 且 `pull` 不再下发任务 |
+| 4 | 驱动打印（核心） | Windows + Zebra/TSC 驱动打印机 | `/print/jobs` 选 `windows_spooler` → 代理拉取 → 真实出纸；`receipt` 回 `succeeded`；打印日志不记 `success` 除非 `provider.ok=true` |
+| 5 | 凭证不出域 | 抓包 / 代理日志 | 信封中无 host/password/DSN；`redactedFields` 完整；服务端 DSN 未落到用户机器 |
+| 6 | 并发入队幂等 | 多 worker 同时重打同一 job | `hardware_agent_jobs` 只有一条同 `job_key` 记录，第二请求返回幂等成功 |
+| 7 | 认领超时回收 | 拉取后杀掉代理进程 | 300s 后 `sweep` 把任务回 `pending` 或 `expired`，不会永久卡住 |
+| 8 | 回执状态机 | 伪造 `succeeded` 后再发 `failed` | 第二次被 400 拒绝，终态不可改写；跨租户伪造 `jobKey` 被拒 |
+| 9 | SGTIN-96 编码 | GS1 官方示例向量 | 与 TDS 官方 hex 一致；解码往返 GTIN 校验位可重建 |
+| 10 | RFID 真写 + 读回 | UHF 读写器 + 标签 | 写入后读回与 `expectedReadBack` 完全一致才 `verified:true`；故意错写一张必须被拦并落 `hardware_rfid_logs` |
+| 11 | 喷码作业 | 具体品牌喷码机 + 代理适配器 | `inkjetPayload()` 被正确翻译为该品牌指令；`{{var}}` 已展开、无控制字符、行数/长度在设备缓冲区内 |
+| 12 | 自动刷新端到端 | Redis + 真 PG + 第二套 MySQL/SQLServer | 配置 `intervalSec` → repeatable 到期 → Worker 真执行 SQL → `data_rows` 更新；改配置后旧 key 被撤销，不出现双周期 |
+| 13 | 并发防重打印 | 真 PG，多 worker 同时提交同批次 | `uq_print_dedupe_tenant_key` 撞 `23505` 后回查判重复，不产生两张相同标签 |
+| 14 | 中文字体 / 印前 | 真实浏览器 + 印刷链路 | PDF 中文不退化方块；如需印前交付，CMYK/专色/出血仍属 B3-6 未做 |
+
+> 第 4、10、11、12、13 项是**硬性真机门槛**。在此之前，P8.5 的准确表述是「协议与服务端接入已落地，待真机验收」。
+

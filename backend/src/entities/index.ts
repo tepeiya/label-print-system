@@ -19,3 +19,7 @@ export { Warehouse, Material, StockBatch, Bom, BomItem } from '../inventory/inve
 export { Notification } from '../notify/notification.entity';
 // P8.1 自动化触发器（DDL: scripts/saas_p8_triggers.sql）
 export { PrintTrigger, TriggerDelivery } from '../jobs/trigger.entity';
+// P8.3 企业治理（DDL: scripts/saas_p8_governance.sql）
+export { GovernanceSetting, TemplateGovernance, TemplateReview, PrintDedupe } from '../governance/governance.entity';
+// P8.5 硬件层（DDL: scripts/saas_p8_hardware.sql）
+export { HardwareAgent, HardwareAgentJob, RfidWriteLog } from '../hardware/hardware.entity';

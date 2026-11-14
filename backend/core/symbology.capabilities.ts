@@ -12,7 +12,10 @@
 //   2. "手册无原生指令" 与 "本产品暂未覆盖" 必须区分：前者引导换通道，后者是可排期缺口。
 //   3. 能力声明同时驱动：生成器分支、warnings 文案、前端"受限"标签、验收脚本。
 //   4. 不静默降级。任何降级都必须显式声明 degradeTo 并回一条 warning。
+//   5. P8.4：GS1 AI 判定改由 core/gs1-ai.ts 单一真源提供，本文件不再自维护定长表。
 // =============================================================================
+
+import { validateGs1 } from './gs1-ai';
 
 /** 支持的打印机协议（P7.7 新增 EPL） */
 export type Protocol = 'zpl' | 'tspl' | 'epl' | 'image';
@@ -74,7 +77,6 @@ const QZ_NONE = { left: 0, right: 0, top: 0, bottom: 0 };
 
 const IMG_HINT = '改用 protocol=image 让后端走 bwip-js 位图下发（ZPL ^GF / TSPL BITMAP）';
 const ZPL_HINT = '改用 ZPL 协议（^B 家族覆盖更广）';
-const TSPL_HINT = '改用 TSPL 协议试试';
 
 /**
  * 能力表：前端可选的 14 种一维 + 6 种二维 **全部**在此登记。
@@ -149,6 +151,34 @@ export const SYMBOLOGIES: Record<string, SymbologyCap> = {
   AZTEC:    { sym: 'AZTEC', kind: '2d', label: 'Aztec', gs1: false, bitmap: true,
     quietZoneX: QZ_NONE,
     caps: { zpl: { native: true, cmd: '^BO' }, tspl: { native: false, noNativeInManual: true, hint: `${ZPL_HINT} 或 ${IMG_HINT}` }, epl: { native: false, noNativeInManual: true, hint: IMG_HINT }, image: { native: true } } },
+
+  // ------------------------------ P8.4 工业码制（位图通道） ------------------------------
+  // 红线：区分「手册无原生指令」与「本产品暂未覆盖」。MaxiCode 在 ZPL 手册里确有 ^BD，
+  //   但本产品生成器未实现该指令（参数含 mode/邮编/国家码），如实标 noNativeInManual=false，
+  //   不能谎称手册没有。其余 HIBC/PZN 三协议均无原生指令。
+  MAXICODE:  { sym: 'MAXICODE', kind: '2d', label: 'MaxiCode (UPS)', gs1: false, bitmap: true,
+    quietZoneX: QZ_DM,
+    caps: {
+      zpl: { native: false, noNativeInManual: false, hint: 'ZPL 手册有 ^BD，但本产品暂未覆盖该指令（需 mode/邮编/国家码结构化参数）；请改用 protocol=image' },
+      tspl: { native: false, noNativeInManual: true, hint: IMG_HINT },
+      epl: { native: false, noNativeInManual: true, hint: IMG_HINT },
+      image: { native: true },
+    } },
+  HIBC_128:  { sym: 'HIBC_128', kind: 'linear', label: 'HIBC (Code 128 载体)', gs1: false, bitmap: true,
+    quietZoneX: QZ_LINEAR_10, heightFactor: 10,
+    caps: { zpl: { native: false, noNativeInManual: true, hint: IMG_HINT }, tspl: { native: false, noNativeInManual: true, hint: IMG_HINT }, image: { native: true } } },
+  HIBC_CODE39: { sym: 'HIBC_CODE39', kind: 'linear', label: 'HIBC (Code 39 载体)', gs1: false, bitmap: true,
+    quietZoneX: QZ_LINEAR_10, heightFactor: 10,
+    caps: { zpl: { native: false, noNativeInManual: true, hint: IMG_HINT }, tspl: { native: false, noNativeInManual: true, hint: IMG_HINT }, image: { native: true } } },
+  HIBC_DATAMATRIX: { sym: 'HIBC_DATAMATRIX', kind: '2d', label: 'HIBC (Data Matrix)', gs1: false, bitmap: true,
+    quietZoneX: QZ_DM, ecc: 'ECC200',
+    caps: { zpl: { native: false, noNativeInManual: true, hint: IMG_HINT }, tspl: { native: false, noNativeInManual: true, hint: IMG_HINT }, image: { native: true } } },
+  HIBC_QR:   { sym: 'HIBC_QR', kind: '2d', label: 'HIBC (QR Code)', gs1: false, bitmap: true,
+    quietZoneX: QZ_QR, ecc: 'L/M/Q/H',
+    caps: { zpl: { native: false, noNativeInManual: true, hint: IMG_HINT }, tspl: { native: false, noNativeInManual: true, hint: IMG_HINT }, image: { native: true } } },
+  PZN:       { sym: 'PZN', kind: 'linear', label: 'PZN 德国药品编号', gs1: false, bitmap: true,
+    quietZoneX: QZ_GS1_RETAIL, heightFactor: 10,
+    caps: { zpl: { native: false, noNativeInManual: true, hint: IMG_HINT }, tspl: { native: false, noNativeInManual: true, hint: IMG_HINT }, image: { native: true } } },
 };
 
 /** 前端可能传的别名 → 标准标识（历史模板 / AI 生成结果里会出现） */
@@ -161,6 +191,13 @@ const ALIASES: Record<string, string> = {
   'MSI10': 'MSI', 'MSI11': 'MSI',
   DM: 'DATAMATRIX', 'DATA_MATRIX': 'DATAMATRIX',
   QR: 'QRCODE', 'QR_CODE': 'QRCODE', 'MICRO_QR': 'MICROQR',
+  // P8.4 工业码制别名（历史模板 / AI 生成结果）
+  HIBC: 'HIBC_128', 'HIBC-128': 'HIBC_128', 'HIBC_CODE_128': 'HIBC_128',
+  'HIBC-39': 'HIBC_CODE39', HIBC39: 'HIBC_CODE39',
+  'HIBC-DM': 'HIBC_DATAMATRIX', HIBCDM: 'HIBC_DATAMATRIX',
+  'HIBC-QR': 'HIBC_QR', HIBCQR: 'HIBC_QR',
+  'UPS-MAXICODE': 'MAXICODE', MAXI_CODE: 'MAXICODE',
+  PZN7: 'PZN', PZN8: 'PZN',
 };
 
 /** 归一化：大小写、连字符/下划线、别名 */
@@ -321,54 +358,23 @@ export function resolveBarcodeGeometry(input: {
 // P7.4 GS1 FNC1 语义（纯函数）
 // -----------------------------------------------------------------------------
 
-/** 常见 GS1 定长 AI（长度不含 AI 本身）；变长 AI 之间必须插 FNC1 分隔 */
-const FIXED_LEN_AI: Record<string, number> = {
-  '00': 18, '01': 14, '02': 14, '03': 14, '04': 16,
-  '11': 6, '12': 6, '13': 6, '14': 6, '15': 6, '16': 6, '17': 6, '18': 6, '19': 6, '20': 2,
-  '31': 8, '32': 8, '33': 8, '34': 8, '35': 8, '36': 8,
-  '41': 13,
-};
-// 值不能吞掉下一个 AI 的起始括号：用 [^\s(]* 而非 [^\s]*，否则
-// "(01)123...(17)251231" 会被一次性当成 AI(01) 的值，定长判定与分隔符全错。
-const AI_RE = /^\((\d{2,4})\)([^\s(]*)/;
-
 /**
  * GS1 内容编码：把人类可读的 "(01)123...(17)..." 转成码制数据流。
  * 原理：GS1-128 以 FNC1 开头（ZPL 用 `>;`，TSPL 用 `!` 或 `\x7C` 前缀视机型），
  *   定长 AI 后直接接续下一个 AI；变长 AI 后必须插 FNC1 分隔，否则译码器无法断句。
- * 返回 { data, fnc1Prefix, separators } —— 生成器按协议选择转义写法。
+ *
+ * P8.4：定长表、AI 合法性、字符集、日期、模 10 校验位全部下沉到 core/gs1-ai.ts
+ *   （单一真源），本函数只保留 P7 的返回契约 { data, fnc1Prefix, separators, invalid }，
+ *   保证 ZPL/TSPL 生成器与 P7 golden 测试零改动。
+ * invalid 只承载 errors；未登记 AI 的提示是 warnings，不会误把合法内容判为失败。
  */
 export function encodeGs1(content: string): { data: string; fnc1Prefix: boolean; separators: number; invalid: string[] } {
-  const s = String(content ?? '').trim();
-  const invalid: string[] = [];
-  if (!s) return { data: '', fnc1Prefix: false, separators: 0, invalid: ['GS1 内容为空'] };
-
-  // 已是不带括号的原始数据流 → 原样返回（视为已编码）
-  if (!s.includes('(')) return { data: s.replace(/\s+/g, ''), fnc1Prefix: true, separators: 0, invalid };
-
-  let rest = s;
-  let data = '';
-  let separators = 0;
-  let guard = 0;
-  while (rest.length && guard++ < 50) {
-    const m = AI_RE.exec(rest);
-    if (!m) { invalid.push(`无法解析的片段: "${rest}"`); break; }
-    const ai = m[1];
-    const value = m[2];
-    const fixed = FIXED_LEN_AI[ai];
-    if (fixed && value.length !== fixed) {
-      invalid.push(`AI(${ai}) 应为 ${fixed} 位，实际 ${value.length} 位`);
-    }
-    data += ai + value;
-    rest = rest.slice(m[0].length).replace(/^\s+/, '');
-    // 后面还有 AI 且当前是变长 AI → 插 FNC1（用占位符 \u001D 表示，生成器按协议转义）
-    if (rest.length && !fixed) { data += '\u001D'; separators++; }
-  }
-  return { data, fnc1Prefix: true, separators, invalid };
+  const v = validateGs1(content);
+  return { data: v.data, fnc1Prefix: v.fnc1Prefix, separators: v.separators, invalid: v.errors };
 }
 
-/** 把 GS1 数据流里的 FNC1 占位符按协议转义 */
+/** 把 GS1 数据流里的 FNC1 占位符按协议转义（split/join 避开控制字符正则） */
 export function gs1ToProtocol(data: string, protocol: 'zpl' | 'tspl'): string {
   const fnc1 = protocol === 'zpl' ? '>8' : '!';
-  return data.replace(/\u001D/g, fnc1);
+  return String(data ?? '').split('\u001D').join(fnc1);
 }

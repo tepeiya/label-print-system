@@ -97,7 +97,9 @@ export class PrintProcessor extends WorkerHost {
         }
 
         if (provider) {
-          await provider.print({
+          // P8.5：Provider 返回 ok:false 必须让本张标签走失败分支，
+          // 否则 windows_spooler 入队失败 / raw_tcp 连接超时都会被记成 success（真实缺陷）。
+          const r = await provider.print({
             tenantId,
             jobId,
             templateId: params.templateId ?? data.templateId ?? content.id ?? 0,
@@ -118,6 +120,7 @@ export class PrintProcessor extends WorkerHost {
             copies: 1,
             labels: [payload],
           });
+          if (!r.ok) throw new Error(r.error || '打印通道返回失败');
         }
 
         await this.logs.save({

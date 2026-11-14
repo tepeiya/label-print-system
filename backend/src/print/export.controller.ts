@@ -8,6 +8,8 @@ import { IsArray, IsInt, IsObject, IsOptional, Max, Min } from 'class-validator'
 import { Response } from 'express';
 import { buildExportSvgs } from './vector-renderer';
 import { sheetsToPdf } from './pdf-export';
+// P8.3：水印层（纯函数夹取 + 转义；指令通道不叠加）
+import { normalizePolicy, watermarkSvgLayer } from '../governance/governance.calc';
 
 export class ExportDto {
   @IsObject()
@@ -25,6 +27,22 @@ export class ExportDto {
 
   @IsOptional()
   serialMap?: Record<string, string[]>;
+
+  /** P8.3 水印规格（可选）；由 governance.calc.normalizePolicy 夹取后生效 */
+  @IsOptional() @IsObject()
+  watermark?: any;
+}
+
+/** 构造水印 SVG 层：无规格 / 未启用 → 空串（对 P8.2 行为零变化） */
+function svgWatermarkLayer(b: ExportDto): string {
+  const spec = b.watermark ? normalizePolicy({ watermark: b.watermark }).watermark : null;
+  if (!spec?.enabled) return '';
+  const page = b.templateContent?.page ?? { widthMm: 40, heightMm: 30 };
+  const now = new Date();
+  return watermarkSvgLayer(spec, page, {
+    printDate: now.toISOString().slice(0, 10),
+    printTime: now.toISOString().slice(11, 19),
+  });
 }
 
 @Controller('print/export')
@@ -36,6 +54,7 @@ export class PrintExportController {
       const out = buildExportSvgs({
         templateContent: b.templateContent, rows: b.rows,
         copies: b.copies, serialMap: b.serialMap,
+        watermarkLayer: svgWatermarkLayer(b),
       });
       return {
         format: 'svg',
@@ -53,7 +72,7 @@ export class PrintExportController {
     }
   }
 
-  /** 多页 PDF：每页尺寸按 mm→pt 精确换算，600dpi 位图，无水印 */
+  /** 多页 PDF：每页尺寸按 mm→pt 精确换算，600dpi 位图；可叠加 P8.3 水印层 */
   @Post('pdf')
   async pdf(@Body() b: ExportDto, @Res() res: Response) {
     let out: Awaited<ReturnType<typeof buildExportSvgs>>;
@@ -61,6 +80,7 @@ export class PrintExportController {
       out = buildExportSvgs({
         templateContent: b.templateContent, rows: b.rows,
         copies: b.copies, serialMap: b.serialMap,
+        watermarkLayer: svgWatermarkLayer(b),
       });
     } catch (e: any) {
       throw new BadRequestException(String(e?.message ?? e));
