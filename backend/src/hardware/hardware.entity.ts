@@ -36,10 +36,10 @@ export class HardwareAgentJob {
   @PrimaryGeneratedColumn() id: number;
   @Column({ name: 'tenant_id' }) tenantId: number;
   @Column({ name: 'job_key', length: 64 }) jobKey: string;
-  @Column({ name: 'agent_id', length: 64, nullable: true }) agentId: string | null;
+  @Column({ name: 'agent_id', type: 'varchar', length: 64, nullable: true }) agentId: string | null;
   @Column({ name: 'job_id' }) jobId: number;
-  @Column({ name: 'printer_id', nullable: true }) printerId: number | null;
-  @Column({ name: 'template_id', nullable: true }) templateId: number | null;
+  @Column({ name: 'printer_id', type: 'bigint', nullable: true }) printerId: number | null;
+  @Column({ name: 'template_id', type: 'bigint', nullable: true }) templateId: number | null;
   @Column({ length: 20, default: 'pending' }) status: string;
   @Column({ length: 32, default: 'windows_spooler' }) capability: string;
   @Column('jsonb') envelope: Record<string, any>;
@@ -57,9 +57,9 @@ export class RfidWriteLog {
   @PrimaryGeneratedColumn() id: number;
   @Column({ name: 'tenant_id' }) tenantId: number;
   @Column({ length: 24 }) epc: string;
-  @Column({ name: 'read_back', length: 24, nullable: true }) readBack: string | null;
+  @Column({ name: 'read_back', type: 'varchar', length: 24, nullable: true }) readBack: string | null;
   @Column({ default: false }) verified: boolean;
-  @Column({ name: 'job_id', nullable: true }) jobId: number | null;
+  @Column({ name: 'job_id', type: 'bigint', nullable: true }) jobId: number | null;
   @Column({ name: 'detail', type: 'text', nullable: true }) detail: string | null;
   @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
 }

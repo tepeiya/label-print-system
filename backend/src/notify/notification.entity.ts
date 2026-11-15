@@ -14,7 +14,7 @@ export class Notification {
   @Column({ length: 40 }) category: string;
   @Column({ length: 200 }) title: string;
   @Column({ type: 'text', default: '' }) body: string;
-  @Column({ name: 'dedupe_key', length: 160, nullable: true }) dedupeKey: string | null;
+  @Column({ name: 'dedupe_key', type: 'varchar', length: 160, nullable: true }) dedupeKey: string | null;
   @Column({ length: 20, default: 'in_app' }) channel: string;
   @Column({ type: 'jsonb', default: () => "'{}'" }) metadata: Record<string, any>;
   @Column({ name: 'read_at', type: 'timestamptz', nullable: true }) readAt: Date | null;

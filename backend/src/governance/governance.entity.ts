@@ -40,7 +40,7 @@ export class TemplateReview {
   @PrimaryGeneratedColumn() id: number;
   @Column({ name: 'tenant_id', type: 'bigint' }) tenantId: number;
   @Column({ name: 'template_id', type: 'bigint' }) templateId: number;
-  @Column({ name: 'from_status', length: 20, nullable: true }) fromStatus: string | null;
+  @Column({ name: 'from_status', type: 'varchar', length: 20, nullable: true }) fromStatus: string | null;
   @Column({ name: 'to_status', length: 20 }) toStatus: string;
   @Column({ length: 30 }) action: string;
   @Column({ name: 'actor_id', type: 'bigint', nullable: true }) actorId: number | null;

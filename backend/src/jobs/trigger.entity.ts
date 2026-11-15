@@ -30,8 +30,8 @@ export class TriggerDelivery {
   @Column({ name: 'trigger_id', type: 'bigint' }) triggerId: number;
   @Column({ name: 'event_source', length: 40 }) eventSource: string;
   /** 唯一索引 (tenant_id, dedupe_key) WHERE dedupe_key IS NOT NULL 兜并发 */
-  @Column({ name: 'dedupe_key', length: 160, nullable: true }) dedupeKey: string | null;
-  @Column({ length: 20, default: 'pending' }) status: 'pending' | 'success' | 'failed' | 'skipped';
+  @Column({ name: 'dedupe_key', type: 'varchar', length: 160, nullable: true }) dedupeKey: string | null;
+  @Column({ type: 'varchar', length: 20, default: 'pending' }) status: 'pending' | 'success' | 'failed' | 'skipped';
   @Column({ name: 'http_status', type: 'int', nullable: true }) httpStatus: number | null;
   @Column({ name: 'error_msg', type: 'text', nullable: true }) errorMsg: string | null;
   @Column({ name: 'duration_ms', type: 'int', default: 0 }) durationMs: number;

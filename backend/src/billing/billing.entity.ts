@@ -34,7 +34,7 @@ export class Quota {
   @Column({ name: 'soft_limit', type: 'numeric', precision: 14, scale: 2, nullable: true }) softLimit: string | null;
   /** 硬上限：超过拒绝（BizCode 4033 + 升级引导）；null = 不设限 */
   @Column({ name: 'hard_limit', type: 'numeric', precision: 14, scale: 2, nullable: true }) hardLimit: string | null;
-  @Column({ length: 10, default: 'month' }) period: 'month' | 'day';
+  @Column({ type: 'varchar', length: 10, default: 'month' }) period: 'month' | 'day';
   @Column({ name: 'updated_at', type: 'timestamptz', default: () => 'now()' }) updatedAt: Date;
 }
 
@@ -48,7 +48,7 @@ export class Invoice {
   @Column({ name: 'amount_cents', type: 'bigint' }) amountCents: string;
   @Column({ length: 8, default: 'CNY' }) currency: string;
   /** draft → issued → paid / void；issued 过期由每日任务转 overdue */
-  @Column({ length: 20 }) status: 'draft' | 'issued' | 'paid' | 'void' | 'overdue';
+  @Column({ type: 'varchar', length: 20 }) status: 'draft' | 'issued' | 'paid' | 'void' | 'overdue';
   @Column({ name: 'period_start', type: 'date', nullable: true }) periodStart: string | null;
   @Column({ name: 'period_end', type: 'date', nullable: true }) periodEnd: string | null;
   @Column({ name: 'due_at', type: 'timestamptz', nullable: true }) dueAt: Date | null;
