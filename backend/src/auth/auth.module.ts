@@ -1,6 +1,7 @@
 // 鉴权模块：登录/刷新/登出（JWT + Refresh Token，bcrypt 加盐）
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
+// 代理版 TypeOrmModule：forFeature 注入的 Repository 按 TenantCtx.dataSourceKey 路由
+import { TypeOrmModule } from '../common/tenant-typeorm.module';
 import { JwtModule } from '@nestjs/jwt';
 import { User, RefreshToken, Tenant, UserRole } from '../entities/tenant.entity';
 import { Role } from '../entities/saas.entity';

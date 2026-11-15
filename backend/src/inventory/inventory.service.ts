@@ -3,11 +3,15 @@
 // 只服务 Agent 只读工具（/agent/v1），没有租户 REST 控制器——完整 WMS 页面在后续阶段。
 // 全部查询强制 tenant_id；数值列（numeric/bigint 反射为 string）出参前 Number()。
 // =============================================================================
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Material, StockBatch, Warehouse, Bom, BomItem } from './inventory.entity';
 import { computeKit, escapeLike, KitOutcome, round3 } from './kit.calc';
+// P6.2 阶段 B：事务/原生 QB 也按 TenantCtx.dataSourceKey 路由（Repository 已由代理模块接管）
+import { TENANT_DATASOURCE, tenantDataSourceProxy } from '../common/tenant-routing';
+
+type TenantDataSource = ReturnType<typeof tenantDataSourceProxy>;
 
 /** 一次库存变动落到的批次行（P5 写路径：adjust / transfer 复用） */
 export interface StockMoveLine {
@@ -51,7 +55,7 @@ export class InventoryService {
     @InjectRepository(StockBatch) private batches: Repository<StockBatch>,
     @InjectRepository(Bom) private boms: Repository<Bom>,
     @InjectRepository(BomItem) private bomItems: Repository<BomItem>,
-    private ds: DataSource,
+    @Inject(TENANT_DATASOURCE) private ds: TenantDataSource,
   ) {}
 
   /** 分页上限统一 100（§11.7.4「分页统一」） */

@@ -135,6 +135,6 @@ export class CalibratePrinterDto {
 
 export class TestCommandsDto {
   @IsOptional()
-  @IsIn(['zpl', 'tspl', 'epl'])
-  protocol?: 'zpl' | 'tspl' | 'epl';
+  @IsIn(['zpl', 'tspl'])
+  protocol?: 'zpl' | 'tspl';
 }

@@ -1,5 +1,5 @@
 // 打印服务：编排模板+数据+流水号，入 BullMQ 队列（异步、不阻塞）
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Repository } from 'typeorm';
@@ -11,6 +11,8 @@ import { SerialModuleService } from '../serial/serial.service';
 import { AuditService } from '../audit/audit.module';
 import { UsageService } from '../billing/usage.service';
 import { QuotaExceededException } from '../common/business.errors';
+// P8.3：治理前置校验（默认宽松，存量租户零行为变化）
+import { GovernanceService } from '../governance/governance.service';
 
 @Injectable()
 export class PrintService {
@@ -24,6 +26,7 @@ export class PrintService {
     private serial: SerialModuleService,
     private audit: AuditService,
     private usage: UsageService,
+    private governance: GovernanceService,
   ) {}
 
   /** 任务列表（打印队列页） */
@@ -127,6 +130,17 @@ export class PrintService {
       this.logger.warn(`print_labels 配额检查降级: ${e?.message}`);
     }
 
+    // P8.3 治理前置：发布准入（严格模式仅 published 可打）、防重、数量策略、水印。
+    // 默认宽松策略下 prePrint 立即放行；任何治理表查询故障也降级放行并回 warning，
+    // 保证治理能力不会成为打印链路的单点故障（与上面配额检查同口径）。
+    const gov = await this.governance.prePrint(dto.templateId ?? 0, rows, count);
+    if (!gov.allowed) {
+      await this.audit.write(tenantId, 'print.job.blocked_by_governance', {
+        templateId: dto.templateId ?? 0, reason: gov.reason, count, status: gov.status,
+      }, undefined, 'print_job', 0);
+      throw new ForbiddenException(gov.reason);
+    }
+
     let printer: Printer | null = null;
     if (dto.printerId) {
       printer = await this.printers.findOne({ where: { id: dto.printerId, tenantId } });
@@ -148,17 +162,25 @@ export class PrintService {
     }
 
     const { userId } = useTenant();
+    const jobParams = {
+      ...(dto.params ?? {}), copies,
+      protocol: printer?.connection?.protocol,
+      // 水印规格随任务留存，供追溯「这一单按什么策略打的」；指令通道不叠加水印
+      ...(gov.watermark ? { watermark: gov.watermark } : {}),
+    };
     const job = await this.jobs.save({
       tenantId, templateId: dto.templateId ?? 0, printerId: dto.printerId,
-      total: count, status: 'queued', params: { ...(dto.params ?? {}), copies, protocol: printer?.connection?.protocol }, dataRef: { rows, serialMap, templateContent: tpl.content },
+      total: count, status: 'queued', params: jobParams, dataRef: { rows, serialMap, templateContent: tpl.content },
       createdBy: userId,
     });
     // 固定 bull 任务 id，取消时可精确移除
     await this.queue.add('print', {
       jobId: job.id, tenantId, templateContent: tpl.content, rows, serialMap,
-      printerId: dto.printerId, params: { ...(dto.params ?? {}), copies },
+      printerId: dto.printerId, params: jobParams,
     }, { jobId: `print-${job.id}`, removeOnComplete: 500, removeOnFail: 500 });
     await this.audit.write(tenantId, 'print.job.create', { jobId: job.id, templateId: dto.templateId, copies, rows: rows.length, printerId: dto.printerId }, undefined, 'print_job', job.id);
+    // 防重登记在任务受理之后（旁路，失败不影响已入队任务）
+    await this.governance.recordPrint(gov.dedupeKey, dto.templateId ?? 0, job.id);
     // P3 计费：按标签张数计量（rows×copies）。计量失败不影响已入队的任务（兜底重算会补聚合）
     try {
       await this.usage.record(tenantId, 'print_labels', count, {
@@ -167,7 +189,14 @@ export class PrintService {
     } catch (e: any) {
       this.logger.warn(`print_labels 计量写入失败(job ${job.id}): ${e?.message}`);
     }
-    return { jobId: job.id, status: 'queued', total: count, quotaWarn };
+    return {
+      jobId: job.id, status: 'queued', total: count, quotaWarn,
+      governanceWarnings: gov.warnings,
+      watermarkApplied: !!gov.watermark,
+      watermarkChannelNote: gov.watermark
+        ? '水印对浏览器打印 / SVG / PDF 输出生效；ZPL/TSPL/EPL 指令通道不叠加水印，请改用图像通道'
+        : null,
+    };
   }
 
   getJob(id: number) { return this.jobs.findOne({ where: { id, tenantId: useTenantId() } }); }

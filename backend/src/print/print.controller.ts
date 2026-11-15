@@ -16,8 +16,10 @@ import { RequirePermission } from '../common/permission.guard';
 import { generateZpl, mmToDots } from '../../core/zpl-generator';
 import { CreatePrintJobDto, PreviewRenderDto, PrintCommandsDto, RetryPrintDto } from './dto/print.dto';
 import { buildJob as buildTsplJob } from '../../core/tspl-generator';
-import { generateEpl } from '../../core/epl-generator';
-import { attachBitmapFallbacks } from '../../core/raster';
+import { buildJob as buildEplJob } from '../../core/epl-generator';
+import { uiSymbologyList } from '../../core/symbology.capabilities';
+// P8.3：水印层（纯函数夹取 + 转义，指令通道不叠加）
+import { normalizePolicy, watermarkHtmlLayer } from '../governance/governance.calc';
 import { PrintEvents } from './events.event';
 import * as crypto from 'crypto';
 import { JWT_SECRET } from '../common/config';
@@ -67,16 +69,29 @@ export class PrintController {
 export class PrintPreviewController {
   @Post()
   render(@Body() body: PreviewRenderDto): HtmlRenderOutput {
+    // P8.3 水印：预览是无状态端点（不挂 TenantGuard），规格由调用方从
+    // GET /governance/policy 取得后传入；生产打印由服务端在 createJob 强制注入，不可绕过。
+    // 这里再过一次 normalizePolicy，脏配置（非法颜色/超界透明度/注入文本）一律夹掉。
+    const spec = body.watermark ? normalizePolicy({ watermark: body.watermark }).watermark : null;
+    const page = body.templateContent?.page ?? { widthMm: 40, heightMm: 30 };
+    const now = new Date();
+    const watermarkHtml = spec?.enabled
+      ? watermarkHtmlLayer(spec, page, {
+          printDate: now.toISOString().slice(0, 10),
+          printTime: now.toISOString().slice(11, 19),
+        })
+      : '';
     return renderPrintHtml({
       templateContent: body.templateContent,
       rows: body.rows ?? [{}],
       copies: body.copies ?? 1,
+      watermarkHtml,
     });
   }
 }
 
 /**
- * 打印机指令导出 —— ZPL / TSPL（EPL 见 P7.7）。
+ * 打印机指令导出 —— ZPL / TSPL。
  * 用于「下载指令文件」「本地代理打印」「第三方系统集成」。
  * 入参 { templateContent, rows, copies, protocol, dpi, widthMm, heightMm, gapMm, offsets, density, speed }
  */
@@ -85,25 +100,21 @@ export class PrintCommandsController {
   constructor(private render: RenderService) {}
 
   @Post()
-  async commands(@Body() b: PrintCommandsDto) {
+  commands(@Body() b: PrintCommandsDto) {
     const tpl = b.templateContent;
     // DTO 已挡掉缺 templateContent，这里兜底 page 结构；原来是 throw new Error → 500
     if (!tpl?.page) throw new BadRequestException('templateContent 缺少 page 结构');
     const rows: any[] = b.rows?.length ? b.rows : [{}];
     const copies = Math.max(1, Math.min(500, b.copies ?? 1));
     const dpi = b.dpi ?? tpl.page.dpi ?? 300;
-    const protocol: CmdProtocol = b.protocol === 'tspl' || b.protocol === 'epl' ? b.protocol : 'zpl';
+    const protocol: 'zpl' | 'tspl' | 'epl' = b.protocol === 'tspl' ? 'tspl' : b.protocol === 'epl' ? 'epl' : 'zpl';
     const gapMm = b.gapMm ?? tpl.page.gapMm ?? 2;
-    const widthMm = b.widthMm ?? tpl.page.widthMm;
-    const heightMm = b.heightMm ?? tpl.page.heightMm;
     const offX = mmToDots(b.offsetXMm ?? 0, dpi);
     const offY = mmToDots(b.offsetYMm ?? 0, dpi);
     const density = b.density;
     const speed = b.speed;
 
-    // 一律先汇成 Buffer 再决定怎么回给调用方：TSPL 的 BITMAP 与 EPL 的 GW 载荷是原始二进制，
-    // 只有 Buffer 组装才不会被字符串编码改动字节数（位图行数/字节数一旦对不上，固件打出错图）
-    const frames: Buffer[] = [];
+    const frames: string[] = [];
     const genWarnings: string[] = [];
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -115,91 +126,78 @@ export class PrintCommandsController {
       };
       const rendered = this.render.renderRow(tpl.elements ?? [], row, b.serialMap ?? {}, sysVars, i);
       if (protocol === 'zpl') {
-        // 位图回填预生成：能力矩阵判为 bitmap 的二维符号 / image 元素在这里出点阵，
-        // 生成器本身保持同步（拿不到点阵就跳过 + warning，绝不静默降级）
-        const prepared = await attachBitmapFallbacks(this.render.toZplElements(rendered), dpi, 'zpl');
-        genWarnings.push(...prepared.warnings);
-        const zplOut = generateZpl(prepared.els, dpi);
+        const zplOut = generateZpl(this.render.toZplElements(rendered), dpi);
         genWarnings.push(...zplOut.warnings);
         let out = zplOut.text.replace('^XA', `^XA^LH${offX},${offY}` + (density ? `~SD${density}` : '') + (speed ? `^PR${speed}` : ''));
         out = out.replace('^XZ', `^PQ${copies}^XZ`);
-        frames.push(Buffer.from(out, 'utf8'));
-      } else if (protocol === 'tspl') {
-        const prepared = await attachBitmapFallbacks(this.render.toTsplElements(rendered), dpi, 'tspl');
-        genWarnings.push(...prepared.warnings);
-        const tsplOut = buildTsplJob(prepared.els, dpi, {
-          widthMm, heightMm, gapMm, copies,
-        }, (tpl.page.orientation ?? 0) as any);
-        genWarnings.push(...tsplOut.warnings);
-        const pre: string[] = [];
-        if (density !== undefined) pre.push(`DENSITY ${density}`);
-        if (speed !== undefined) pre.push(`SPEED ${speed}`);
-        if (offX || offY) pre.push(`OFFSET ${offX},${offY}`);
-        frames.push(Buffer.concat([
-          ...pre.map((s) => Buffer.from(s + '\r\n', 'utf8')),
-          tsplOut.buffer,
-        ]));
-      } else {
-        // EPL2：整段作业是 latin1（GW 载荷逐字节），密度/速度/份数都在页头页尾里给
-        const prepared = await attachBitmapFallbacks(this.render.toEplElements(rendered), dpi, 'epl');
-        genWarnings.push(...prepared.warnings);
-        const eplOut = generateEpl(prepared.els, dpi, {
-          widthMm, heightMm, gapMm, copies,
-          density, speed,
-          orientation: (tpl.page.orientation ?? 0) as 0 | 90 | 180 | 270,
+        frames.push(out);
+      } else if (protocol === 'epl') {
+        // P7.7：EPL2 通道。toTsplElements 产出的元素形状（xMm/yMm/barcode/...）
+        // 与 EplElement 兼容，直接复用；offset 通过元素起点平移在页头无法表达，
+        // 故 EPL 的 dx/dy 校准由打印机硬件设置处理，这里不注入（与 TSPL 一致）。
+        const eplOut = buildEplJob(this.render.toTsplElements(rendered) as any, dpi, {
+          widthMm: b.widthMm ?? tpl.page.widthMm,
+          heightMm: b.heightMm ?? tpl.page.heightMm,
+          gapMm, copies,
         });
         genWarnings.push(...eplOut.warnings);
-        // OFFSET 在 EPL2 里没有对应指令（[M] 命令目录无 OFFSET），只能靠模板坐标；
-        // 用户给了偏移就必须说清楚，否则他会以为偏移生效了
-        if (offX || offY) {
-          genWarnings.push(`[EPL] 打印偏移 ${offX},${offY} 点无法用 EPL2 表达（手册无 OFFSET 指令），已忽略；请改用模板坐标或 ZPL(^LH)/TSPL(OFFSET)`);
-        }
-        if (b.dpi !== undefined && dpi !== 203 && dpi !== 300) {
-          genWarnings.push(`[EPL] dpi ${dpi} 非 EPL2 常见档位（203/300），q/Q/B 的点坐标按 ${dpi} 换算，实际机型可能是 203dpi，请先核对机型`);
-        }
-        frames.push(Buffer.from(eplOut.text, 'latin1'));
+        frames.push(eplOut.buffer.toString('ascii'));
+      } else {
+        const tsplOut = buildTsplJob(this.render.toTsplElements(rendered), dpi, {
+          widthMm: b.widthMm ?? tpl.page.widthMm,
+          heightMm: b.heightMm ?? tpl.page.heightMm,
+          gapMm, copies,
+        }, (tpl.page.orientation ?? 0) as any);
+        genWarnings.push(...tsplOut.warnings);
+        let text = tsplOut.buffer.toString('utf8');
+        if (density !== undefined) text = `DENSITY ${density}\r\n` + text;
+        if (speed !== undefined) text = `SPEED ${speed}\r\n` + text;
+        frames.push(text);
       }
     }
 
-    const buf = protocol === 'zpl'
-      ? Buffer.from(frames.map((f) => f.toString('utf8')).join('\n'), 'utf8')
-      : Buffer.concat(frames);
-    const text = buf.toString('utf8');
-    // text 是否字节无损：含位图载荷时 utf8 解码会把高位字节换成 U+FFFD，
-    // 此时 text 只能看不能用，下发/存盘必须走 textBase64
-    const textExact = Buffer.from(text, 'utf8').equals(buf);
-    if (!textExact) {
-      genWarnings.push('[字节] 作业含图像指令的原始二进制（TSPL BITMAP / EPL GW），text 字段仅供阅读，字节已不可逆；下发或另存文件请用 textBase64 解码后的字节');
-    }
+    const text = protocol === 'zpl' ? frames.join('\n') : frames.join('');
     return {
       protocol,
       text,
-      textBase64: buf.toString('base64'),
-      textExact,
       labelCount: rows.length * copies,
-      bytes: buf.length,
+      bytes: Buffer.byteLength(text, 'utf8'),
       dpi,
-      // 合并：生成器 warnings（码制/几何/静区/GS1/位图）+ 协议层提示（TSPL 中文等）
+      // 合并：生成器不支持码制警告 + 已有的协议层提示（TSPL 中文 / 二维码）
       warnings: [...new Set([...genWarnings, ...buildWarnings(protocol, tpl)])],
     };
   }
 }
 
-/** 指令导出支持的协议（与 PrintCommandsDto 的 @IsIn 必须同步，P7.8 有守卫测试） */
-type CmdProtocol = 'zpl' | 'tspl' | 'epl';
+/**
+ * P7.5 码制能力查询 —— 前端下拉/属性面板从后端单一真源拉取「受限」标记。
+ * 这样 BARCODE_SYMS、生成器白名单、warnings 文案不再各写一份，前端只消费后端派生结果。
+ * 返回 { linear, 2d } 两个列表，每项含 printProtocols / degradeOn / previewOnly / badge。
+ */
+@Controller('print/symbologies')
+export class SymbologyController {
+  @Get()
+  list() {
+    return {
+      linear: uiSymbologyList('linear'),
+      '2d': uiSymbologyList('2d'),
+      protocols: ['zpl', 'tspl', 'epl', 'image'],
+    };
+  }
+}
 
 /** 指令导出能力提示（码制维度的提示已由生成器 warnings 精确产出，此处只保留字体维度） */
-function buildWarnings(protocol: CmdProtocol, tpl: any): string[] {
+function buildWarnings(protocol: 'zpl' | 'tspl' | 'epl', tpl: any): string[] {
   const warnings: string[] = [];
-  if (protocol !== 'tspl') return warnings;
-  // TSPL 文本按 FONT001 输出，中文依赖打印机内置中文字库
+  // 只有位图字体通道（TSPL/EPL）才有中文字库依赖；ZPL ^CI28 是 UTF-8，不需提示
+  if (protocol === 'zpl') return warnings;
   const CJK = /[\u3400-\u9fff\uf900-\ufaff]/;
   const texts: string[] = [
     ...(tpl.elements ?? []).map((e: any) => e.text ?? e.rendered ?? e.barcode?.content ?? e.qrcode?.content ?? ''),
     ...(tpl.variables ?? []).map((v: any) => v.defaultValue ?? ''),
   ];
   if (texts.some((s) => CJK.test(String(s)))) {
-    warnings.push('TSPL 文本使用 FONT001，中文需打印机内置中文字库；无字库时请改用 ZPL(^CI28) 或图像通道');
+    warnings.push(`${protocol.toUpperCase()} 文本使用内置点阵字体，中文需打印机内置中文字库；无字库时请改用 ZPL(^CI28) 或图像通道`);
   }
   return warnings;
 }

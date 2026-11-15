@@ -15,3 +15,11 @@ export { AgentClient, AgentToken, AgentApproval, ToolIdempotency, AgentPrompt } 
 export { TenantDomain } from '../saas/branding/tenant-domain.entity';
 // P4 库存最小读模型实体
 export { Warehouse, Material, StockBatch, Bom, BomItem } from '../inventory/inventory.entity';
+// P7 / B2.5 站内信（DDL: scripts/saas_p7_notifications.sql）
+export { Notification } from '../notify/notification.entity';
+// P8.1 自动化触发器（DDL: scripts/saas_p8_triggers.sql）
+export { PrintTrigger, TriggerDelivery } from '../jobs/trigger.entity';
+// P8.3 企业治理（DDL: scripts/saas_p8_governance.sql）
+export { GovernanceSetting, TemplateGovernance, TemplateReview, PrintDedupe } from '../governance/governance.entity';
+// P8.5 硬件层（DDL: scripts/saas_p8_hardware.sql）
+export { HardwareAgent, HardwareAgentJob, RfidWriteLog } from '../hardware/hardware.entity';

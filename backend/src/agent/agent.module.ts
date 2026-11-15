@@ -3,7 +3,8 @@
 // Saas（模块/scope 字典、feature_flags 含 D7 与限流阈值）、Billing（agent_calls 计量）、Audit。
 // ⚠️ 写执行器通过 tenantStorage.run 补齐 ALS 上下文（Agent 只有 token、没有租户 JWT）。
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
+// 代理版 TypeOrmModule：forFeature 注入的 Repository 按 TenantCtx.dataSourceKey 路由
+import { TypeOrmModule } from '../common/tenant-typeorm.module';
 import {
   AgentApproval, AgentClient, AgentPrompt, AgentToken, ToolIdempotency,
 } from './agent.entity';

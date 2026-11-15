@@ -3,7 +3,8 @@ import {
   Module, Controller, Get, Post, Patch, Delete, Body, Param, UseGuards,
   BadRequestException, NotFoundException, ConflictException, ForbiddenException,
 } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
+// 代理版 TypeOrmModule：forFeature 注入的 Repository 按 TenantCtx.dataSourceKey 路由
+import { TypeOrmModule } from '../common/tenant-typeorm.module';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';

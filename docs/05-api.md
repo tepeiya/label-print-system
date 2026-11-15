@@ -247,3 +247,104 @@ node tools/labelctl.mjs audit --limit 10
 ```
 
 环境变量：`LABELFLOW_API`（默认 `http://localhost:3200/api/v1`）、`LABELFLOW_USER` / `LABELFLOW_PASS`、`LABELFLOW_TOKEN`。
+
+---
+
+## 5.14 P8 新增端点（2026-11-13）
+
+### 5.14.1 自动化触发器（P8.1，租户 JWT）
+
+| 方法 | 路径 | 入参 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/triggers` | — | 本租户触发器列表（`config` 已剔除 `secret`/`secretEnc`） |
+| GET | `/triggers/:id` | — | 单条详情 |
+| GET | `/triggers/:id/deliveries?limit=50` | — | 投递历史（去重/成功/失败可追溯） |
+| POST | `/triggers` | `{name,source,action,conditionExpr?,config,enabled?}` | 新建；写操作限 admin/operator |
+| PATCH | `/triggers/:id` | 同上（可只传部分字段） | 更新；未重填 `secret` 时保留旧密文 |
+| DELETE | `/triggers/:id` | — | 删除规则（保留 delivery 历史供审计） |
+| POST | `/triggers/:id/test` | `{payload?}` | **dryRun**：只返回命中计划，不打印、不发 Webhook |
+
+- `source`：`print.job.completed` / `print.job.failed` / `template.updated` / `hotfolder.file` / `subscription.expiring`。
+- `action`：`webhook` / `notification` / `print`。条件表达式用公式引擎语法，变量写 `{{name}}`（与模板 `printIf` 同源）。
+- `config` 按动作不同：
+  - `webhook`：`{url, secret?}`（**仅 https**；`http://localhost` 需 `allowHttpLoopback:true` 且仅调试用；内网/回环/云元数据地址一律拒绝）。请求带 `X-LabelFlow-Timestamp` + `X-LabelFlow-Signature: sha256=<hmac>`，5s 超时。
+  - `notification`：`{title, body, category?}` → 站内信。
+  - `print`：`{templateId, printerId?, copies?}` → 文件到达即打印。
+  - `hotfolder.file` 额外支持：`{directory, onSuccess?: archive|delete|keep}`。
+- 后台事件统一走 BullMQ `trigger` 队列（进程内 EventEmitter 跨 worker 不生效）；`dedupe_key` 部分唯一索引兜并发，命中重复不重复打印。
+- V1 **未接订阅模块 gating**（`menu.catalog` 无 `automation` 模块码，误挂会让所有租户 4031），权限只用角色，P8.3 统一补 permission 码。
+
+### 5.14.2 印刷级导出（P8.2，与 `/print/commands` 同口径：自带模板 JSON，不读业务库）
+
+| 方法 | 路径 | 入参 | 出参 |
+| --- | --- | --- | --- |
+| POST | `/print/export/svg` | `{templateContent, rows?, copies?, serialMap?}` | `{format:'svg', sheets[], sheetWidthMm, sheetHeightMm, labelCount, perSheet, cols, rows, warnings[]}` |
+| POST | `/print/export/pdf` | 同上 + `dpi?`（72–1200，默认 600） | `application/pdf` 二进制；响应头 `X-LabelFlow-Pages` / `X-LabelFlow-Warning-Count` / `X-LabelFlow-Warnings`（URI 编码） |
+
+- SVG 是**整标签真矢量**：文本 `<text>`、图形 `<rect>/<ellipse>/<line>`、码制内联 bwip-js 的 `<path>`；矩阵拼版（`columns`/`rows`/`gapXMm`/`gapYMm`/`marginMm`）与浏览器打印口径一致。
+- PDF 由 SVG 按 600dpi 栅格化嵌入 pdf-lib，页面尺寸按 `mm→pt`（1mm = 72/25.4pt）精确换算；**PDF 内部不是矢量**、无 CMYK/专色/出血，`warnings` 会显式声明。
+- 总标签数上限 5000、PDF 页数上限 200，超限报错不静默截断。中文文本依赖渲染端系统字体，缺字时 `warnings` 提示。
+
+---
+
+## 5.15 P8.3 / P8.4 / P8.5 新增端点（代码已落地，验收边界见 `docs/10 §10.29–§10.30`）
+
+> 所有端点沿用统一响应体 + 租户 JWT + `tenant_id` 行级隔离。新增业务表均带 `tenant_id` + RLS 兜底，
+> 部署需按序执行 `saas_p8_triggers.sql` → `saas_p8_governance.sql` → `saas_p8_hardware.sql`。
+
+### 5.15.1 企业治理（P8.3，`/governance`）
+
+| 方法 | 路径 | 入参 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/governance/policy` | — | 本租户治理策略（经 `normalizePolicy` 归一化） |
+| PUT | `/governance/policy` | `{templateApproval?, dedupePrint?, printQuota?, watermark?}` | 保存策略；默认全宽松，未配置租户行为不变 |
+| GET | `/governance/templates/:id` | — | 模板治理状态（无记录 = 未纳管，所有前置校验放行） |
+| GET | `/governance/templates/:id/reviews` | — | 审批历史 |
+| POST | `/governance/templates/:id/review` | `{action, comment?, publishedVersion?}` | `submit / approve / reject / request_change / archive / publish`；非法迁移 400 |
+| GET | `/governance/dedupe?limit=50` | — | 防重打印记录 |
+| DELETE | `/governance/dedupe?beforeDays=` | — | 清理过期防重记录 |
+
+- 生产打印由 `PrintService.createJob()` **强制注入**治理前置校验（不通过写 `print.job.blocked_by_governance` 审计并 403），前端无法绕过。
+- `POST /print/preview` 新增可选 `watermark`，`/print/export/svg` 与 `/print/export/pdf` 新增可选 `watermark`：**水印只叠加在 SVG / HTML / PDF 通道，ZPL/TSPL/EPL 指令通道不叠加**，响应里通过 `watermarkApplied` / `watermarkChannelNote` 明示。
+- 防重键 `printFingerprint()` = `tenantId + templateId/scope + rows` 稳定哈希；`print_dedupe` 唯一索引 + `ON CONFLICT` 兜并发（真库并发未实跑）。
+
+### 5.15.2 数据源与 GS1（P8.4）
+
+| 方法 | 路径 | 入参 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/data-sources/drivers` | — | 支持的驱动清单：postgres（内置）/ mysql（需 `npm i mysql2`）/ mssql（需 `npm i mssql`） |
+| POST | `/data-sources/:id/lookup` | `{filters, limit?}` | 按字段查找：SQL 源执行查询、CSV/Excel 源读已导入行，再内存过滤；列名过 `SAFE_IDENT` 校验 |
+| POST | `/data-sources/:id/refresh` | — | 手动刷新：真执行 SQL → 写 `data_rows` → 写审计与 `lastRefreshAt` |
+| GET | `/data-sources/:id/refresh-plan` | — | 归一化刷新计划 + 上次刷新时间/行数/错误 |
+| PUT | `/data-sources/:id/refresh-config` | `{refresh:{enabled,intervalSec?,cron?,replaceRows?}}` | 配置自动刷新并**同步 BullMQ repeatable 调度** |
+| GET | `/data-sources/refresh-schedule?limit=100` | — | 运维：当前队列已登记的刷新任务（只返回 name 与周期，无 DSN） |
+| POST | `/data-sources/refresh-bootstrap` | — | 运维：手动触发启动期调度对齐（Redis 恢复后无需重启） |
+| GET | `/gs1/ai-catalog` | — | GS1 AI 字典目录（约 60 个精确 AI + 5 类模式族，声明非全量规范） |
+| GET | `/gs1/ai/:ai/help` | — | 单个 AI 的字段帮助与示例 |
+| POST | `/gs1/validate` | `{content}` | 整串 `(01)...(10)...(17)...` 合规校验、FNC1 分隔、errors/warnings/humanReadable |
+
+- `SaveSqlDto` 新增 `driver?` / `refresh?`；`SqlExecDto` 新增 `offset?`（SQL 级分页）。
+- 自动刷新走独立队列 `datasource_refresh`：`DATASOURCE_REFRESH_SCHEDULER_ENABLED=0` 可关；改配置时按 `reconcileRepeat()` 先撤销旧 key 再注册新 key，参数相同不重复注册；Worker 用目录库构造 `TenantCtx` 后复用 `refresh()`。
+- MySQL / SQL Server 驱动懒加载，**未安装时明确报错**，不静默假装成功；沙盒无第二套数据库实例，真连库未实跑。
+- MaxiCode / HIBC 系列 / PZN 走 `protocol=image` 位图通道，前端标「预览仅·需图像通道」，无 ZPL/TSPL/EPL 原生指令。
+
+### 5.15.3 硬件层（P8.5，`/hardware`）
+
+| 方法 | 路径 | 入参 | 说明 |
+| --- | --- | --- | --- |
+| POST | `/hardware/agents/register` | `{agentId,name?,capabilities[],driverNames?,metadata?}` | 注册/重新注册（**重新注册会轮换密钥**）；明文 `secret` 仅此一次返回 |
+| GET | `/hardware/agents` | — | 代理列表 + 在线状态（不返回 `secret_enc`） |
+| POST | `/hardware/agents/:agentId/heartbeat` | `{load?,capabilities?,draining?,version?}` | 心跳；返回 `serverTime` + 待办数 |
+| POST | `/hardware/agents/:agentId/jobs/pull` | `{limit?}` | 拉取待办（能力匹配 + 在线校验 + 单次上限 10），返回脱敏 `envelope` 并标记 `claimed` |
+| POST | `/hardware/agents/:agentId/receipts` | `{jobKey,tenantId,status,printedCount?,error?}` | 回执；jobKey/agentId/tenant_id 三重匹配 + 状态机，终态不可改写 |
+| POST | `/hardware/agents/sweep` | — | 回收认领超时任务（300s）或标记 `expired` |
+| POST | `/hardware/rfid/encode` | `{gtin,companyPrefixLen,serial,filter?}` | SGTIN-96 编码 → `epcHex` / `tagUri` / `decoded` |
+| POST | `/hardware/rfid/write-job` | `{epc,jobId?}` | 生成 RFID 写操作信封（**不宣称已写入设备**） |
+| POST | `/hardware/rfid/verify-read` | `{epc,readBack,jobId?}` | 写后读回比对；`verified=false` 落 `hardware_rfid_logs` |
+| GET | `/hardware/inkjet/capabilities` | — | 行数/字符/触发模式上限与厂商中立声明 |
+| POST | `/hardware/inkjet/job` | `{rows,config,jobId?,includePayload?}` | 生成喷码作业；`includePayload:true` 附厂商中立文本载荷 |
+
+- `windows_spooler` Provider 已注册：打印任务不再抛「未注册的打印 Provider」，而是入队等待本地代理拉取。`provider.ok=false` 现在会让该张标签记 `failed`（此前被误记 `success`）。
+- 代理主鉴权用租户 JWT；HMAC 签名默认关闭，`HARDWARE_AGENT_SIGNATURE_REQUIRED=1` 开启后需带 `X-LabelFlow-Timestamp` / `X-LabelFlow-Signature: sha256=<hmac>`（签名串为 `JSON.stringify(payload)`，算法与 §5.14.1 Webhook 同源）。
+- **信封脱敏硬约束**：`connection` 只允许 `driverName` 出域，host/port/user/password/dsn/token 一律剔除并记入 `redactedFields`。冒烟已验证 `NO_SECRETS:true`。
+- **真机未验收**：本地代理客户端、Windows 驱动打印、USB/串口、RFID 读写器指令、喷码机品牌协议均未实现。逐项验收清单见 `docs/10 §10.30.3`，未全绿前不得对外承诺可用。

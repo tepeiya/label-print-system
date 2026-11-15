@@ -8,7 +8,6 @@
 
 import bwipjs from '@bwip-js/node';
 import type { BarcodeSpec, QrcodeSpec } from './types';
-import { gs1BwipText } from './gs1';
 
 /** mm → 像素（按 dpi） */
 export function mmToPx(mm: number, dpi: number): number {
@@ -41,6 +40,14 @@ export const BWIP_MAP: Record<string, string> = {
   PDF417: 'pdf417',
   AZTEC: 'azteccode',
   AZTECCODE: 'azteccode',
+  // P8.4 工业码制（bwip-js 已实测可渲染）：仅位图通道，无 ZPL/TSPL/EPL 原生指令
+  MAXICODE: 'maxicode',
+  HIBC: 'hibccode128',              // HIBC 默认用 Code 128 载体
+  HIBC_128: 'hibccode128',
+  HIBC_CODE39: 'hibccode39',
+  HIBC_DATAMATRIX: 'hibcdatamatrix',
+  HIBC_QR: 'hibcqrcode',
+  PZN: 'pzn',                      // 德国药品中央编号（Code 39 约定）
 };
 
 export function bcidOf(sym: string): string {
@@ -49,19 +56,11 @@ export function bcidOf(sym: string): string {
   return bcid;
 }
 
-/** 判断是否为二维码 */
+/** 判断是否为二维码（P8.4：HIBC 家族按具体载体区分，避免把 HIBC_128 当二维渲染） */
 export function is2d(sym: string): boolean {
-  return /^(QR|QRCODE|MICRO|DATAMATRIX|PDF417|AZTEC)/i.test(String(sym));
-}
-
-/**
- * bwip 里「二维符号 + GS1 (AI)」必须改写文本，只开 parsefnc 是不够的（P7.4 复核）。
- * 名单与转换规则都在 gs1.ts（纯函数，可单测），这里只做一层转发，避免两处口径漂移。
- * 解析失败（AI 结构不完整）按「宁可不打，不打错码」抛出，由 raster 的 try/catch
- * 转成 [位图] warning 并跳过该元素。
- */
-export function bwipGs1Text(bcid: string, content: string): string | undefined {
-  return gs1BwipText(bcid, content);
+  const s = String(sym).toUpperCase();
+  if (/^(MAXICODE|HIBC_QR|HIBC_DATAMATRIX|HIBC_QRCODE)/.test(s)) return true;
+  return /^(QR|QRCODE|MICRO|DATAMATRIX|PDF417|AZTEC)/i.test(s);
 }
 
 // ----------------------------- 字符集/长度校验 -----------------------------
@@ -88,6 +87,14 @@ const RULES: Record<string, { maxLen?: number; charset?: RegExp; note: string }>
   DATAMATRIX: { maxLen: 2000, note: '建议 ≤ 1500 字符' },
   PDF417: { maxLen: 1800, note: '建议 ≤ 1800 字符' },
   AZTEC: { maxLen: 1800, note: '建议 ≤ 1800 字符' },
+  // P8.4 工业码制位图通道（预览/导出可用，指令通道见 symbology.capabilities.ts 的 hint）
+  MAXICODE: { maxLen: 93, note: 'UPS MaxiCode：需按 mode 组织结构化数据；仅位图通道' },
+  HIBC: { maxLen: 100, note: 'HIBC LIC（Code 128 载体），bwip 自动补校验字符' },
+  HIBC_128: { maxLen: 100, note: 'HIBC 基于 Code 128' },
+  HIBC_CODE39: { maxLen: 100, note: 'HIBC 基于 Code 39' },
+  HIBC_DATAMATRIX: { maxLen: 100, note: 'HIBC 基于 Data Matrix（二维）' },
+  HIBC_QR: { maxLen: 100, note: 'HIBC 基于 QR Code（二维）' },
+  PZN: { charset: /^\d{6,8}$/, note: '德国 PZN 药品编号：6–8 位数字（含校验位）' },
 };
 
 export interface BarcodeValidation {
@@ -115,7 +122,7 @@ export function validateBarcode(sym: string, content: string): BarcodeValidation
   const base = validateBarcodeRules(sym, content);
   if (!base.ok) return base;
   try {
-    barcodeBwipOptions({ sym, content, moduleWidthMm: 0.25, heightMm: 8, showText: false } as any, { svg: true });
+    bwipRenderOptions({ sym, content, moduleWidthMm: 0.25, heightMm: 8, showText: false } as any, { svg: true });
     return { ...base, ok: true };
   } catch (e: any) {
     return { ok: false, error: `编码失败：${e.message}`, note: base.note };
@@ -126,40 +133,23 @@ export function validateBarcode(sym: string, content: string): BarcodeValidation
 interface RenderOpts {
   svg?: boolean;
   dpi?: number;
-  /** 每模块打印点数：位图回填通道用它把 bwip 输出做成 1 点 = 1 像素 */
-  scaleDots?: number;
-  /** 一维码左右静区（点） */
-  quietDots?: number;
-  /** 二维码四周静区（模块） */
-  quietModules?: number;
-  /** 点阵模式：每模块超采样像素数（必须为偶数，由 raster 抽稀到 1 点 = 1 像素） */
-  pxPerModule?: number;
-  /** 点阵模式：静区，bwip `padding` 原值（bwip 里 1 单位 = 2 像素） */
-  paddingUnits?: number;
 }
 
-/**
- * 模板条码规格 → bwip-js 参数（统一坐标/尺寸/明文/ECC）。
- * ⚠️ 这是「预览 / 位图回填 / PNG 出图」共用的唯一一份参数构造（B6 的落点）：
- * 任何影响图案的取值（模块宽、静区、明文、比例）只允许在这里改，
- * 生成器与前端预览不得各自再算一套。
- */
-export function barcodeBwipOptions(spec: BarcodeSpec, opts: RenderOpts = {}): any {
+/** 模板条码规格 → bwip-js 参数（统一坐标/尺寸/明文/ECC） */
+function bwipRenderOptions(spec: BarcodeSpec, opts: RenderOpts = {}): any {
   const bcid = bcidOf(spec.sym);
   const content = String(spec.content ?? '');
   const twoD = is2d(spec.sym);
   const dpi = opts.dpi ?? 300;
   const mm = spec.moduleWidthMm ?? 0.25;
-  const scale = opts.scaleDots ?? (opts.svg ? 3 : Math.max(1, mmToPx(mm, dpi)));
-  const padX = opts.quietDots ?? 8;
 
   const o: any = {
     bcid,
     text: content,
-    scale,
+    scale: opts.svg ? 3 : Math.max(1, mmToPx(mm, dpi)),
     // 静区：bwip 的 padding 单位与 scale 一致（模块数）
-    paddingwidth: padX,
-    paddingheight: opts.quietDots != null ? padX : 4,
+    paddingwidth: 8,
+    paddingheight: 4,
     backgroundcolor: 'FFFFFF',
     ...(twoD ? {} : { height: Math.max(1, spec.heightMm ?? 9) }),
   };
@@ -172,87 +162,60 @@ export function barcodeBwipOptions(spec: BarcodeSpec, opts: RenderOpts = {}): an
     }
   }
 
-  // GS1 语义（P7.4 复核）：
-  //   · 一维 gs1-128 的括号 AI 由 bwip 自己解析（实测 `]C1`，bytes 无括号）；
-  //   · 二维符号 bwip **不解析**括号/方括号，必须改写成 `^FNC1` 文本 + parsefnc，
-  //     否则打出的是带字面括号的普通符号（AI 结构丢失，扫描端认不出 GS1）。
-  if (bcid === 'gs1-128') {
-    if (/\(\d{2,4}\)/.test(content)) o.parsefnc = true;
-  } else {
-    const g = bwipGs1Text(bcid, content);
-    if (g) { o.text = g; o.parsefnc = true; }
-  }
-  if (spec.wideRatio && (bcid === 'code39' || bcid === 'i2of5' || bcid === 'codabar')) o.ratio = spec.wideRatio;
+  if (bcid === 'gs1-128') o.parsefnc = true;
+  if (spec.wideRatio && bcid === 'code39') o.ratio = spec.wideRatio;
   if (bcid === 'qrcode' || bcid === 'microqrcode') {
     o.eclevel = (spec as any).ecc || 'M';
   }
   return o;
 }
 
-export function qrcodeBwipOptions(spec: QrcodeSpec, opts: RenderOpts = {}): any {
+function qrRenderOptions(spec: QrcodeSpec, opts: RenderOpts = {}): any {
   const bcid = bcidOf(spec.sym);
   const dpi = opts.dpi ?? 300;
   const mm = spec.moduleSizeMm ?? 0.4;
   const o: any = {
     bcid,
     text: String(spec.content ?? ''),
+    scale: opts.svg ? 3 : Math.max(1, mmToPx(mm, dpi)),
+    paddingwidth: 0,
+    paddingheight: 0,
     backgroundcolor: 'FFFFFF',
   };
-  if (opts.pxPerModule != null) {
-    // 点阵模式：bwip 的 2D 缩放单位是「1 档 = 2 像素/模块」，modulesize 对
-    // datamatrix/pdf417/aztec 无效（实测只有 qrcode 认）。所以这里由调用方
-    // 显式给「每模块像素数」，并且一律用偶数超采样，再由 raster 抽稀到点阵。
-    o.scale = Math.max(1, Math.round(opts.pxPerModule / 2));
-    o.padding = opts.paddingUnits ?? 0;
-  } else {
-    o.scale = opts.svg ? 3 : Math.max(1, mmToPx(mm, dpi));
-    o.paddingwidth = opts.quietDots ?? 0;
-    o.paddingheight = opts.quietDots ?? 0;
-  }
   if (bcid === 'qrcode' || bcid === 'microqrcode') o.eclevel = spec.ecc || 'M';
   if (bcid === 'pdf417') o.compact = false;
-  // GS1 DataMatrix / GS1 QR / GS1 Aztec：二维符号必须喂 `^FNC1` 文本（详见 gs1ToBwipFnc1 的实测判据）
-  const g = bwipGs1Text(bcid, String(spec.content ?? ''));
-  if (g) { o.text = g; o.parsefnc = true; }
   return o;
 }
 
 /** 生成 SVG 字符串（同步、矢量、含静区；前端可直接内联打印） */
 export function renderBarcodeSvg(spec: BarcodeSpec): string {
-  return crispSvg(bwipjs.toSVG(barcodeBwipOptions(spec, { svg: true })));
+  return bwipjs.toSVG(bwipRenderOptions(spec, { svg: true }));
 }
 
 export function renderQrcodeSvg(spec: QrcodeSpec): string {
-  return crispSvg(bwipjs.toSVG(qrcodeBwipOptions(spec, { svg: true })));
-}
-
-/**
- * 条码/二维码矢量出图必须关抗锯齿：条空与模块边缘吸附设备像素。
- * 否则 SVG 被拉伸到非整数尺寸会插值出灰边（视觉发虚、小模块宽可能扫不出），
- * 与前端 apps/console 的 engine/barcode.ts#crisp 同一口径。
- */
-function crispSvg(svg: string): string {
-  if (!svg || svg.includes('shape-rendering')) return svg;
-  return svg.replace('<svg ', '<svg shape-rendering="crispEdges" ');
+  return bwipjs.toSVG(qrRenderOptions(spec, { svg: true }));
 }
 
 /** 生成 PNG（异步；按 dpi 出图，供存档/第三方集成） */
 export async function renderBarcodeToPng(spec: BarcodeSpec, dpi: number): Promise<Buffer> {
   const v = validateBarcodeRules(spec.sym, spec.content);
   if (!v.ok) throw new Error(v.error);
-  return bwipjs.toBuffer(barcodeBwipOptions(spec, { dpi }));
+  return bwipjs.toBuffer(bwipRenderOptions(spec, { dpi }));
 }
 
 export async function renderQrcodeToPng(spec: QrcodeSpec, dpi: number): Promise<Buffer> {
   const v = validateBarcodeRules(spec.sym, spec.content);
   if (!v.ok) throw new Error(v.error);
-  return bwipjs.toBuffer(qrcodeBwipOptions(spec, { dpi }));
+  return bwipjs.toBuffer(qrRenderOptions(spec, { dpi }));
 }
 
 /** 列出支持的码制（前端下拉/文档用） */
 export function supportedSymbologies() {
   return {
-    linear: ['CODE128', 'GS1_128', 'CODE39', 'CODE93', 'EAN13', 'EAN8', 'UPC', 'UPC_E', 'ITF14', 'ITF', 'CODABAR', 'MSI', 'PHARMACODE', 'CODE16K'],
-    twod: ['QRCODE', 'MICROQR', 'DATAMATRIX', 'DATAMATRIX_RECT', 'PDF417', 'AZTEC'],
+    linear: ['CODE128', 'GS1_128', 'CODE39', 'CODE93', 'EAN13', 'EAN8', 'UPC', 'UPC_E', 'ITF14', 'ITF', 'CODABAR', 'MSI', 'PHARMACODE', 'CODE16K',
+      // P8.4 工业码制（位图通道，前端须标「预览仅」）
+      'HIBC_128', 'HIBC_CODE39', 'PZN'],
+    twod: ['QRCODE', 'MICROQR', 'DATAMATRIX', 'DATAMATRIX_RECT', 'PDF417', 'AZTEC',
+      'MAXICODE', 'HIBC_DATAMATRIX', 'HIBC_QR'],
   };
 }

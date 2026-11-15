@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { safeEval, detectCircularDeps, tokenize, extractVars } from '../formula-engine';
+import { safeEval, detectCircularDeps, extractVars } from '../formula-engine';
 import { gtinCheckDigit, code39CheckChar, code128CheckValue } from '../checksum';
 import { SerialNumberService, type DbManager, type SerialRow } from '../serial-number.service';
 import { mmToDots } from '../zpl-generator';
@@ -92,7 +92,7 @@ class MemDb implements DbManager {
 
 test('流水号-号段预分配不重号/不重叠', async () => {
   const db = new MemDb();
-  const id = db.seed({
+  db.seed({
     tenant_id: 7, name: 'SN', scope: 'template', group_key: null,
     start_value: 1, step: 1, current_value: 1, digits: 5, prefix: 'NO', suffix: '',
     radix: 10, reset_cycle: 'never', reset_at: null, custom_cycle_days: null,

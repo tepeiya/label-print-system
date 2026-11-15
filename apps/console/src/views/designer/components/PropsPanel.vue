@@ -171,10 +171,8 @@
       <FGroup v-else-if="el!.type === 'barcode'" title="一维码内容">
         <FRow>
           <FLabel text="码制" />
-          <FSelect :model-value="bc!.sym ?? 'CODE128'" :options="bcSymOptions" @update:model-value="setBarcode({ sym: $event })" />
+          <FSelect :model-value="bc!.sym ?? 'CODE128'" :options="BARCODE_SYM_OPTIONS" @update:model-value="setBarcode({ sym: $event })" />
         </FRow>
-        <!-- 码制能力受限（走位图 / 只能预览）：capNote 的小字说明，不弹窗、不拦截，口径见 barcode-caps.ts -->
-        <span v-for="(line, i) in bcCapHint" :key="`cap${i}`" class="f-hint f-hint-warn">⚠ {{ line }}</span>
         <FField label="内容">
           <FText :model-value="bc!.content ?? ''" placeholder="支持 {{变量}}" @update:model-value="setBarcode({ content: $event })" />
         </FField>
@@ -215,10 +213,8 @@
       <FGroup v-else-if="el!.type === 'qrcode'" title="二维码内容">
         <FRow>
           <FLabel text="码制" />
-          <FSelect :model-value="qr!.sym ?? 'QRCODE'" :options="qrSymOptions" @update:model-value="setQrSym($event)" />
+          <FSelect :model-value="qr!.sym ?? 'QRCODE'" :options="QRCODE_SYM_OPTIONS" @update:model-value="setQr({ sym: $event })" />
         </FRow>
-        <!-- 同「一维码」：受限码制给一行 capNote 小字，取值集合不变 -->
-        <span v-for="(line, i) in qrCapHint" :key="`cap${i}`" class="f-hint f-hint-warn">⚠ {{ line }}</span>
         <!-- 内容可能上千字符（URL / JSON / GS1 串），单行 input 看不见后半段，
              所以这里用可调高的多行框；但它仍是「一条数据」，noNewline 见 fields/FArea.vue -->
         <FField label="内容" class="f-field-top">
@@ -340,9 +336,7 @@
 // =============================================================================
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useDesignerStore } from '../store';
-import { BARCODE_SYMS, QRCODE_SYMS, SYSVAR_KEYS, TYPE_LABELS } from '../model';
-import { capHint, capOptions } from '../barcode-caps';
-import type { PrintProtocol } from '../barcode-caps';
+import { BARCODE_SYM_OPTIONS, QRCODE_SYM_OPTIONS, SYSVAR_KEYS, TYPE_LABELS } from '../model';
 import {
   FORMULA_FUNCTIONS, buildContext, evalFormula, interpolate, sampleRowOf,
 } from '../engine/context';
@@ -402,30 +396,6 @@ function setQr(patch: Partial<QrcodeSpec>) {
   set({ qrcode: { ...(qr.value ?? {}), ...patch } });
 }
 
-/**
- * 切换二维码制时同步元素框比例。
- * PDF417（堆叠长条）与矩形 DataMatrix 是标准规定的非正方形，留在 18×18 方框里
- * 只会大片留白。规则：保持较大边不变，另一侧按符号自然比例收缩，下限 4mm；
- * 内容仍含占位符或编码失败取不到比例时只改码制，不动尺寸。
- */
-function setQrSym(sym: string) {
-  const cur = el.value;
-  if (!cur) return;
-  const spec = { ...(qr.value ?? {}), sym };
-  const ratio = qrNaturalAspect(spec, interpolate(spec.content ?? '', previewCtx));
-  if (!ratio) {
-    set({ qrcode: spec });
-    return;
-  }
-  const w = cur.w ?? 18;
-  const h = cur.h ?? 18;
-  const round1 = (v: number) => Math.max(4, Math.round(v * 10) / 10);
-  set({
-    qrcode: spec,
-    ...(ratio >= 1 ? { w, h: round1(w / ratio) } : { w: round1(h * ratio), h }),
-  });
-}
-
 /** 下拉给回来的是字符串，这里收敛到 spec 的联合类型（取值集合与原生版一致） */
 function setTextPos(v: string) {
   setBarcode({ textPosition: v === 'top' ? 'top' : 'bottom' });
@@ -453,6 +423,7 @@ const previewCtx = buildContext(store.template, sampleRowOf(store.template), { s
 
 const bcCheck = computed(() => validateBarcodeText(bc.value?.sym ?? 'CODE128', bc.value?.content ?? ''));
 const qrCheck = computed(() => validateBarcodeText(qr.value?.sym ?? 'QRCODE', qr.value?.content ?? ''));
+
 const qrLen = computed(() => (qr.value?.content ?? '').length);
 
 /** 换行挡在输入侧，但挡了就要说：粘贴里有几个控制字符就报几个，不静默改用户的数据 */
@@ -483,18 +454,6 @@ const formulaError = computed(() => {
     ? '公式无法求值，画布上会显示默认值或 #公式错误'
     : '';
 });
-
-// --------------------------- 码制能力标记 ---------------------------
-// 下拉后缀与小字说明都来自 barcode-caps.ts（与 backend/core/barcode-caps.ts 等价的副本）。
-// designer store 里没有打印机/协议概念（协议只在导出指令时由调用方指定），
-// 所以这里传 undefined，走「zpl/tspl 取最差情况」口径 —— 详见 barcode-caps.ts 文件头注释。
-// 日后接入打印机选择器，只需把它的 protocol 传给 symProtocol，判定表不用动。
-const symProtocol: PrintProtocol | undefined = undefined;
-
-const bcSymOptions = computed(() => capOptions(BARCODE_SYMS, symProtocol));
-const qrSymOptions = computed(() => capOptions(QRCODE_SYMS, symProtocol));
-const bcCapHint = computed(() => capHint(bc.value?.sym ?? 'CODE128', symProtocol));
-const qrCapHint = computed(() => capHint(qr.value?.sym ?? 'QRCODE', symProtocol));
 
 // --------------------------- 本地图片 → data URL ---------------------------
 function pickImage() {

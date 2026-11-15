@@ -1,12 +1,21 @@
-// SQL 数据源执行器（参数化查询 + 只读强制）
-// 支持 pg 原生驱动（pg 包已在 dependencies）
+// SQL 数据源执行器（参数化查询 + 只读强制 + 多驱动）
+// P8.4：方言差异（占位符 / LIMIT / 标识符）全部下沉到 sql-driver.calc.ts，
+//   本文件只做 IO。PG 用 pg 原生驱动（已在 dependencies）；MySQL / SQL Server
+//   驱动按需懒加载，未安装时明确报错，不静默假装成功。
 import { Pool, PoolConfig, QueryResult } from 'pg';
+import {
+  DRIVER_PROFILES, SqlDriver, detectDriver, namedParams, paginateSql,
+} from './sql-driver.calc';
 
 export interface SqlExecConfig {
-  /** 加密前的原始连接串（postgresql://...）或已解密的 config 对象 */
+  /** 加密前的原始连接串或已解密的 config 对象 */
   connection: string | PoolConfig;
   /** 只读检查关闭（仅用于内部受信任源） */
   skipReadOnlyCheck?: boolean;
+  /** P8.4：目标驱动；不指定时从连接串前缀判定，判定不了默认 postgres（保持旧行为） */
+  driver?: SqlDriver;
+  /** P8.4：SQL 级分页偏移（0 基） */
+  offset?: number;
 }
 
 export interface SqlExecResult {
@@ -123,11 +132,150 @@ export async function releasePool(key: string) {
   }
 }
 
+/** 解析驱动：显式 driver > 连接串前缀 > 默认 postgres（保证旧调用零变化） */
+export function resolveDriver(config: SqlExecConfig): SqlDriver {
+  if (config.driver && DRIVER_PROFILES[config.driver]) return config.driver;
+  const url = typeof config.connection === 'string' ? config.connection : '';
+  return detectDriver(url).driver ?? 'postgres';
+}
+
+/** 保留原始异常（tsconfig 的 lib 不含 ErrorOptions，用 cause 属性挂载，满足错误链可追溯） */
+function wrapSqlError(e: any, prefix: string): Error {
+  const err = new Error(`${prefix} [${e?.code ?? 'UNKNOWN'}]: ${e?.message ?? String(e)}`);
+  (err as any).cause = e;
+  return err;
+}
+
+/** PostgreSQL：复用连接池缓存，rowMode=array 便于从 fields 取列名 */
+async function queryPostgres(config: SqlExecConfig, wrappedSql: string, params: any[], hardLimit: number): Promise<SqlExecResult> {
+  const key = typeof config.connection === 'string'
+    ? config.connection
+    : JSON.stringify(config.connection);
+  const pool = getPool(key, config);
+  const t0 = Date.now();
+  let result: QueryResult;
+  try {
+    result = await pool.query({ text: wrappedSql, values: params, rowMode: 'array' });
+  } catch (e: any) {
+    throw wrapSqlError(e, 'SQL 执行失败');
+  }
+  const columns = (result.fields ?? []).map((f) => f.name);
+  const rows = result.rows.map((row: any[]) => {
+    const obj: Record<string, any> = {};
+    columns.forEach((col, i) => { obj[col] = row[i]; });
+    return obj;
+  });
+  return {
+    columns, rows, rowCount: result.rowCount ?? rows.length,
+    durationMs: Date.now() - t0, command: result.command,
+    warnings: result.rowCount === hardLimit ? [`结果已截断到前 ${hardLimit} 行，实际可能更多`] : [],
+  };
+}
+
+/** 懒加载可选原生驱动；未安装时给出可执行修复建议，绝不静默降级 */
+function loadOptionalDriver(pkg: string): any {
+  try {
+    return require(pkg);
+  } catch {
+    throw new Error(
+      `${pkg} 驱动未安装：请执行 npm i ${pkg} 后重启服务。` +
+      `（当前仅 pg 为内置依赖；沙盒/离线环境请使用 PostgreSQL 数据源）`,
+    );
+  }
+}
+
+/** MySQL：mysql2/promise 的 prepared execute，? 占位符 */
+async function queryMysql(config: SqlExecConfig, wrappedSql: string, params: any[], hardLimit: number): Promise<SqlExecResult> {
+  const mysql = loadOptionalDriver('mysql2/promise');
+  const connStr = typeof config.connection === 'string'
+    ? config.connection
+    : (config.connection as any).connectionString;
+  if (!connStr) throw new Error('MySQL 数据源需要连接串（mysql://user:pass@host:3306/db）');
+  const t0 = Date.now();
+  let conn: any;
+  try {
+    conn = await mysql.createConnection({ ...parseMysqlUrl(connStr), connectTimeout: 5000 });
+    const [rows, fields] = await conn.execute({ sql: wrappedSql, values: params });
+    const columns: string[] = (fields ?? []).map((f: any) => f.name);
+    const objs: Record<string, any>[] = (rows ?? []).map((r: any) => {
+      if (Array.isArray(r)) {
+        const o: Record<string, any> = {};
+        columns.forEach((c, i) => { o[c] = r[i]; });
+        return o;
+      }
+      return r;
+    });
+    return {
+      columns, rows: objs, rowCount: objs.length,
+      durationMs: Date.now() - t0, command: 'SELECT',
+      warnings: objs.length === hardLimit ? [`结果已截断到前 ${hardLimit} 行，实际可能更多`] : [],
+    };
+  } catch (e: any) {
+    throw wrapSqlError(e, 'MySQL 执行失败');
+  } finally {
+    try { await conn?.end?.(); } catch { /* 关闭失败不影响结果 */ }
+  }
+}
+
+/** 把 mysql:// URL 拆成 mysql2 连接选项（密码需 decodeURIComponent） */
+function parseMysqlUrl(url: string): Record<string, any> {
+  const u = new URL(url);
+  return {
+    host: u.hostname, port: Number(u.port || 3306),
+    user: decodeURIComponent(u.username), password: decodeURIComponent(u.password),
+    database: u.pathname.replace(/^\//, ''),
+  };
+}
+
+/** 把 mssql:// URL 拆成 mssql.ConnectionPool 配置 */
+function parseMssqlUrl(url: string): Record<string, any> {
+  const u = new URL(url);
+  return {
+    server: u.hostname, port: Number(u.port || 1433),
+    user: decodeURIComponent(u.username), password: decodeURIComponent(u.password),
+    database: u.pathname.replace(/^\//, ''),
+    connectionTimeout: 5000, requestTimeout: 15_000,
+    options: {
+      encrypt: /encrypt=true/i.test(u.search),
+      trustServerCertificate: process.env.DB_MSSQL_TRUST_CERT === '1',
+    },
+  };
+}
+
+/** SQL Server：命名参数 @pN，OFFSET/FETCH 分页 */
+async function queryMssql(config: SqlExecConfig, wrappedSql: string, params: any[], hardLimit: number): Promise<SqlExecResult> {
+  const mssql = loadOptionalDriver('mssql');
+  const cfg = typeof config.connection === 'string'
+    ? parseMssqlUrl(config.connection)
+    : config.connection;
+  const t0 = Date.now();
+  let pool: any;
+  try {
+    pool = await new mssql.ConnectionPool(cfg).connect();
+    const req = pool.request();
+    for (const [k, v] of Object.entries(namedParams(params))) req.input(k, v);
+    const r = await req.query(wrappedSql);
+    const objs: Record<string, any>[] = r.recordset ?? [];
+    const columns = objs.length ? Object.keys(objs[0]) : [];
+    return {
+      columns, rows: objs, rowCount: r.rowsAffected?.[0] ?? objs.length,
+      durationMs: Date.now() - t0, command: 'SELECT',
+      warnings: objs.length === hardLimit ? [`结果已截断到前 ${hardLimit} 行，实际可能更多`] : [],
+    };
+  } catch (e: any) {
+    throw wrapSqlError(e, 'SQL Server 执行失败');
+  } finally {
+    try { await pool?.close?.(); } catch { /* 关闭失败不影响结果 */ }
+  }
+}
+
 /**
- * 参数化执行 SQL。
- * @param sql  SQL 模板（含 $1, $2 ... 占位符 —— pg 原生 prepared）
- * @param params  对应参数数组
+ * 参数化执行 SQL（P8.4 多驱动入口）。
+ * @param sql    SQL 模板，占位符统一写 $1..$N（由方言层按驱动转换）
  * @param limit  强制上限（默认 1000，最大 5000）
+ * @param config.offset  SQL 级分页偏移
+ *
+ * 只读白名单是独立防线，不依赖任何驱动的 prepared 协议；多语句一律拒绝。
  */
 export async function execute(
   config: SqlExecConfig,
@@ -136,67 +284,23 @@ export async function execute(
   limit = 1000,
 ): Promise<SqlExecResult> {
   assertReadOnly(sql, config.skipReadOnlyCheck);
-  const hardLimit = Math.min(Math.max(1, +limit || 1000), 5000);
-  // 若原 SQL 没有 LIMIT，则自动加一层子查询限制行
-  const wrappedSql = ensureLimit(sql, hardLimit);
-
-  const key = typeof config.connection === 'string'
-    ? config.connection
-    : JSON.stringify(config.connection);
-  const pool = getPool(key, config);
-
-  const t0 = Date.now();
-  let result: QueryResult;
-  try {
-    result = await pool.query({
-      text: wrappedSql,
-      values: params,
-      rowMode: 'array', // 用 array 取列名更干净（后续从 result.fields 拿）
-    });
-  } catch (e: any) {
-    // pg 错误码提取（例如 42601 语法错、28000 鉴权失败）
-    const code = e?.code ?? 'UNKNOWN';
-    const msg = e?.message ?? String(e);
-    throw new Error(`SQL 执行失败 [${code}]: ${msg}`);
+  const driver = resolveDriver(config);
+  // SQL Server 不支持 SHOW / VALUES / EXPLAIN 作为独立只读语句，显式拦掉
+  if (!DRIVER_PROFILES[driver].allowShowValues) {
+    const first = String(sql).replace(/^\s+/, '').split(/\s+/)[0]?.toLowerCase();
+    if (['show', 'values', 'explain'].includes(first)) {
+      throw new Error(`SQL Server 不支持 "${String(first).toUpperCase()}" 语句（只读模式）`);
+    }
   }
-  const durationMs = Date.now() - t0;
-
-  // 转回对象形式
-  const columns = (result.fields ?? []).map((f) => f.name);
-  const rows = result.rows.map((row: any[]) => {
-    const obj: Record<string, any> = {};
-    columns.forEach((col, i) => { obj[col] = row[i]; });
-    return obj;
-  });
-
-  const warnings: string[] = [];
-  if (result.rowCount === hardLimit) warnings.push(`结果已截断到前 ${hardLimit} 行，实际可能更多`);
-
-  return {
-    columns,
-    rows,
-    rowCount: result.rowCount ?? rows.length,
-    durationMs,
-    command: result.command,
-    warnings,
-  };
+  const plan = paginateSql(sql, driver, { limit, offset: config.offset, params });
+  switch (driver) {
+    case 'mysql': return queryMysql(config, plan.sql, plan.params, plan.limit);
+    case 'mssql': return queryMssql(config, plan.sql, plan.params, plan.limit);
+    default:      return queryPostgres(config, plan.sql, plan.params, plan.limit);
+  }
 }
 
-/** 若原 SQL 顶层没有 LIMIT，则自动包一层子查询加 LIMIT hardLimit。
- *  保留 ORDER BY 顺序。 pg 原生无 LIMIT 时直接包：
- *    SELECT * FROM (原SQL) AS _lf LIMIT hardLimit
- *  若已有 LIMIT 则保持原样。 */
-function ensureLimit(sql: string, hardLimit: number): string {
-  const trimmed = sql.replace(/;\s*$/, '').trim();
-  // 简单检查末尾 LIMIT（不够严格但够 95% 场景）
-  if (/\blimit\s+\d+/i.test(trimmed) && /\border\s+by\b[\s\S]*\blimit\b/i.test(trimmed)) {
-    // 原 SQL 已经带 LIMIT，不做处理（留给 hardLimit 兜底）
-    return trimmed;
-  }
-  return `SELECT * FROM (${trimmed}) AS _lf LIMIT ${hardLimit}`;
-}
-
-/** 测试连接：SELECT 1 */
+/** 测试连接：SELECT 1（按驱动生成方言 SQL） */
 export async function ping(config: SqlExecConfig): Promise<{ ok: boolean; message?: string; durationMs: number }> {
   const t0 = Date.now();
   try {

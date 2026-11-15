@@ -21,6 +21,8 @@ import { Reflector } from '@nestjs/core';
 import { Tenant, User, UserRole } from './entities/tenant.entity';
 import { Role } from './entities/saas.entity';
 import { PORT } from './common/config';
+// B2.2 上线前加固：启动期配置强校验（生产带 dev 密钥/弱口令直接拒绝启动）
+import { readConfigSnapshot, assertProductionConfig } from './common/config.guard';
 
 async function seedDefaultTenantAndAdmin(dataSource: DataSource) {
   const tenantRepo = dataSource.getRepository(Tenant);
@@ -64,6 +66,13 @@ async function seedDefaultTenantAndAdmin(dataSource: DataSource) {
 }
 
 async function bootstrap() {
+  // 必须在建连/建容器之前：严格模式下有 block 级问题直接抛错，进程不启动（fail-closed）。
+  // dev/test 只打印 warn，不打断本地开发与单测。日志只报「哪项不合规」，绝不打印密钥明文。
+  const configIssues = assertProductionConfig(readConfigSnapshot());
+  for (const issue of configIssues) {
+    console.warn(`[CONFIG ${issue.level}] ${issue.key}: ${issue.message}`);
+  }
+
   const app = await NestFactory.create(AppModule);
   const reflector = app.get(Reflector);
   const jwt = app.get(JwtService);
@@ -88,11 +97,14 @@ async function bootstrap() {
   // - 没写 DTO 的 @Body()（metatype 是 Object）会被 pipe 跳过，存量接口零影响
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: false, forbidNonWhitelisted: false }));
   app.useGlobalInterceptors(
-    new TenantContextInterceptor(modulesSvc, permsSvc, configSvc),
+    new TenantContextInterceptor(modulesSvc, permsSvc, configSvc, app.get(DataSource)),
     new ResponseInterceptor(),
   );
   app.useGlobalFilters(new AllExceptionsFilter());
   app.enableCors();
+  // 让 TenantDataSourceManager / BullMQ 的 onApplicationShutdown 在 SIGTERM 时执行，
+  // 独立库与 RLS 角色连接池才能被干净释放（否则滚动发布时会留一堆半开连接）。
+  app.enableShutdownHooks();
 
   // 首次启动种入默认租户、管理员与 admin 角色（幂等）
   await seedDefaultTenantAndAdmin(app.get(DataSource));

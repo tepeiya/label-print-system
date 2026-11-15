@@ -1,7 +1,7 @@
 # 10. 开发交接文档（面向接手的 AI / 开发者）
 
 > 本文档目标：**任何 AI 或开发者读完本文即可无缝接手继续开发**，不需要再翻历史对话。
-> 阅读顺序建议：§10.1 速览（**先看 §10.1.5 交付状态总表：做完的 / 没做的都在里面**） → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）** → **§10.19 P3 计费闭环（动账单/配额/计量前必读）** → **§10.20 P4 Agent/MCP（动 /agent/v1、agent token、库存只读模型前必读）** → **§10.21 P5 Agent 写工具与审批流（动 Agent 写路径/限流/幂等/MCP HTTP 前必读）** → **§10.22 P6.1 RLS 兜底（动数据库角色/连接、写任何原生 SQL 前必读）** → **§10.23 P6.3 租户数据导出与硬删 + Agent 前端入口（动 /platform/tenants/:id/export|purge、表清单口径前必读）** → **§10.24 P6.4 白标 D6 + P6.3 platform 前端（动 /branding、登录 Host 解析、主题注入前必读）** → **§10.25 P6.2 独立库租户阶段 A（动 datasource 注册/按库导出前必读）** → **§10.26 P6.5 Prompt 库（动 /agent-prompts、MCP prompts、Agent 下发模板前必读）** → **§10.27 P7.2 复核重做 + P7.3–P7.8 条码打印核心（动指令生成器 / 能力矩阵 / 位图通道 / GS1 语义前必读）**。
+> 阅读顺序建议：§10.1 速览（**先看 §10.1.5 交付状态总表：做完的 / 没做的都在里面**） → §10.5 核心约定 → §10.9 已知问题 → **§10.15 SaaS P0（做订阅/权限相关开发前必读）** → **§10.16 SaaS P1 前端动态化（做前端必读）** → §10.17 校验底座 → **§10.18 P2 平台运营后台（动 /platform 或 platform_users 前必读）** → **§10.19 P3 计费闭环（动账单/配额/计量前必读）** → **§10.20 P4 Agent/MCP（动 /agent/v1、agent token、库存只读模型前必读）** → **§10.21 P5 Agent 写工具与审批流（动 Agent 写路径/限流/幂等/MCP HTTP 前必读）** → **§10.22 P6.1 RLS 兜底（动数据库角色/连接、写任何原生 SQL 前必读）** → **§10.23 P6.3 租户数据导出与硬删 + Agent 前端入口（动 /platform/tenants/:id/export|purge、表清单口径前必读）** → **§10.24 P6.4 白标 D6 + P6.3 platform 前端（动 /branding、登录 Host 解析、主题注入前必读）** → **§10.25 P6.2 独立库租户阶段 A（动 datasource 注册/按库导出前必读）** → **§10.26 P6.5 Prompt 库（动 /agent-prompts、MCP prompts、Agent 下发模板前必读）**。
 > 最后更新：2026-11-06（P0–P5 已落地；**P6 五个子项全部动手：P6.1 RLS + P6.3 导出/硬删 + P6.4 白标 + P6.5 Prompt 库四项完整；P6.2 独立库租户只完成阶段 A（注册 + 平台侧按库导出/删除），开通编排与业务读写接管未做**；
 > 本轮新增 **§10.26**；单测 217 条 / 验收 267 项（A–Q 段）/ RLS 冒烟 22 项；P6 只剩 P6.2 阶段 B（见 §10.25.8）。
 > 同日另交付**设计器 Vue 化**（§10.7.2）：`web/` 的 render/interactions/store 已搬进 `apps/console`，Designer 页的 iframe 删除，
@@ -9,6 +9,21 @@
 > 待 `apps/console` / `apps/platform` 功能全部完善后整目录删除（删除前需确认无脚本/Caddy 配置再引用 `web/`）。
 > Playwright 18 项 E2E 全绿。
 > **接手先读 §10.1.5「交付状态总表」：已完成 15 项、未完成按 🔴/🟡/⚪ 分级列全。**）
+>
+> ## 🔄 2026-11-13 本轮增量（隐性重点补齐，详见新增 §10.27）
+>
+> 按「未完成的隐性重点」逐项收口，新增/改动均在 `backend/`，**前端本轮未改**：
+> - **B2.2 配置 fail-fast**：`common/config.guard.ts` 接入 `main.ts` bootstrap，生产带 dev 密钥/弱口令拒绝启动；
+> - **B2.6 护栏 7 脱敏**：`agent/redaction.calc.ts` + `ToolsService.egress()`，**四个出域返回点全部覆盖**（补上了此前漏掉的幂等重放分支）；
+> - **B3 限流细分**：agent/tool/token 三维 + `X-RateLimit-*` / `Retry-After` 响应头，后两维默认关闭（不无预警收紧存量租户）；
+> - **B2.4 定时任务 + B2.5 通知基建**：`jobs/`（BullMQ `maintenance` 队列三个 repeatable 任务）+ `notify/`（站内信 + 可扩展通道）+ `scripts/saas_p7_notifications.sql`；
+> - **B1 P6.2 阶段 B**：`common/tenant-routing.*` 全局 Repository/事务代理（16 个模块接入）、`TenantContextInterceptor` 读真实 `data_source_key`、
+>   `dedicated.orchestration.calc.ts` 状态机 + `dedicated.provision.service.ts` 开通编排、`dedicated.ops.calc.ts` 池/SSL/健康检查 + 退库回收巡检。
+>
+> **实跑基线**：`npm run typecheck` 0 error、`npm test` **297 条全绿**（290 pass / 7 skip / 0 fail）、
+> `tsc -p tsconfig.json` 全量编译通过、Nest DI 图构建通过（已走到 TypeOrmModule 连接阶段，无依赖解析错误）。
+> ⚠️ **沙盒无 PostgreSQL / Redis 实例**，因此「独立库真连库验收」「定时任务真实触发」「站内信真实落库」**未实跑**，
+> 只能确认纯逻辑与 DI；不得据此对外宣称这些链路已验收，见 §10.27.4。
 >
 > ⚠️ **2026-11-05 历史瘦身**：`.pnpm-store`（232 MB pnpm 包缓存，被 `95b4970` 误提交）已从
 > `feat/dev-base` 的**全部历史**中移除，`.git` 从 54 MB 降到 1.4 MB。
@@ -90,21 +105,20 @@ curl -s http://localhost:3200/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 ### 10.1.5 交付状态总表（2026-11-08 复核更新，交接以本节为准）
 
 > 结论先说：**P0–P5 六个阶段已完整交付；P6 的五个子项里，P6.1 / P6.3 / P6.4 / P6.5 四项完整**。
-> **P6.2 独立库只交付了阶段 A**（注册 + 平台侧按库导出/删除），**阶段 B（开通编排 / 业务读写接管 / 退库回收）未做**——
-> 这是目前唯一挡在「私有化独立库」对外承诺前面的东西，清单见 B1。
+> **2026-11-13 更新：P6.2 阶段 B 的代码已全部落地**（业务读写路由 / 开通编排 / 退库巡检 / 运维面，见 §10.27），
+> B2.2 / B2.4 / B2.5 / B2.6 / B3 也同步收口。**但阶段 B 缺少真连库验收**（沙盒只有一套 PG、无 Redis），
+> 所以对外承诺口径仍是「独立库能力已实现、待真连库验收」，不是「独立库已交付」。清单见 B1 与 §10.27.4。
 > 下面「未完成」按「会挡住什么」排序，不按工作量排序；标 🔴 的会挡住对外承诺，标 🟡 的是上线前必须处理，
-> 标 ⚪ 的是功能缺口（不影响已交付主线）。
+> 标 ⚪ 的是功能缺口（不影响已交付主线）。本轮之后剩余项以 §10.27.4 的「待验收 / 未做」表为准。
+> **2026-11-13 追加**：按专业条码软件收费清单重新盘点的 P8 补齐路线见 **§10.28**（顺序表在 `docs/08-plan.md §8.6`）；
+> **P8.0–P8.5 六个阶段的代码现已全部落地**（P8.0/8.1/8.2 见 §10.28.5，P8.3/8.4 见 §10.29，P8.5 见 §10.30），
+> 全量单测 442 全绿 / typecheck 0 / DI 图成立；但 P8.3 并发防重、P8.4 第二套数据库与调度端到端、P8.5 全部硬件项
+> **仍需真库/真机验收**，验收边界以 §10.28.4 与 §10.30.3 为准，不要与 §10.27 的独立库验收混为一谈，也不要写「已交付」。
 
 > **⚠️ 2026-11-08 最新优先级调整**：SaaS/Agent 主线（P0–P6）已基本闭环，下一轮开发回到**条码设计与打印核心能力**——
 > 这是产品的"命根子"，目前与 BarTender / ZebraDesigner / NiceLabel 等专业系统差距显著，详见后续待补 §10.7.3。
 > 本轮复核实跑基线：单测 **217/0**（210 pass / 7 skip，0 fail）、apps/console + apps/platform + apps/mcp-server 三构建全绿、
 > 默认租户 admin/operator + 新开租户 hdzz001（刚重置密码）+ 平台 platform 四账号**全部实测登录 201**。
->
-> **✅ 2026-11-08 当晚更新（P7 轮次已落地，接手做打印相关开发前先读 §10.27）**：P7.2 的结论被复核推翻并重做
-> （ZPL 的 ITF / PDF417 指令用错、MicroQR 谎称原生），P7.3–P7.8 全部完成，新增能力以 `CAP_MATRIX` 为单一真源。
-> 本轮实跑基线刷新为：单测 **388 tests / 380 pass / 0 fail / 8 skip**（P7 前 219/212/0/7）、backend `tsc --noEmit` **0 error**、
-> `bash backend/scripts/p7-acceptance.sh` **EXIT 0 / PASS 58 / FAIL 0 / SKIP 1**（唯一 SKIP 是 D 段：沙箱没起后端）、
-> `apps/console` `pnpm build` + `pnpm lint` **0 问题**。**但真机验证一项都没做**（沙箱没有打印机），待办见 §10.27.9。
 
 #### A. 已完成（每一项都有可重跑的验证，不是「写完了」）
 
@@ -125,7 +139,10 @@ curl -s http://localhost:3200/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 | 13 | **P6.5 Prompt 库（D8）** | 系统默认在代码、租户覆盖/自定义、`/agent-prompts` CRUD+预览、MCP 动态下发、Console 页面 | `agent/prompt.*`、`scripts/saas_p6_prompts.sql`、`views/PromptLibrary.vue` | 验收 Q 段 18 项 + 单测 8 条 |
 | 14 | **设计器 Vue 化** | render/interactions/store 三件套搬进 Console：12 类元素 WYSIWYG、手势（拖动/八向缩放/旋转/框选/平移/吸附）、标尺参考线、四页签检查器、撤销重做、快捷键、模板库与版本弹窗、打印预览；iframe 已删除 | `apps/console/src/views/designer/`、`views/Designer.vue` | Playwright 18 项 E2E 全绿（0 JS 错误）+ `pnpm build`/`lint` 0 问题，见 §10.7.2 |
 | 15 | **质量基线** | 单测 217、验收 267、RLS 冒烟 22、lint 0 error、console 构建、MCP 双 selftest | 命令见 §10.1.4 / §10.15.6 | 2026-11-06 全绿 |
-| 16 | **P7.2 复核重做 + P7.3–P7.8 条码打印核心** | ZPL 指令级纠错（`^B2`/`^B7`/MicroQR）、`CAP_MATRIX` 单一真源 + 通道派单 `planChannel`、TSPL/EPL 位图通道（`BITMAP`/`GW`/`^GFA` + `textBase64/textExact` 字节契约）、GS1 FNC1 三协议 + bwip 转写、几何/静区/参数/校验位调优、Console 能力呈现、EPL 通道、165 条新单测 + 66 份 golden | `backend/core/{barcode-caps,barcode-geometry,gs1,raster,bitmap-blocks,epl-generator}.ts`、`apps/console/src/views/designer/` | §10.27.7 / §10.27.8 实跑数字；⚠️ 真机一项未验，见 §10.27.9 |
+| 16 | **WP1 码制单一真源** | `core/symbology.capabilities.ts` + EPL 生成器、ZPL/TSPL 对齐、Console 属性面板同步 | `backend/core/`、`apps/console/src/views/designer/` | 单测 +19（P7 码制测试） |
+| 17 | **上线前加固（B2.2 / B2.6 / B3）** | 启动期配置强校验、Agent 出域字段脱敏（四个返回点全覆盖）、三维限流 + `X-RateLimit-*` 响应头 | `common/config.guard.ts`、`agent/redaction.calc.ts`、`agent/rate.calc.ts`、`agent/agent-rate.service.ts` | 单测 +25 / typecheck 0 |
+| 18 | **定时任务 + 通知基建（B2.4 / B2.5）** | `maintenance` 队列三个 repeatable 任务、站内信表/实体/通道接口/API、调度计划纯函数 | `jobs/`、`notify/`、`scripts/saas_p7_notifications.sql` | 单测 +9 / 编译通过（真触发待验收） |
+| 19 | **P6.2 阶段 B（B1）** | 全局 Repository/事务租户路由（16 模块）、拦截器读真实 key、开通编排状态机与执行器、退库巡检、per-key 池/SSL/健康检查 | `common/tenant-routing.*`、`saas/platform-admin/dedicated.*.calc.ts`、`dedicated.provision.service.ts` | 单测 +21 / DI 图构建通过（真连库待验收，见 §10.27.4） |
 
 #### B. 未完成清单（按「会挡住什么」排序）
 
@@ -139,20 +156,31 @@ curl -s http://localhost:3200/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 | 4 | 运维面 | 只有全局 `DB_DEDICATED_POOL`（默认 4） | 每租户池上限、SSL 参数、DSN 轮换、健康检查 | `tenant-data-source.manager.ts` |
 | 5 | 备份 | 只有逻辑 JSON gzip，不是 PITR；独立库物理备份没有 | 独立库物理备份/恢复方案，或明确写入合同「只保证逻辑导出」 | 运维文档 |
 
+> **2026-11-13 阶段 B 落地说明（逐项对照上表，详细见 §10.27）**
+> 1️⃣ 业务读写接管：`common/tenant-routing.ts` 的动态 Repository 代理 + `tenant-typeorm.module.ts`（16 个模块统一改 import 一行，业务 Service 零改动）；
+> `TenantContextInterceptor` 从目录库读真实 `data_source_key`（此前硬编码 `'default'`，是路由闭环的关键缺口）；事务走 `TENANT_DATASOURCE` 代理。
+> 2️⃣ 开通编排：`dedicated.orchestration.calc.ts` 状态机（`switch_key` 仅在 `verify_counts` 通过后可达）+ `dedicated.provision.service.ts`（建库 → DDL → 搬数据 → 行数校验 → 注册 → 切 key → 逆序回滚），
+> 平台端点 `POST /platform/tenants/dedicated`（一条命令开通）与 `POST /platform/tenants/:id/dedicated/plan|provision`。**失败时租户仍留在共享库，天然回滚；绝不自动 DROP DATABASE。**
+> 3️⃣ 退库回收：`GET /platform/datasources` 新增 `reclaimable`（库还在、租户已删）、`unregisteredRefs`；`POST /platform/datasources/:key/reclaim` 注销孤儿连接池（不删物理库）。
+> 4️⃣ 运维面：`dedicated.ops.calc.ts` 的 per-key 池上限 / 超时 / SSL（严格校验证书）已接入 `TenantDataSourceManager.buildDedicated`；`GET /platform/datasources/health` 出健康快照。
+> 5️⃣ 备份：**仍未做**（独立库物理备份 / PITR 依旧缺，需运维文档明确「只保证逻辑导出」）。
+>
+> ⚠️ 上述 1–4 项的**代码与纯逻辑已验证，真连库验收未做**（沙盒无第二套 PG / 无 Redis）。因此本表 🔴 状态从「未做」改为「已实现、待真连库验收」，**不是「已交付」**。
+
 **🟡 B2. 上线前必须处理（不挡开发，但挡上线）**
 
 1. **主链路仍是 owner 连库**：RLS 目前只是第二道防线，`labelflow` 是 owner/超管会绕过策略。
    切到 `labelflow_app` 的条件与顺序见 §10.22.4；切的时候必须同时把「按域名公开解析租户」改走平台角色连接，否则 fail-closed 会让白标静默失效。
-2. **弱口令/密钥**：`labelflow_app` / `labelflow_platform` 的口令是沙盒 dev 值，`JWT_SECRET` / `SQL_SECRET_KEY` / `DB_*` 必须走密钥管理；`BRANDING_DEV_VERIFY=1` 只能存在于 dev。
+2. ~~**弱口令/密钥**~~ → **2026-11-13 已收口**：`common/config.guard.ts` 在 `main.ts` bootstrap 最前面做 fail-fast（生产带 dev 密钥/弱口令拒绝启动），dev/test 只 warn；密钥明文绝不进日志/错误。**仍需运维侧**用密钥管理注入真实值（代码不再允许默认值上生产）。
 3. **白标真实 DNS 未验证**：TXT 比对只有单测 + 平台强校验通道覆盖；上线前拿真域名走一遍并关掉逃生口，ACME 证书自动化未做。
-4. **定时任务缺失**：D12 的「到期前 7 天提醒」只有看板 `warn` 标记，没有消息/邮件；审批过期靠**读时判定**回写（无批量任务）；`tool_idempotency` 没有 TTL 清理（长跑会一直攒行）。
-5. **消息/通知基建缺失**：续费、逾期、审批待办都没有站内信/邮件/飞书通道（P3/P5 的共同前置）。
-6. **敏感数据**：Agent 护栏 7 的「工具返回字段脱敏」仍未做；`print`/`inventory` 返回的业务字段目前原样下发。
+4. ~~**定时任务缺失**~~ → **2026-11-13 已收口**：`jobs/` 的 BullMQ `maintenance` 队列注册三个 repeatable 任务（订阅到期前 7 天提醒 / 审批过期批量回写 / `tool_idempotency` 30 天 TTL 分批清理），判定逻辑在纯函数 `jobs/schedule.calc.ts`。**待验收**：沙盒无 Redis，未真实触发过调度（见 §10.27.4）。
+5. ~~**消息/通知基建缺失**~~ → **2026-11-13 已落地 V1**：`notifications` 表（含 RLS 兜底与 dedupe 唯一索引）、站内信通道、`NotificationChannel` 扩展接口、`/api/v1/notifications` 四个端点。**邮件/飞书/短信仍未提供实现**，只有接口与注册中心。
+6. ~~**敏感数据**~~ → **2026-11-13 已收口**：`agent/redaction.calc.ts` 字段级脱敏经 `ToolsService.egress()` 覆盖**全部四个出域返回点**（正常返回 / need_approval / 两处幂等重放），命中时写 `warnings` 显式告知模型数据被裁剪。
 
 **⚪ B3. 功能缺口（不影响已交付主线，按需排期）**
 
 - MCP 工具未注册：`print.estimate`、`print.wait_for_job`、`print.cancel_job`、`ai.*`、`alerts.*`（目录里没有条目，调用是 404，不是占位）。
-- 限流只有 Agent 维度（tenant+client+分钟），无 per-tool / per-token 细分，也没有 `X-RateLimit-*` 响应头（只有 `retry_after`）。
+- ~~限流只有 Agent 维度~~ → **2026-11-13 已收口**：`rate.calc.ts` 扩到 agent / tool / token 三维（后两维默认关闭，靠 `rollout.tool_rpm|token_rpm|per_tool` 按需开启，不无预警收紧存量租户），成功与 429 都下发 `X-RateLimit-*` + `Retry-After`；agent 维度 key 保持 `lf:agent:rl:<tenant>:<client>:<桶>` 不变以兼容验收 M 段。
 - D10 反向 MCP（`external_mcp_servers`）只有表，不实现。
 - P6.5 Prompt：无版本历史/回滚、不按角色或用户分、无调用量/采纳率统计。
 - P3：税务发票开具、支付回调/自动扣款、退款红字冲正、续费提醒、按量计费、账单 PDF、多币种均未做（V1 口径见 §10.19.5）。
@@ -180,7 +208,7 @@ redis-server --port 6380 --daemonize yes
 #    docs/03-database.sql → backend/scripts/seed.sql → saas_p0.sql → saas_p0_roles.sql
 #    → saas_p2_platform.sql → saas_p3_billing.sql → saas_p4_agent.sql → saas_p5_agent_tools.sql
 #    → saas_p6_rls.sql → saas_p6_tenant_data.sql → saas_p6_branding.sql → saas_p6_dedicated.sql
-#    → saas_p6_prompts.sql
+#    → saas_p6_prompts.sql → saas_p7_notifications.sql
 
 # 3) 后端
 cd backend && npx tsc -p tsconfig.json
@@ -208,17 +236,8 @@ cd /app/label-print-system && DB_RLS_USER=labelflow_app D2_DSN='...' T_CODE=hand
 | `apps/console` `npm run build` | 通过 | vue-tsc + vite |
 | `apps/mcp-server` `npm run selftest[:http]` | 通过 | 工具/prompts/resources/会话回收 |
 
-**2026-11-08 P7 轮次追加基线**（离线可重跑，命令见 §10.27.8）：
-
-| 命令 | 基线 | 覆盖 |
-| --- | --- | --- |
-| `cd backend && npm test` | **388 / 380 pass / 0 fail / 8 skip** | 含 P7 新增 169 条（gs1 50 / geometry 33 / golden 30 / epl 34 / caps-sync 22） |
-| `npx tsc --noEmit -p tsconfig.json` | **0 error** | 含 `core/**` 生成器本体 |
-| `bash backend/scripts/p7-acceptance.sh` | **EXIT 0 / PASS 58 / FAIL 0 / SKIP 1**（见 §10.27.7；无 DB/无打印机的段落必须是 SKIP，不许假 PASS） | 三协议指令自洽、字节契约、GS1 转写、真实点阵解码回判 |
-| `apps/console` `pnpm build && pnpm lint` | **0 问题** | vue-tsc + vite + eslint |
-
 细节索引：P0 §10.15 · P1 §10.16 · 校验 §10.17 · P2 §10.18 · P3 §10.19 · P4 §10.20 · P5 §10.21 ·
-P6.1 §10.22 · P6.3 §10.23 · P6.4 §10.24 · P6.2 §10.25 · **P6.5 §10.26** · **P7.2 复核重做 + P7.3–P7.8 §10.27**。
+P6.1 §10.22 · P6.3 §10.23 · P6.4 §10.24 · P6.2 §10.25 · **P6.5 §10.26**。
 
 #### E. 环境注意（沙盒特有，接手先看）
 
@@ -387,11 +406,8 @@ POST /print/jobs
 ```
 
 - 通道由 `PrinterProviderRegistry` 路由：`raw_tcp` / `browser` / `image` / `windows_spooler`。
-- ZPL / TSPL / EPL 生成器在 `backend/core/`，**支持哪些码制、按哪条指令输出，一律查 `backend/core/barcode-caps.ts` 的
-  `CAP_MATRIX`（单一真源）**；生成器不得统一降级为 Code128/QR，也不得把查不到语法的指令「猜一条上去」。
-- `POST /print/commands` 返回 `warnings`（码制通道、几何/静区/校验位调优、GS1 结构、位图回填、中文字库依赖），不得静默降级。
-  作业里含位图段（TSPL `BITMAP` / EPL `GW` / ZPL 走位图通道）时 `textExact=false`，**下发与存盘必须用 `textBase64`**；
-  `raw_tcp` 通道内部一直按 Buffer 组装（历史实现 `.toString('ascii')` 会把点位图的高位字节砍掉，固件不报错直接打错图）。
+- ZPL / TSPL 生成器在 `backend/core/`，**必须按码制输出原生指令**，不得统一降级为 Code128/QR。
+- `POST /print/commands` 返回 `warnings`（不支持的码制、TSPL 中文字库依赖），不得静默降级。
 
 ### 10.5.4 RBAC（P0 后已升级为四层模型，详见 §10.15）
 
@@ -618,10 +634,6 @@ Excel 数据文件仍在原生版/后端解析，预览弹窗只吃 JSON/CSV/TSV
 **🟡 B6. 条码预览引擎**
 - 前端预览用 bwip-js 生成 SVG，打印时**重新编码**（ZPL/TSPL/PNG），两者可能不一致（码制宽度计算、静区、校验位追加时机）。
 - BarTender 的预览是**最终渲染**——所见即所得。这里要保证：`designer/engine/barcode.ts`（bwip-js SVG）与 `backend/core/barcode-encoder.ts`（位图）与 `backend/core/zpl-generator.ts`（指令）三者对同一份内容产出**完全相同的条码图案**。
-- **矢量渲染口径（2026-11-09 已落地）**：一维码/二维码全链路只出 SVG（`viewBox` 缩放，不栅格化图片）；
-  SVG 根节点统一加 `shape-rendering="crispEdges"` 关闭抗锯齿，避免被拉伸到非整数尺寸时条空/模块边缘插值出灰边
-  （视觉发虚，小模块宽还可能扫不出）。落点：`apps/console/.../engine/barcode.ts#crisp`、`backend/core/barcode-renderer.ts#crispSvg`，
-  由 `engines.test.ts` 的「矢量-一维码/二维码 SVG 带 crispEdges」锁定。仅模板列表缩略图与 `/barcode/png` 存档接口是位图。
 
 #### C. 下一轮开发路线（P7 条码打印核心修复）
 
@@ -630,13 +642,13 @@ Excel 数据文件仍在原生版/后端解析，预览弹窗只吃 JSON/CSV/TSV
 | 子任务 | 工作量 | 优先级 | 落点 | 状态 |
 |---|---|---|---|---|
 | **P7.1 移除 ZPL/TSPL 统一回落** | 1 天 | 🔴 必做 | `zpl-generator.ts` / `tspl-generator.ts`：不支持码制出 BadRequest + warnings | **✅ 2026-11-08 已完成** |
-| **P7.2 码制覆盖复核 + 降级策略** | 2 天 | 🔴 必做 | ZPL 一维 12 全齐 / 二维 6 全齐；TSPL 一维 12 全齐、MICROQR 降级标准 QR、DM/PDF417/Aztec 精确引导 | **⚠️ 2026-11-08 复核后推翻重做**：本行原结论有两条硬伤（ZPL 的 ITF 用了 `^BI`、PDF417 用了 `^B2`，都不是这两个符号），详见 §10.27.1 |
-| **P7.3 TSPL DataMatrix / PDF417** | 1 天 | 🟡 | TSPL 原生 `DATAMATRIX` / `PDF417` 指令，或走二维码降级 warnings | **✅ 2026-11-08 已完成（走位图通道，非降级）**：手册无原生指令 → `BITMAP` 原始字节通道；**没有**降级成 QR |
-| **P7.4 GS1 FNC1 语义** | 1.5 天 | 🟡 | TSPL BARCODE 加 FNC1 前缀、GS1 DataMatrix/QR 结构 | **✅ 2026-11-08 已完成（含一条「不做」结论）**：TSPL 用 `"EAN128"` + 0x1D 分隔；ZPL 用 `>;` / `>8`；二维 + `(AI)` 因拿不到 FNC1 转义写法证据 → 一律改派位图，见 §10.27.3 |
-| **P7.5 前端码制列表加"受限"标记** | 0.5 天 | 🟡 | `BARCODE_SYMS` 里不支持打印的加 `(预览仅)` 后缀 | **✅ 2026-11-08 已完成**：能力矩阵副本进 Console，选择器/检查器/预览三处呈现，见 §10.27.5 |
-| **P7.6 条码属性专业调优** | 2 天 | 🟢 | 静区自动计算、模块宽受 DPI 约束、旋转时明文位置修正 | **✅ 2026-11-08 已完成**：`barcode-geometry.ts` + 参数钳制 + 13 类 warnings（前缀清单见 §10.27.4），见 §10.27.4 |
-| **P7.7 新增 EPL 通道（旧 Zebra 兼容）** | 1 天 | 🟢 | 先做一维码 + QR，其他回 warnings | **✅ 2026-11-08 已完成（比原计划窄）**：一维 11 种原生 + 二维走 `GW` 位图；框/线/椭圆**只 warning 不打**（参数含义查不到），见 §10.27.6 |
-| **P7.8 单测补齐** | 2 天 | 🟢 | 每个码制的 ZPL/TSPL 指令快照测试（golden file） | **✅ 2026-11-08 已完成**：`gs1/geometry/golden`（三协议逐码制快照，66 份）+ `epl` + caps 漂移守卫 `caps-sync.test.ts`（22 条）+ `backend/scripts/p7-acceptance.sh`，见 §10.27.7 |
+| **P7.2 码制覆盖复核 + 降级策略** | 2 天 | 🔴 必做 | ZPL 一维 12 全齐 / 二维 6 全齐；TSPL 一维 12 全齐、MICROQR 降级标准 QR、DM/PDF417/Aztec 精确引导 | **✅ 2026-11-08 已完成** |
+| **P7.3 TSPL DataMatrix / PDF417** | 1 天 | 🟡 | TSPL 原生 `DATAMATRIX` / `PDF417` 指令，或走二维码降级 warnings | ⏳ |
+| **P7.4 GS1 FNC1 语义** | 1.5 天 | 🟡 | TSPL BARCODE 加 FNC1 前缀、GS1 DataMatrix/QR 结构 | ⏳ |
+| **P7.5 前端码制列表加"受限"标记** | 0.5 天 | 🟡 | `BARCODE_SYMS` 里不支持打印的加 `(预览仅)` 后缀 | ⏳ |
+| **P7.6 条码属性专业调优** | 2 天 | 🟢 | 静区自动计算、模块宽受 DPI 约束、旋转时明文位置修正 | ⏳ |
+| **P7.7 新增 EPL 通道（旧 Zebra 兼容）** | 1 天 | 🟢 | 先做一维码 + QR，其他回 warnings | ⏳ |
+| **P7.8 单测补齐** | 2 天 | 🟢 | 每个码制的 ZPL/TSPL 指令快照测试（golden file） | ⏳ |
 
 **P7.1 已落地的关键改动**（2026-11-08 commit `efXXXXXX`）：
 - `backend/core/zpl-generator.ts`：`generateZpl` 返回 `{ text, warnings }`，新增 `SUPPORTED_ZPL_BARCODES` 显式白名单（12 个码制），`default` 分支移除，不支持码制在 warnings 里明确提示并跳过输出
@@ -2067,11 +2079,13 @@ env 入口：`DB_DEDICATED_DSNS='{"acme":"postgres://..."}'`，单条失败只�
 
 ### 10.25.8 阶段 B 必做清单（不要按当前状态对外承诺「独立库已交付」）
 
-1. **业务读写接管**：Repository 代理 / 事务路由到 `tdsm.get(ctx)`；这一步不做，客户业务数据仍写在共享库。
-2. **开通编排**：建库 → 跑全部 DDL → 迁移租户行及业务数据 → 校验行数 → 切 `data_source_key` → 回滚预案。
-3. **退订回收**：`purge` 完独立库后决定保留/销毁；至少要有「库还在、租户已删」的巡检。
-4. **运维面**：每租户连接池上限（当前 `DB_DEDICATED_POOL` 全局默认 4）、SSL 参数、DSN 轮换、健康检查。
-5. **备份**：独立库的物理备份/恢复不在 `tenant_backups` 里；当前导出是逻辑 JSON gzip，不是 PITR。
+> **2026-11-13 状态**：1–4 项代码已落地（详见 §10.27），第 5 项仍未做；1–4 项**缺真连库验收**，口径仍是「已实现、待验收」。
+
+1. **业务读写接管** ✅ 代码已落地：Repository 代理 / 事务路由到 `tdsm.get(ctx)`（`common/tenant-routing.*`），16 个模块统一接入；拦截器读真实 key。**待验收**：独立库租户建模板 / 打库存时共享库 0 行。
+2. **开通编排** ✅ 代码已落地：建库 → DDL → 搬数据 → 行数校验 → 切 `data_source_key` → 逆序回滚（状态机保证校验不过不切 key）。**待验收**：一条命令开通 + 失败可回滚。
+3. **退订回收** ✅ 代码已落地：`reclaimable` 巡检 + `reclaim` 端点；物理库保留不自动删。**待验收**：硬删后巡检能列出孤儿 key。
+4. **运维面** ✅ 代码已落地：per-key 池上限 / 超时 / SSL / 健康检查（DSN 轮换沿用 `register` 覆盖）。**仍缺**：独立库物理备份/PITR。
+5. **备份** ❌ 仍未做：独立库的物理备份/恢复不在 `tenant_backups` 里；当前导出是逻辑 JSON gzip，不是 PITR。
 
 ## 10.26 P6.5 Prompt 库（D8）（2026-11-06 落地）
 
@@ -2165,223 +2179,321 @@ env 入口：`DB_DEDICATED_DSNS='{"acme":"postgres://..."}'`，单条失败只�
 
 ---
 
-## 10.27 P7.3–P7.8 条码设计与打印核心收口（2026-11-08 落地）
+## 10.27 隐性重点补齐（2026-11-13 落地）
 
-> 本节是「把剩下的开发完」那一轮的权威记录。三件事必须一起读：
-> **(1) P7.2 的结论被本轮复核推翻并重做**（§10.27.1）；**(2) 新增能力全部以 `CAP_MATRIX` 为单一真源**；
-> **(3) 所有「✅ 已完成」都只到「指令/点阵在沙箱里可验证」这一层，真机验证项在 §10.27.9 单独列着，别当已交付。**
->
-> 本轮验证手段只有两类，可信度不同，下文逐条标注：
-> - **手册级**：ZPL II / TSPL / EPL2 官方 Programming Guide 能查到该指令与其参数含义；
-> - **实测级**：在沙箱里用 bwip-js 4.x 出图 + **zxing-cpp 读图**回判 AIM 标识符（`]d1`/`]d2`/`]Q3`/`]C1`…）与字节序列。
->   没有打印机的地方一律不写「已验证」；查不到出处的指令一律**不打 + warning**（「宁可不打，不打错码」）。
+一句话：把 §10.1.5 B 清单里「上线前必须处理 / 挡住对外承诺」的隐性重点按工程标准逐项收口，
+**纯逻辑全部抽成可单测函数，IO 层只做编排**；同时诚实标出哪些只是「代码已实现」而非「已验收」。
 
-### 10.27.1 P7.2 复核推翻重做：指令级纠错 + 能力矩阵单一真源
+### 10.27.1 本轮做了什么（按工作包）
 
-**推翻的两条硬伤**（原 P7.2 声称「二维 6 全齐」，实际打出来的是另一种符号，而且打印机不报错）：
-
-| 码制 | 原写法 | 该指令真正是什么 | 现在的写法 |
+| WP | 对应缺口 | 交付 | 主要落点 |
 | --- | --- | --- | --- |
-| ITF（交叉二五码） | `^BI` | `^BI` = Industrial 2 of 5、`^BJ` = Standard 2 of 5，都不是交叉二五 | `^B2`（Interleaved 2 of 5，`zpl-generator.ts:284`） |
-| PDF417 | `^B2` | `^B2` 是一维交叉二五 | `^B7`（`zpl-generator.ts:338-343`，行高另发 `^BY`） |
-| MICROQR | 声称 `^BQ` 原生 | ZPL `^BQ` 只有 model 2（Micro QR / 混合模式 / 汉字模式无原生支持） | 改派位图通道 |
+| WP1 | 码制能力单一真源 + P7 剩余 | 能力表驱动 ZPL/TSPL/EPL、Console 属性面板同步 | `backend/core/symbology.capabilities.ts`、`epl-generator.ts`、`apps/console/src/views/designer/` |
+| WP2 | B2.2 / B2.6 / B3 | 配置 fail-fast、出域脱敏、三维限流 + 响应头 | `common/config.guard.ts`、`agent/redaction.calc.ts`、`agent/rate.calc.ts` |
+| WP3 | B2.4 / B2.5 | 三个 repeatable 定时任务、站内信与通道扩展点 | `jobs/`、`notify/`、`scripts/saas_p7_notifications.sql` |
+| WP4 | B1（P6.2 阶段 B） | 业务读写路由、开通编排、退库巡检、运维面 | `common/tenant-routing.*`、`saas/platform-admin/dedicated.*` |
+| WP5 | 回归与交接 | 全量单测 / typecheck / 编译 / DI 探针 / 文档 | 本节 |
 
-纠正后的口径直接写死在 `zpl-generator.ts:260-266` 的注释表里（每条指令带参数位含义），不再在生成器里另写一份白名单。
+### 10.27.2 几个关键设计决策（改之前先读）
 
-**单一真源 = `backend/core/barcode-caps.ts`**（223 行）：
+1. **配置守卫放在 `NestFactory.create()` 之前**，不是做成 Nest Provider：Provider 初始化时连接池可能已经用弱口令连上了，
+   必须在任何外部连接建立之前拒绝启动。dev/test 只 warn 不抛，不打断本地开发与单测；错误消息只报「哪项不合规」，不回显密钥。
+   `BRANDING_DEV_VERIFY` 的 dev 逃生口只在严格模式判 block（旧写法恒为 block，已修）。
+2. **脱敏只在出域做**：幂等记录与审计保留原始结果（重放一致性 / 合规追溯需要原值），
+   `ToolsService.egress()` 统一裁剪返回给 LLM 的 `data`。本轮补齐了此前漏掉的**幂等重放分支**，四个返回点全覆盖。
+   掩码保留「有值 + 类型 + 长度量级」，命中时把字段清单写进 `warnings`，模型知道数据被裁剪过。
+3. **限流新维度默认关闭**：`tool_rpm` / `token_rpm` / `per_tool` 不配就不检查，避免无预警收紧存量租户；
+   agent 维度 key 保持 `lf:agent:rl:<tenant>:<client>:<桶>` 不变（验收 M 段直接查这个键）。
+   成功响应头通过 `rate.context.ts`（AsyncLocalStorage）传，429 通过异常自带 headers 由 `AllExceptionsFilter` 下发——
+   不把传输层元数据混进 `ToolResult` 业务信封。
+4. **定时任务用 BullMQ repeatable 而不是 `@Cron`**：复用打印队列同一套 Redis，repeatable 按 name+cron 去重，
+   API 进程与 worker 进程同时注册也不会重复触发；判定（第 7 天边界、审批过期、TTL 边界）全在 `jobs/schedule.calc.ts` 纯函数。
+5. **站内信通道分层**：`InAppChannel` 是必须成功且带 `dedupe_key` 幂等的落库通道；
+   `NotificationChannel` 是外部通道扩展点，投递失败只记日志，绝不阻断主流程或回滚已落库的站内信。
+6. **业务读写接管用注入层代理，不改业务代码**：`tenant-typeorm.module.ts` 导出同名 `TypeOrmModule`，
+   16 个模块只需把那一行 import 指向它，`@InjectRepository` 注入的 Repository 就是动态 Proxy ——
+   每次方法调用按 `TenantCtx.dataSourceKey` 解析 `tdsm.get(ctx)`。无 ALS 上下文（定时任务 / 平台任务 / seed）回落共享库，
+   独立库 key 未注册则抛 503，**绝不静默回落**。事务通过 `TENANT_DATASOURCE` 代理在目标库起事务并打 `app.tenant_id`。
+   ⚠️ 关键闭环：`TenantContextInterceptor` 原来把 `dataSourceKey` 硬编码成 `'default'`，本轮改为从**目录库** `tenants.data_source_key` 读取；
+   不改这里，代理永远走共享库。
+7. **开通编排的两道闸门**：状态机 `canSwitchKey()` 要求「前置步骤全完成 + `verify_counts` 通过 + 处于 verifying/switching 态」，
+   编排器在真正 `UPDATE tenants` 前再调一次。任何失败进逆序回滚，**建库是唯一不可逆步骤，只标 manual 不自动 DROP DATABASE**；
+   新建场景即使编排失败，租户仍留在共享库且 key 未切，业务不中断（天然回滚）。DSN 只活在进程内存，审计只记 `maskDsn`。
 
-- `CAP_MATRIX`：21 个码制 × `zpl|tspl|epl|twoD|note`；`CAP_MATRIX_VERSION = 'p7-2026-11-08.4'`（约定 `p7-YYYY-MM-DD.N`，改表必须 bump，前端副本与 66 份 golden 都带这个号，漏改当场红）。
-- `statusFor / needsBitmap / nativeSymsFor / capNote / isKnownSym`：生成器、控制器、前端三处都从这里取结论。
-- `planChannel(sym, protocol, content)`（`:196`）：唯一的**通道派单**入口，输出 `native | bitmap | none` + `why`（`why` 就是 warning 正文，所以提示和结论不可能两张皮）。三条规则：
-  1. 一维码制**永不**走位图（bwip 一维缩放单位与打印点不成整数倍，栅格化会破坏条空比例）；能力矩阵里给不了一维的位图就是 `previewOnly`；
-  2. 二维 + 内容是 GS1 `(AI)` → 一律改派位图（§10.27.3 说明为什么协议侧不走原生指令）；
-  3. `degraded` 仍走原生但必须带差异说明（目前唯一实例：ITF14 @ EPL 用交叉二五 `'2'` 承载 GTIN-14，编码链一致但没有 ITF-14 边框/承载标记）。
-- `note` 里每条都带出处或「查不到」的结论，Aztec 的 `note`（`:140`）明确写 `^BO/^B0` 两个写法并存 → 属 §10.27.9 待实机项。
+### 10.27.3 实跑验证（2026-11-13）
 
-**防漂移守卫**：`backend/core/__tests__/caps-sync.test.ts`（22 条，纯函数，直接 import 前端那份无依赖副本）。它锁五类关系，而不是重测功能：
-前后端 `CAP_MATRIX` 逐字段等价（含键顺序与版本号）；`epl` 列必须由 `EPL_SYM_STATUS` 按固定映射推导（`native→native / bitmap→bitmap / previewOnly|no-evidence→previewOnly`，ITF14 是唯一手工例外）；`EPL_BARCODE_TYPES` 与矩阵双向一致（有类型码的码制不许在矩阵里是 previewOnly，标 native 的一维必须有类型码）；GS1 `^FNC1` 转写口径（§10.27.3，含 13+2 条语料 × 8 个 bcid 的「返回值或是否抛错」逐条比对，并对称比较 `gs1ToBwipFnc1∘parseGs1` 两侧结果，避免「两边都抛」被误报成副本漂移）；AI 定长/变长判定逐档位一致（`measureAiLen` 收窄成 `^3[1-6]\d{2}$` 之后最容易只改一边，故把 4212/3103/3923 这类边界档位单独钉一次）。
-
-### 10.27.2 P7.3 TSPL DataMatrix / PDF417：走位图通道，不是降级成 QR
-
-TSC《TSPL Programming Guide》的 `BARCODE` 码型表里**没有** DATAMATRIX / PDF417 / AZTEC（有 `QRCODE`），所以这三类按 `planChannel` 判定为 `bitmap`，用 `BITMAP x,y,widthBytes,rows,mode,<原始字节>`（mode 0=OVERWRITE）下发，封装在 `core/bitmap-blocks.ts:30 tsplBitmapLines`；ZPL 侧同一份点阵走 `^GFA,a,b,c,d,<hex>`（`:24`，校验 `b == 总字节 == c×rows`）；EPL 侧走 `GW`（§10.27.6）。**没有把任何码制悄悄换成 QR**——原任务书里「或走二维码降级」那个选项被明确否掉了。
-
-**出图与几何（本轮最容易做错的地方，全部有实测依据）**：
-
-- `core/raster.ts:83 qrcodeMonoRaster`：bwip 二维的缩放档位是「**1 档 = 2 像素/模块**」，实测 scale=1 时网格为 datamatrix 28×28、qrcode 42×42、azteccode 38×38、**pdf417 120×21（高度是奇数）**。
-- 只有偶数点阵才能「隔行隔列抽稀」得到无损的整数点/模块。奇数档位若强行重采样或多数表决，等于把半个模块的灰边请回标签里 —— 所以改成**档位重试**：按 `requested → +1 → +2` 依次出图，取第一个宽高都为偶数的档位（`raster.ts` 内循环），三档全失败才抛错。
-- 上调档位时 `MonoRaster.moduleDotsRequested` 记下**模板请求值**，`attachBitmapFallbacks`（`:169`）随即发 `[位图] … 每模块点数由 N 点上调到 N+1 点 …（X-dim 略大于模板值，符号仍可扫）`。这一条是**如实告知**，不是静默改尺寸。
-- 为什么必须这样做：PDF417 的行高方向天然是奇数倍，203dpi 的 3/5 点与 300dpi 的 5/7/9 点档位全都会踩中；旧实现直接抛错 = 「300dpi 上 0.4/0.6/0.8mm 的 PDF417 一个都打不出」。
-
-**字节传输契约**（位图数据只要经过一次 utf8 往返就永久损坏，>0x7F 的点位字节会变成 U+FFFD）：
-
-| 层 | 口径 | 落点 |
+| 项 | 命令 | 结果 |
 | --- | --- | --- |
-| 生成器 | 行数组可以是文本段或「指令头 + 原始字节」二进制段，全程 `Buffer.concat`，禁止整体 `.toString()` 后再编码 | `tspl-generator.ts:44,279,306` |
-| Provider | `raw_tcp` 内部一直按 Buffer 组装。历史实现有一句 `.toString('ascii')`：它把每个字节高位抹掉（实测 `0x80→0x00`、`0xFF→0x7F`），**字节数不变**，所以行宽/行数照样跟头部声明「对得上」、固件不报错，打出来却是一张点位被改过的图 —— 这类缺陷不会以故障形式暴露，只能靠字节断言防住 | `printer/printer-provider.interface.ts:91-131` |
-| HTTP | `/print/commands` 返回 `text` + `textBase64` + `textExact` + `bytes`（真实字节数）。含位图段时 `textExact=false`，**客户端只有拿 `textBase64` 才是可信的**；`textExact` 的判据是 `Buffer.from(text,'utf8').equals(buf)`，不是「有没有位图元素」这种猜测 | `src/print/print.controller.ts:144-151,160-178` |
-| 老前端 | `downloadCommands` 在 `textExact===false` 时 `atob → Uint8Array → Blob(application/octet-stream)`，纯文本作业路径逐字节不变 | `web/js/print.js` |
-| 测试标签入口 | `/printers/:id/test-commands` 只回 `{protocol,text}` —— 测试标签是纯文本、不含位图段，因此刻意**不**补 `textBase64/textExact` | `src/printer/printer.module.ts:161-182` |
+| 类型检查 | `cd backend && npm run typecheck` | **0 error** |
+| 全量单测 | `cd backend && npm test` | **297 条全绿**（290 pass / 7 skip / 0 fail），较 217 基线 +80 |
+| 全量编译 | `./node_modules/.bin/tsc -p tsconfig.json` | 通过（含装饰器元数据） |
+| lint | `cd backend && npm run lint` | **0 error / 11 warning**，与基线完全一致（本轮新增文件 0 warning） |
+| DI 图 | 编译产物上 `NestFactory.createApplicationContext(AppModule)` | **依赖解析全部通过**，走到 TypeOrmModule 连接阶段才因沙盒无 PG 停止（非 DI 错误） |
+| 前端构建 | `cd apps/console && pnpm build` | **未复跑**：沙盒无前端 `node_modules`、仓库根也没有 `pnpm-lock.yaml`（`vue-tsc: not found`）；本轮前端零改动，历史构建记录见 §10.8 / §10.26.8 |
 
-**端到端证据（沙箱内）**：同一份 GS1 DataMatrix 内容分别渲染三协议作业图，用 zxing-cpp 解码得到
-ZPL `^GFA` → `]d2`、TSPL `BITMAP` → `]d2`、EPL `GW` → `]Q1`（QR 明文场景），bytes 为 `b'010425123456789010AB789'`。
-⚠️ 这只证明「点阵/指令语义自洽且可被标准解码器识别」，**不等于真机打出来对**（§10.27.9）。
-现在这段证据可重跑：`bash backend/scripts/p7-acceptance.sh` 的 C.5/C.6（缺 python `zxing-cpp` 时整段 SKIP，不假 PASS）。
+本轮新增单测文件：`config.guard.test.ts`、`redaction.calc.test.ts`、`rate.calc.test.ts`（B3 追加）、
+`schedule.calc.test.ts`、`tenant-routing.test.ts`、`tenant-context.interceptor.test.ts`、
+`dedicated.orchestration.test.ts`、`dedicated.ops.test.ts`。
 
-### 10.27.3 P7.4 GS1 FNC1 语义（三协议 + bwip 四路）
+### 10.27.4 诚实边界：待验收 / 仍未做
 
-本轮修掉的**真缺陷**：二维符号装 GS1 `(AI)` 内容时，位图通道原来只开 `parsefnc:true`，实测（zxing-cpp 读 bwip-js 4.x 出图）：
+> **不要按本节把系统写成「独立库已交付」或「定时任务已上线」。**
 
-- `(01)04251234567890(10)AB789` + `parsefnc:true` → AIM `]d1` / `]Q1`，bytes 里**带字面括号** → 就是普通符号，AI 结构丢失 = **错码**；
-- `[01]…` + `parse:true` → 同样是字面方括号。所以「开 parse 就懂 GS1」是错的；
-- 正解：文本喂 `^FNC1` + 去括号 AI 链，并保持 `parsefnc:true` → `]d2`（GS1 DataMatrix）/ `]Q3`（GS1 QR），bytes `b'010425123456789010AB789'`。
-  对照实验：在**定长** `01` 之后多插一个分隔符也能解出 `]d2`，但 bytes 会多带一个 `\x1d` —— 数据里多一个不可见控制符属于不洁输出，所以实现按 GS1 规则只在变长段后插（这条曾以注释形式写成「带 `\x1d` 才对」，现已按实测改正）。
-
-转写规则（`core/gs1.ts:162 gs1ToBwipFnc1`）：符号起始一个 `^FNC1`；**只有「变长 AI 且其后还跟着别的 AI」**才在其后再插一个 `^FNC1`（bwip 编成 GS 0x1D）；定长 AI 之后不插；末尾永不插（尾随 GS 是脏数据）；数据里的字面 `^` 必须写成 `^^`，否则 bwip 报 `bwipp.truncatedFNC`（实测）。
-名单与例外（`gs1.ts:180 BWIP_GS1_2D_BCIDS` = datamatrix / datamatrixrectangular / qrcode / microqrcode / azteccode）：
-
-- `gs1-128` **不转写**：它自己解析括号 AI（实测 `]C1`，bytes 无括号），转写反而按字面量编；
-- `pdf417` **不转写**：GS1 AI 在 PDF417 是 Composite 链接语义，不能套「起始 FNC1 + GS 分隔」；
-- `microqrcode` 装 GTIN：bwip-js 对**任何** `^FNC1` 文本都报 `bwipp.qrcodeNoValidSymbol`（连 `(13)260101` 也一样）→ GS1 Micro QR 在本实现里出不了图。`gs1BwipText` 因此**显式抛错**给可读原因（「请改用 DATAMATRIX 或 QRCODE」），而不是等出图失败再兜底；同时它仍留在名单里，防止哪天被顺手删掉后退回「带括号的普通 Micro QR」这种错码。打印侧表现为 `[位图] … 该元素将被跳过（宁可不打，不打错码）`，预览侧表现为占位；
-- 括号 AI 结构解析不出来（尾随垃圾 / 空 AI / AI 前有多余字符）→ **抛错**，绝不退回字面括号。注意 `parseGs1` 只管结构不管长度，`(01)0425` 是能解析的，长度合法性由码制侧（bwip）拒。
-
-调用点：`core/barcode-renderer.ts` 的 `barcodeBwipOptions` / `qrcodeBwipOptions`（预览与位图通道共用同一份参数构造，所以预览不会再是另一种符号）。回归锁：`__tests__/gs1.test.ts`（50 条）+ `caps-sync.test.ts` 的转写口径段。
-
-协议侧 GS1 语义现状（与上面不同，这是**指令层**）：
-
-| 协议 | 做法 | 出处状态 |
+| 类别 | 具体内容 | 为什么没验 / 还缺什么 |
 | --- | --- | --- |
-| ZPL | `>;`（GTIN 定长段，含校验位）/ `>8`（变长段后插 FNC1），`gs1ToZpl`；`^BC` 的 `e` 位对 GS1-128 必须关 | 手册可查 |
-| TSPL | 码型用 `"EAN128"`（TSC 的 EAN128 = GS1-128，**不是** `"128"`），变长字段之间插 0x1D | 手册可查 |
-| EPL | 类型码 `'1E'` 存在，但数据段 FNC1/GS 写法查不到出处 → `previewOnly`，跳过 + warning（`[码制]`） | ⚠️ 未查证 |
-| 二维原生指令 | DataMatrix/QR/Aztec 的 FNC1 转义写法拿不到可引用出处 → `planChannel` 一律改派位图 | ⚠️ 刻意不做 |
+| 🔴 待真连库验收 | 独立库租户建模板/打库存后共享库 0 行；开通编排一条命令跑通且失败可回滚；跨库 `INSERT` 与 `session_replication_role` | 沙盒只有一套 PostgreSQL（且本轮环境连 PG/Redis 都没装），没有第二套实例与 superuser admin DSN |
+| 🔴 待真连库验收 | BullMQ repeatable 三个任务真实触发、站内信真实落库、429 响应头在真实 HTTP 上出现 | 沙盒无 Redis / 无运行中的 API 进程 |
+| 🟡 上线前仍缺 | 主链路切到 `labelflow_app`（B2.1）、白标真实 DNS 验证（B2.3） | 需运维配合，见 §10.22.4 / §10.24 |
+| 🟡 上线前仍缺 | 独立库物理备份 / PITR（B1.5） | 目前只有逻辑 JSON gzip 导出，需在合同或运维文档里明确「只保证逻辑导出」 |
+| ⚪ 未做 | 邮件 / 飞书 / 短信通知通道 | 只有 `NotificationChannel` 接口与 `ChannelRegistry`，V1 仅站内信 |
+| ⚪ 未做 | 广播站内信的逐用户已读位图 | V1 `read_at` 单值 → 一人标记即全租户已读；需要时加 `notification_reads` 表 |
+| ⚪ 未做 | Agent 工具路径的独立库路由 | `inAgentTenant()` 显式设 `dataSourceKey:'default'`（P5 语义保持），Agent 写工具仍落共享库 |
 
-**GS1 这一节里四条「刻意不做 / 刻意只做一半」，别再当成 bug 修**：
+### 10.27.5 部署 / 运维增量清单
 
-1. **4 位定长 AI（41xx / 42xx 等）不进表**：`aiLength` 只收录可查证的那些档位，表外的 4 位 AI 一律按**变长**处理，于是会多插一个分隔符。方向是保守的（不会串字段、不会丢数据，只是数据里多一个 GS）。GS1 官方定长表这几档我拿不到可引用的出处，按红线「查不到就不猜」维持现状，并用 `caps-sync.test.ts` 的 `(37)260315(4100)1234567890123(10)AB` 语料把这个行为锁住（要改必须先看它红）。
-   ⚠️ 本轮修掉了一个**方向相反**的老 bug：`measureAiLen` 原来写的是 `/^[34][1-6]\d{2}$/ && !startsWith('41')`，等于把 42xx–46xx（Ship To 地址族，规范里是**变长**字母数字）判成定长 6 位 ⇒ 该插的分隔符没插，扫描器会把地址和下一个 AI 串成一个字段，这才是真会错数据的档位。现在计量类只认 `^3[1-6]\d{2}$`（`31nn`–`36nn` = 前缀 + 6 位数字），`parseGs1` 裸串分支同步收窄。回归锁：`gs1.test.ts` 的「计量类只认 31xx–36xx」+「4212 之后必须插 FNC1」两条，以及 `caps-sync.test.ts` 第 5 节语料里的 `(4212)` 链。
-2. **`validateGs1` 只校验 (00)/(01)/(02) 的 Mod10 校验位**：本轮把 `checksum.gtinCheckDigit` 接进校验链，补上「位数对、数字对、但校验位算错」这个静默缺口（这类数据扫得出来、下游系统复核时炸）。刻意**只查这三档**——它们在本模块的定长表里已有明确语义标注（SSCC / GTIN / 内装物 GTIN）；`(03)/(04)/(08)/(12)` 是不是同一套「数据 + 校验位」结构，我拿不到可核验的出处，误报一条 warning 会让用户对本来正确的数据起疑，代价不比漏报小。命中时输出 `AI (01) GTIN 校验位错误：末位应为 1，实际 9（12345678901239）`，走 `[GS1]` warning 通道、**不拦打印**（校验位错说明数据可疑，是否放行是业务决定）。位图通道仍不调 `validateGs1`（见 §10.27.5 的已知不对称）。
-3. **legacy `web/js/render.js` 的同一缺陷不修**：`render.js:365/:400-410` 仍是「只给 `gs1-128` 开 parsefnc、二维不转写」，所以老客户端的**预览图**里 GS1 二维还是带括号的普通符号。核对过链路：`backend/printer/printer-provider.interface.ts:86` 把 `protocol==='browser'` 归一成 `'zpl'`，即老前端的实际打印指令始终由后端生成器产出 → 这是「预览不一致」而不是「打出错码」。`web/` 已 DEPRECATED（只对照行为、不再新增功能），因此只在此记录。要修的人请注意：那份是浏览器 `<script>`，没有构建、没有 lint、没有测试，改动只能靠手工比对。
-4. **`/printers/:id/test-commands` 不补 `textBase64/textExact`**：该入口只生成一张纯文本测试标签（`printer.module.ts:161-182`），不含位图段。真出现含位图的测试标签时再补，别提前做半成品。
+**新 SQL 脚本**（幂等，接在 `saas_p6_prompts.sql` 之后）：
+`backend/scripts/saas_p7_notifications.sql` —— 建 `notifications` 表、dedupe 唯一索引、RLS 兜底策略
+（角色 `labelflow_app` 不存在时自动跳过，不影响建表）。新表带 `tenant_id`，会自动纳入 P6.3 导出/硬删表清单。
 
-**GS1 这节还留着四个已知缺口（本轮如实记下，别当成已解决）**：
+**新增环境变量**（都有默认，不配不影响启动）：
 
-1. **位图通道不调 `validateGs1`**：只有 `zpl-generator` / `tspl-generator` 调它出 `[GS1]` warning，`raster.ts` → `barcode-renderer.ts` 这条路上结构错误既不抛也不告警。后果是「`(01)` 装了 20 位」这种数据在原生通道有提示、在位图通道静默出图。已用 `gs1.test.ts` 两条「如实记录现状」的断言钉住（补校验时它们会显式变红），并有一条断言反向要求两个生成器继续调用 `validateGs1`。
-2. **方括号 `[01]…` 形式不进改写名单**：`gs1BwipText` 的触发条件是 `\(\d{2,4}\)`，方括号写法则 bwip 照样按字面量编（实测仍是 `]d1`），所以这种写法**没有拦截路径**，只有实测结论。要么在入口拒绝方括号写法，要么接受「用了方括号就是普通符号」，本轮没选。
-3. **`parseGs1` 的括号分支偏宽**：`(01)04251234567890)(10)AB` 这种尾随 `)` / 括号+方括号混写会被吃进前一个 AI 的数据段，`consumed` 恰好等于总长 ⇒ 不抛错。真正抛的是「多余字符使 consumed 对不上」那三类。要收紧需要动 consumed 判定，属实现改动。
-4. **「首个 AI 应为 (00)/(01)/(02)」这条建议被 `some()` 全局抑制**：判定是「串里存在 00/01/02」而不是「首位是 00/01/02」，所以 `(21)A(01)…`（GTIN 不在打头位）不提示。扫码端在这种情况下仍可能整串按普通 Code128 解，属可改进项。
-
-### 10.27.4 P7.6 条码属性专业调优（几何 / 静区 / 参数 / 校验位）
-
-`core/barcode-geometry.ts`（250 行）是新的几何真源，`computeGeometry` 返回量化后的点数与 warnings，生成器只认它给的值：
-
-- `dotPitchMm(dpi) = 25.4/dpi`；X-dim 先量化成**整数点**，不足 1 点抬到 1 点（`[几何] … 已抬到 1 点`），并给出该码制推荐下限（低于则提示提高分辨率/加宽模块）。
-- 固定比例码制（EAN/UPC）忽略宽窄比；Code128/GS1-128 宽元素必须整数模块，非整数比取整（各出 `[几何]`）。
-- 符号高度：`HEIGHT_RATIO_OF_LENGTH = 0.25`、`MIN_HEIGHT_MODULES = 10`，取两者较大值做下限，符号长度用 `estimateModules/estimateSymbolLengthMm` 按内容估；过短出 `[几何]`。
-- 静区按码制要求的模块数换算成整数点，不够就按最小值补足并出 `[静区]`；二维模块 <2 点时出建议（203dpi 下 0.25mm 是清晰定位图形的下限）。
-- 旋转时的明文位置：`textSideFor` / `isVerticalTextSide`（90°/270° 把 bottom/top 映射成 left/right）。TSPL `BARCODE` 没有「明文在上」参数，只能按固件默认（符号下方），如实出 `[版式]` 而不是假装支持。
-- 参数钳制统一在两个生成器的 `clamp/clampDot` 里：`^BY` 模块宽 1–35 点（早期固件上限 10 → 额外 `[参数]` 提示换算后的 mm 值）、宽窄比 2.0–3.0 按 0.1 步进、`^BQ` 放大 1–10、`^B0`(Aztec) 1–20、`^BX` 高度可到标签宽；TSPL narrow/wide 上下限同理。
-- 校验位一律显式化：让打印机自动加校验位的分支（ZPL `e` 位、TSPL 用 `MSIC` 码型、EPL `3C`/`2C`）都会出 `[校验位] … 扫描结果会比预览数据多一位`，因为下游系统常常按不带校验位解析。
-
-warning 前缀现在共 **13 类**，前端按前缀分类展示：core 侧 12 类 `[码制] [几何] [静区] [参数] [校验位] [GS1] [位图] [图像] [字体] [版式] [数据] [图形]`，控制器侧再加 1 类 `[字节]`（作业含 BITMAP/GW 原始二进制时提醒「text 仅供阅读，落盘请用 textBase64」）。
-⚠️ 老前端与 `/print/commands` 里还留着**不带前缀**的历史 warning（如 `print.controller.ts:202` 的 TSPL `FONT001` 中文字库提示），前端分类器必须容忍「无前缀」这一档，不能假定每条都以 `[xx]` 开头。
-
-⚠️ 没做的部分：只有经验性下限，没有「最小印刷宽度 × 扫描器景深/光斑」的机型级模型；也没有按具体扫描枪型号的调优表。
-
-⚠️ **25% 高度建议是「估得出来才提示」的刻意设计，别当 bug 修**（P7.8 复核时逐条判过）：`estimateModules` 返回 0 的含义是「本模块估不出来」，它同时覆盖内容为空、码制不在估算表内（PHARMACODE / CODE16K / 各二维符号）、以及 ITF/MSI/CODABAR 这类只能给近似值的码制退化；`computeGeometry` 一律以 `lenMm > 0` 为「有估算」，0 就**静默跳过**高度建议。理由：宁可少提示一条，也不要拿猜出来的长度去劝用户改高度——那会让人怀疑本来正确的设置。已知代价（都在代码注释里写明）：CODE16K 这类码制完全不出现 25% 建议，且响应里不会说明「为什么没提」；`estimateSymbolLengthMm` 在 `xMm` 异常时会把 NaN 塌成 0，等价于同一档静默跳过。没有改成返回 `null`，因为那会牵动 66 份 golden 的 warning 数组。
-
-另两条判为「不是缺陷」：`defaultRatio(ITF)=2.5` 与 ZPL 实际下发的 `^BY w,2.7,h` 不是同一个数——2.7 是 `wideDots / xDots` 反算值（203dpi、模块宽 3 点时宽条只能落 8 点），与几何模块自洽；直接写 2.5 反而要赌固件是四舍五入还是截断。理由写在 `zpl-generator.ts` 的 `zplByRatio` 注释里，golden 按实际值钉住。
-
-### 10.27.5 P7.5 前端能力如实呈现（Console）
-
-- `apps/console/src/views/designer/barcode-caps.ts`：后端矩阵的内容等价副本（`CAP_MATRIX_VERSION` 必须与后端一致，由 `caps-sync.test.ts` 直接 import 这份文件做守卫），另加展示层 `DISPLAY_PROTOCOLS / worstStatusFor / capStatus / capOptions / capHint / warnBadge`。
-- 下拉后缀口径：`native` 不标、`degraded` →（打印有差异）、`bitmap` →（位图打印）、`previewOnly` →（仅预览·不能直接打印）；`value` 仍是原码制串（`FSelect` 只改 label），`model.ts` 的 `BARCODE_SYMS/QRCODE_SYMS` 取值集合**零改动**。
-- 三处呈现：码制选择器后缀；选中受限码制时字段下方一行小字（`capNote`，不弹窗不拦截）；打印预览弹窗的「指令导出提示」（逐协议 POST `/print/commands`，按并集去重后渲染，无提示时完全不占位）。
-- **默认协议口径的选择**：designer 侧拿不到打印机协议（store 里没有 protocol 概念），所以缺省在 `zpl|tspl` 里按 `native<degraded<bitmap<previewOnly` **取最坏一档**，且刻意不纳入 `epl`——EPL 是可选的老机型协议，纳入会让 CODE128/QRCODE 这类主流码制也挂上「位图打印/仅预览」，噪音盖掉信号；调用方显式传 `protocol:'epl'` 时 `capStatus/capHint` 如实呈现。将来接打印机选择器，只需换 `PropsPanel.vue:444` 的 `symProtocol`。
-- 老前端只修缺陷：`web/js/printers.js` 的 `pd-cmds` 分支原来写 `const r = await api.printerCommands(id, r.protocol || 'zpl')`，`r` 自引用（TDZ，取协议时 `r` 还没初始化）→ 改成用外层行数据 `r.protocol`。`web/` 已 DEPRECATED（§开头第 8 行口径：只对照行为，不新增功能），因此**没有**给它的协议下拉加 EPL 选项。
-- ⚠️ 已知不一致（留待下一步，不是本轮漏做）：下拉标记只看矩阵状态，不看内容，所以「ZPL + GS1 DataMatrix」在下拉里仍无标记，只有导出时才拿到 `[码制] 改派位图` 的 warning；要覆盖需按 `bc/qrcode.content` 实时判定。预览弹窗每次刷新生成 2 个 POST（rows 用当前预览数据、copies 固定 1），大模板 × 数百行未压测，失败静默、不影响预览。
-- **预览与打印同口径（P7.4 的前端收尾）**：`apps/console/src/views/designer/engine/gs1.ts`（136 行，新增）是 `backend/core/gs1.ts` 的 bwip 通道语义等价只读副本（沿用 barcode-caps 那份「前端副本」约定），`engine/barcode.ts` 里加私有 `applyGs1Bwip`，接在两个 bwip 参数构造点（`:126` makeBarcodeSvg / `:181` makeQrSvg）—— 画布 `DesignerElement.vue`、打印 HTML `print.ts`、模板缩略图 `TemplateThumb.vue`、`PropsPanel.vue:424` 的自然宽度全部经这两处。解析失败沿用该文件既有的 `try/catch` + `console.warn` + 占位兜底，**绝不退回带括号的预览图**。
-- 这份副本由 `caps-sync.test.ts` 第 5 节直接 import 并比对：**13 条语料 × 8 个 bcid** 的「返回值或是否抛错」逐条一致，外加 `BWIP_GS1_2D_BCIDS` 数组与 `gs1ToBwipFnc1` 输出。console 侧没有测试框架（scripts 只有 dev/build/lint/preview），所以这道守卫放在后端；改前端那份纯函数副本时，请直接在 `backend/` 跑 `node --import tsx --test core/__tests__/caps-sync.test.ts` 自检（22 条）。
-
-### 10.27.6 P7.7 EPL 通道（旧 Zebra / Eltron）
-
-`core/epl-generator.ts`（975 行）刻意做成**完全自包含**：唯一的运行时 import 是 `./types`（纯类型），不引用 barcode-caps / barcode-geometry / bitmap-blocks / gs1 / raster —— 代价是文件内联了三份最小必需的最小组合（`normSym` + 一维几何量化、图形宽高单位换算、最小 AI 定长表只用于诊断），文件头注明**必须双向同步**。这样单测里那 34 个点阵全用手写字面量，不碰 sharp/bwip/nest。
-
-- 签名：`generateEpl(els, dpi, page, orientation?)`，page 支持 `gapMm/density/speed/copies/orientation`；第 4 参优先于 `page.orientation`。页头 `N` → `q<宽点>`/`Q<高点,gap点>` → `D<density>`/`S<speed>`，收尾 `P<n>`。
-- 文本 `A x,y,font,rot,hI,wI,MODE,"DATA"`：CJK 走双字节字体（p4=8、p3=4–7）并出 `[字体]` 说明「只有带亚洲字库机型有字形，且 DATA 必须是 GBK/GB18030 或 BIG5 字节，UTF-8 直发会乱码」；非 Code Page 437 的字符入口查不到 → 一律 warning。
-- 一维 `B x,y,rot,type,p3..p8,"DATA"`，类型码表 `EPL_BARCODE_TYPES`（照手册 Table 2-1）：`CODE128 '1'`、`CODE39 '3'/'3C'`、`CODE93 '9'`、`EAN13 'E30'`、`EAN8 'E80'`、`UPC/UPC_A 'UA0'`、`UPC_E 'UE0'`、`ITF/ITF14 '2'/'2C'/'2D'`、`CODABAR 'K'` → **native 11 种**（ITF14 在矩阵里是 `degraded`：编码链一致但无 ITF-14 边框/承载标记）。
-- `GS1_128`（有 `'1E'` 但 FNC1 写法未查证）、`MSI`（`'M'`=MSI-3 / `'L'`=Plessey-MSI-1，校验算法被类型码写死，与本产品 MSI+MSI10/11 不是同一符号）→ `previewOnly`；`PHARMACODE`/`CODE16K` 手册无指令 → `no-evidence`。这四类都**只跳过 + warning**，并给出「手册有没有这条指令 → 本产品暂未覆盖」两级口径与出路。
-- 二维全部走位图：`GW x,y,widthBytes,rows,<原始 latin1 字节>`。结论依据：手册目录的图形族只有 `GG/GI/GK/GM/GW(+UG)`，**没有裸 `G`**；真实作业样本与多份独立实现都是「指令头 + 原始字节」，ASCII hex 形态属于 CPCL 的 `EG`，不是 EPL。`EPL_GRAPHIC_COMMAND`/`EPL_GW_POLARITY` 做成常量开关，改口径只动一行。
-- 两个必须防住的坑已实现并有单测：① **数据字段永不省略** —— `B`/`A` 行必带非空 `"DATA"`，内容为空时整条元素不打（绝不发 `B...,""`），因为 EPL 省略数据字段会**打印上一次缓存的符号**；② 未知元素类型/框线椭圆参数查不到 → `[图形]` warning 且不打。
-
-### 10.27.7 P7.8 单测 / golden 快照 / 验收脚本
-
-| 文件 | 用例 | 锁什么 |
+| 变量 | 默认 | 用途 |
 | --- | --- | --- |
-| `core/__tests__/gs1.test.ts` | 50 | AI 定长表（含 42xx–46xx 归变长的修正）、`parseGs1`、三种转写输出（ZPL `>;`/`>8`、裸流 0x1D、bwip `^FNC1`）的分隔符条数互相等值、`^^` 转义、名单外 bcid 返回 undefined、结构解析失败抛错、`(00)/(01)/(02)` 的 Mod10 校验位、`barcode-renderer` 调用点只读源码扫描 |
-| `core/__tests__/geometry.test.ts` | 33（1 skip） | 点距/X-dim 量化/固定比例/高度下限/静区整数点/旋转明文/档位重试（①自动上调 ②三档全奇必抛 ③上调必发 warning） |
-| `core/__tests__/golden.test.ts` | 30 | 三协议 × 码制指令快照逐字节比对（66 份 `.txt`）；`^GFA` 断言含「b==c、c==d×rows、c≠rows、hex 长度==2b、b%d==0、hex==synthFallback」并自带两条合成样本自检（防止结构断言沦为装饰）；一维 ZPL 的 `^BY` 另做**由几何反算**的守卫（w==xDots、r==round(clamp(wide/x,2..3)×10)/10，固定比例恒 2，禁止原样下发用户值）+ 六种坏样本自证 |
-| `core/__tests__/epl.test.ts` | 34 | EPL 页头/类型码/校验位类型码/`GW` 宽高与载荷字节数/位极性翻转/数据字段永不省略/审计表↔类型码↔实际输出三方一致 |
-| `core/__tests__/caps-sync.test.ts` | 22 | 见 §10.27.1 的防漂移四类关系 + §10.27.5 的 Console GS1 副本一致性 |
-| `core/__tests__/golden/cases.ts` `update.ts` | — | 用例定义与快照重生成：`npx tsx core/__tests__/golden/update.ts` |
+| `LABELFLOW_STRICT_CONFIG` | 未设 | `=1` 时在非 production 也启用配置 fail-fast（灰度验收用） |
+| `MAINTENANCE_SCHEDULER_ENABLED` | `1` | `=0` 关闭维护任务调度注册（只想让 worker 进程跑时） |
+| `DB_DEDICATED_POOL_<KEY>` / `DB_DEDICATED_POOLS` | 回落 `DB_DEDICATED_POOL=4` | per-key 连接池上限（夹到 1–50） |
+| `DB_DEDICATED_SSL` / `DB_DEDICATED_SSL_REJECT` | 关 / 严格 | 独立库 SSL 开关与自签证书容忍 |
+| `DB_DEDICATED_IDLE_MS` / `DB_DEDICATED_CONNECT_MS` | 30000 / 5000 | 空闲回收与连接超时 |
+| `DEDICATED_DDL_FILES` | 内置 12 份脚本 | 覆盖新库 DDL 清单（逗号分隔）；默认**跳过** `saas_p6_rls.sql`（库边界即隔离）与 `seed.sql`（会插默认租户） |
 
-- 本轮新增 **169 条**（50 + 33 + 30 + 34 + 22）。`npm test` 的 8 条 skip 是 7 条 PG 集成用例（本机无库）+ 1 条**刻意留的指针**：
-  「抽稀后偶数性/无损性」不能进单测（会拉进 sharp/bwip，违反纯函数红线），改由验收脚本 C 段实跑，用例里写明去向。
+**新增端点**：
 
-- golden 的关键设计：位图段**不调 `raster.ts`**（bwip/sharp 出图非确定性，快照会天天变），而是塞一个手写确定点阵 `synthFallback()`（`cases.ts:97`），因此快照里的 `BITMAP`/`GW`/`^GFA` 头部与字节数可复现，而真实点阵正确性由 §10.27.2 的解码回判与真机清单负责。
-- 每份快照头部写明：`CAP_MATRIX_VERSION`、该码制在该协议下的 `status`、`planChannel` 的 `why`、该回归点一句话。所以快照红的时候先读头部就知道是「结论变了」还是「实现漂了」。
-- `backend/scripts/p7-acceptance.sh`（806 行）：P7 的离线验收脚本，四段 —— **A** typecheck + `npm test` 真实数字（不截断）、**B** golden 默认模式（不许写盘，另附「手改一份快照 → 必红 → 还原 → md5 一致」的可红性演示）、**C** 真实点阵往返（`raster.ts` 出图 → 独立重建 → `cv2.QRCodeDetector` / `zxingcpp` 解回，含 AIM 断言、`^GFA`/`BITMAP`/`GW` 三协议的字节自洽、PDF417 档位上调五组、RGBA 透明底陷阱正反两例）、**D** `POST /print/commands` 三协议冒烟。**没有后端/打印机/Python 依赖时必须 SKIP 而不能假 PASS**（D 段在本沙箱就是 SKIP）。
-- 本轮实跑基线（2026-11-08，沙箱）：`cd backend && npm test` → **388 tests / 380 pass / 0 fail / 8 skip**（P7 前基线 219/212/0/7，本轮 +169）；`npx tsc --noEmit -p tsconfig.json` → **0 error**；`bash backend/scripts/p7-acceptance.sh` → **EXIT 0，PASS 58 / FAIL 0 / SKIP 1**（前置 0/0/0 · A 5/0/0 · B 5/0/0 · C 48/0/0 · D 0/0/1），连续两次整跑计数一致；`cd apps/console && pnpm build && pnpm lint` → 均 exit 0。
-- ⚠️ 写指令类单测的一条卫生要求：**读作业 buffer 不要用 `toString('ascii')`**（`engines.test.ts:155/167` 是既有写法，只因那两条用例的作业确实不含位图段才成立）。要看字节就用 `latin1` 或 `Buffer.compare`，否则将来给同一个用例加一个 `BITMAP`/`GW` 元素时，字节损坏会被悄悄吃掉。
+| 端点 | 说明 |
+| --- | --- |
+| `GET/POST /api/v1/notifications…` | 站内信列表 / 未读数 / 标已读 / 全部已读（租户 JWT） |
+| `GET /platform/datasources/health` | 所有独立库健康快照 |
+| `POST /platform/datasources/:key/reclaim` | 回收无租户引用的孤儿连接池（不删物理库） |
+| `GET /platform/datasources` | 新增 `reclaimable` / `unregisteredRefs` 巡检字段 |
+| `POST /platform/tenants/dedicated` | 一条命令开通独立库租户（需 `dataSourceKey` + `dedicatedDsn`，DSN 不落库） |
+| `POST /platform/tenants/:id/dedicated/plan` | 编排计划预览 |
+| `POST /platform/tenants/:id/dedicated/provision` | 迁移已有租户到独立库（失败自动回滚） |
 
-### 10.27.8 复核命令（接手请先全跑一遍）
+> ⚠️ `ProvisionService.provision` 仍**拒绝** `type='dedicated'` 与 `dataSourceKey` 入参（防止绕过编排造成假隔离），
+> 文案已改为指向上述专用端点。
 
-```bash
-cd backend && npm test                                   # 期望 388 / 380 / 0 fail / 8 skip
-npx tsc --noEmit -p tsconfig.json                       # 期望 0 error
-node --import tsx --test core/__tests__/caps-sync.test.ts   # 22 条：矩阵/前后端/GS1 漂移守卫
-npx tsx core/__tests__/golden/update.ts                  # 只有**故意**改结论时才跑，跑完 git diff 必须能解释
-cd apps/console && pnpm build && pnpm lint               # vue-tsc + vite 0 error，eslint 0 问题
-bash backend/scripts/p7-acceptance.sh                    # 期望 EXIT 0 / PASS 58 / FAIL 0 / SKIP 1（D 段无后端时 SKIP）
-```
+---
 
-**关于「解码回判」证据怎么重跑**：现在**已经在仓库里**，位置是 `backend/scripts/p7-acceptance.sh` 的 C 段（48 项），跑法就是上面那条 `bash backend/scripts/p7-acceptance.sh`。口径值得单独记一笔，因为它是换过一次实现才跑通的：
+### 10.28 收费能力对照与 P8 补齐路线（2026-11-13 新增）
 
-- **Node 侧走不通，改用 Python**：先试的是仓库自带的 `zxing-wasm` + `sharp`（见 `src/ai-template/barcode-reader.ts`），在 Nest 之外裸跑时 `zxing-wasm/reader` 取不到 wasm（`Aborted: both async and sync fetching of the wasm failed`），走主入口则返回一条字段全空的结果 —— 想做成仓库内常规检查还得补 wasm 定位，成本比收益高。C 段因此改用沙箱里的 `python3 -c "import cv2, zxingcpp"`（`pip install zxing-cpp opencv-headless numpy`），依赖缺失时整段 SKIP 而不是假 PASS。
-- **三个解码器的能力差异要写清，否则会误判**：`cv2.QRCodeDetector` 只解普通 QR，GS1 QR 会报 mode 5（C.4 里如实记录、不参与判定）；**能验 GS1 DataMatrix 的只有 zxing-cpp**（C.5 现解出 `]d2 / 011234567890123121SN0007` 与 `]Q3`，text 里的括号是解码器补的，AIM 才是判据）；`pyzbar` 能 import 但这个 build 的 `ZBarSymbol` 只有 DATABAR/DATABAR_EXP、**没有 DMTX**，所以不进判定链。
-- **探测协议要挑对，否则假绿**：PDF417 在 ZPL 走原生 `^B7`，只有 TSPL/EPL 才走位图，所以档位上调（C.7）固定在 **tspl** 上探测；用 zpl 探永远是「无 warning」= 假绿。
-- **透明底陷阱做成了正反两例（C.9）**：`qrcodeBwipOptions` 固定 `backgroundcolor:FFFFFF`，所以生产 PNG 必须 alpha 全 255（C.9a，有人把默认值改掉就判红并提醒去核对 `sharp` 的 `.flatten`）；C.9b 用同参数摘掉 `backgroundcolor` 复现陷阱 —— alpha=[0,255] 时直接 `convert('L')` 只剩 [0]（全黑）、zxingcpp 解不出，flatten 到白底才解得出。这条不是理论：`src/ai-template/barcode-reader.ts` 早就靠 `.flatten({background:'#ffffff'})` 兜着。
-- C.8 另有一组**不依赖后端**的字节口径复核：用真实 bwip 点阵（115×115 / 205×205）核对 `^GFA,1725,1725,15` 三数与载荷、TSPL `BITMAP` 逐行 205×26B 拼回一致、EPL `GW …,15,115,` 的 p3×p4==1725B。
+> 触发：用户给出「专业条码打印软件收费功能清单」（BarTender / NiceLabel / CODESOFT / 中琅 / ZebraDesigner 通用，8 大类约 40 项），要求逐项核对本系统有无。
+> 本节是**核对结论 + 补齐顺序 + 验收边界**，排序理由与阶段表在 `docs/08-plan.md §8.6`；两者必须同步更新。
 
-AIM/几何结论除了 C 段，另外固化在三处可复核的地方：`gs1.ts` 的注释（AIM 标识符、`^^` 规则、定长不插分隔）、`raster.ts` 的注释（实测网格尺寸与档位重试）、`caps-sync.test.ts` 的转写与副本一致性断言。
+#### 10.28.1 对照结论（按 8 大类，✅ 具备 / 🟡 部分 / ❌ 缺失）
 
-### 10.27.9 必须实机 / 外部条件才能定的事（不要按已完成对外承诺）
+| 类别 | ✅ | 🟡 | ❌ | 一句话结论 |
+| --- | --- | --- | --- | --- |
+| 一 数据源与数据库 | 1 | 3 | 2 | 自定义 SQL / 只读强制 / 参数化完整；**仅 PostgreSQL**，无 ODBC/OLE、无自动刷新与外盘监听 |
+| 二 高级条码/标识 | 0 | 4 | 1 | 20 种码制 + GS1 FNC1 + DPI 几何调优较强；**无 RFID**、无 MaxiCode/HIBC/PZN、无 GS1 向导 |
+| 三 自动化与集成 | 1 | 3 | 1 | REST/MCP/CLI/浏览器打印完整；**无 HotFolder、无触发器、无 ERP 预置连接器** |
+| 四 模板管控与追溯 | 1 | 3 | 1 | 版本快照回滚、RBAC/ACL、逐张打印日志完整；**无模板发布审批、无防重打印、无水印** |
+| 五 输出与排版 | 0 | 3 | 2 | 矩阵拼版完整；**无整标签矢量导出、无 PDF/CMYK 印刷级输出** |
+| 六 授权与多用户 | 1 | 2 | 1 | **SaaS 订阅/套餐/席位/计费/白标是强项**；无浮动授权/加密狗/按打印机授权/本地客户端 |
+| 七 增值服务 | — | — | 5 | 支持/定制开发/维保/实施属**商务交付**，不是软件功能，不按「缺功能」计 |
+| 八 参考对照 | 入门版全覆盖 | 专业版约半 | 企业版约半 | 短板精确落在「本地硬件 + 无人值守 + 印刷输出」一条线 |
 
-| 项 | 现状 | 判定方法 |
+关键落点（逐项可复核）：`backend/src/datasource/datasource.module.ts:149`（只收 `postgresql://`）、`backend/core/symbology.capabilities.ts`（20 种码制能力表）、`backend/printer/printer-provider.interface.ts:194`（只注册 `raw_tcp` + `image`，`windows_spooler` 仅在枚举里）、`backend/src/print/html-renderer.ts:287`（浏览器 `@page`）、`backend/src/template/template.service.ts:68`（版本快照）、`backend/src/print/print.service.ts:205`（重打/补打，但无防重拦截）、`backend/src/agent/approval.service.ts`（**Agent 工具审批，不是模板审批**）。
+
+#### 10.28.2 补齐顺序（详见 `docs/08-plan.md §8.6`）
+
+**P8.0 文档与基线 → P8.1 自动化触发层 → P8.2 印刷级输出 → P8.3 企业治理 → P8.4 数据源与码制深化 → P8.5 硬件层**。
+
+排序三原则：**依赖闭包（复用 jobs/PrintService/html-renderer/approval/audit/ACL）→ 可验收性（沙盒无 PG/Redis/打印机，先做纯函数可测零硬件项）→ 收费密度**。硬件项排最后并强制写「需真机验收」。
+
+形态差异说明：Web/SaaS 原生系统里 COM/.NET/加密狗/按打印机授权是**桌面 License 形态**，由 REST + MCP + CLI + SaaS 席位承担等价职责，不算功能缺失；但「离线自动触发」与「本地硬件直连」是真缺口，不能用形态差异搪塞。
+
+#### 10.28.3 未完成清单增量（并入 B3）
+
+| 编号 | 缺口 | 阶段 | 状态 |
+| --- | --- | --- | --- |
+| B3-1 | HotFolder / 事件触发器 / 出站 Webhook | P8.1 | **代码已落地 + 纯函数单测全绿**，待真库/Redis 验收，见 §10.28.5 |
+| B3-2 | 整标签矢量 SVG / PDF 导出 | P8.2 | **代码已落地 + 真实 SVG→PDF 冒烟通过**，中文字体/印前链路待真机验收，见 §10.28.5 |
+| B3-3 | 模板发布审批 / 防重打印 / 水印 / 发布锁定 / 数量策略 | P8.3 | **代码已落地**（22 条判定层单测 + 水印双通道冒烟），待真库验证并发防重，见 §10.29.1 |
+| B3-4 | MySQL/SQLServer 驱动、SQL 分页与自动刷新、GS1 完整 AI 字典、MaxiCode/HIBC/PZN | P8.4 | **代码已落地**（方言层 14 条 + GS1 16 条 + 工业码制 6 条 + 刷新调度 9 条单测；真实 BullMQ repeatable 接入），待第二套数据库与真机译码验收，见 §10.29.2 |
+| B3-5 | Windows 本地打印代理 / USB / RFID / 喷码机 | P8.5 | **协议层与服务端接入已落地**（Provider 注册闭环 + 脱敏信封冒烟 + 26 条单测）；**真机未验收，禁止对外承诺可用**，见 §10.30 |
+| B3-6 | CMYK 专色、出血/裁切线、PDF 拆分与交叉合并、批量图片变量、弧形条码 | 后置 | 未做（印刷级细项，P8.2 只交付矢量骨架） |
+
+> 本表与 §10.1.5 的 B3 段并存：那里是历史缺口，这里是按收费清单重新归并后的 P8 增量，勿重复计工时。
+
+#### 10.28.4 验收边界（不许按「已交付」表述）
+
+| 项 | 现状 |
+| --- | --- |
+| 纯函数 / 单测 | 可实跑，作为主要验收依据 |
+| typecheck / tsc 全量编译 / lint | 可实跑 |
+| 触发器 CRUD、delivery 落库、Webhook 真实出站 | **未实跑**（沙盒无 PostgreSQL / Redis；`fs.watch` 可用临时目录单测） |
+| PDF 在真实浏览器/印刷链路的效果 | 未实跑（可校验页数、页尺寸、字节签名） |
+| P8.3 发布审批 / 防重并发 / 水印在生产打印链路 | 代码已落地、判定层单测全绿、SVG/HTML 水印冒烟通过；**真库并发 `ON CONFLICT` 未实跑** |
+| P8.4 MySQL / SQL Server 驱动 | 方言层与分页/占位符/标识符引用单测全绿；驱动懒加载，沙盒无第二套数据库实例，**真连库未实跑** |
+| P8.4 自动刷新 repeatable 调度 | 注册/撤销/启动对齐链路真实接入，纯函数单测全绿；**到期 → Worker 消费 → 真执行 SQL 的端到端时序未实跑**（无 Redis / 真库） |
+| P8.4 MaxiCode / HIBC / PZN | `bwip-js` 真实 SVG 渲染单测通过（位图通道）；**真机打印与解码未验**，能力表明确「预览仅·需图像通道」 |
+| P8.5 本地代理 / Windows 驱动 / USB / 串口 / RFID / 喷码 | **真机完全未验收**。服务端只交付协议层、脱敏信封、EPC 数据层、厂商中立作业载荷；清单见 §10.30.3 |
+| 纯函数 / 单测 / typecheck / tsc 全量编译 / lint / DI 图 | 可实跑，且本轮全绿（见 §10.29.3） |
+
+#### 10.28.5 本轮落地清单（P8.0 + P8.1 + P8.2）
+
+**新增/修改文件**（后端为主，前端本轮零改动）：
+
+| 工作包 | 文件 | 职责 |
 | --- | --- | --- |
-| EPL `GW` 位极性（1=墨 还是 1=白） | 默认 `EPL_GW_POLARITY='mark-is-1'`（与仓内 `packRows` 同向），每次出图在 `[位图]` 里写明当前口径；手册级证据不足 | 打一张含二维码的标签，反了就改成 `'mark-is-0'`（单行开关，`eplInvertHex` 已就位） |
-| ZPL Aztec 指令名 `^B0` vs `^BO` | 代码按 `^B0`（放大 1–20），两个写法在资料里并存 | 一张 Aztec 标签即可判 |
-| 图形指令名 `GW` vs 某版本手册的 `G` | 按 `GW`（`EPL_GRAPHIC_COMMAND` 单行可改） | 同上 |
-| TSPL 中文字库 / `BITMAP` mode 语义 / EPL 缓存符号现象 | 只有手册级结论 | 各打一张，看是否需 mode 1/2 与是否复现「空数据打上一张」 |
-| PDF417 行高与档位上调后的实际 X-dim | 抽稀无损但符号比模板略大 | 用扫描枪 + 卡尺量一次 |
-| `p7-acceptance.sh` **D 段（`/print/commands` 三协议在线冒烟）在本沙箱不可跑** | 脚本设计上只 SKIP 不参与退出码；沙箱没有 postgres/redis 服务端二进制（只有 `psql` 客户端），`dist/src/main.js` 也未构建 ⇒ 本轮 58 PASS 里 **不含任何走 HTTP 的验证** | 起后端后 `BASE=http://127.0.0.1:3200/api/v1 bash backend/scripts/p7-acceptance.sh`，期望 D 段从 SKIP 变成 PASS |
-| A 段 8 条 skip 中的 7 条 PG 集成用例 | 同上原因（无库），不是被跳过的功能 | 有 PG 的机器上 `npm test` 应为 0 skip |
-| Console 面板对「MICROQR + `(AI)`」仍判合法 | `PropsPanel.validateBarcodeText` 的 BC_RULES 没这条预检，用户看到的是占位图 + `console.warn`，而不是「此码制不支持 GS1」的字段级提示（后端会抛，打不出是打不出） | 加一条 UI 口径决定后再做：是禁用选项、还是选中即报错，需要产品定 |
-| P6.2 阶段 B、密钥管理、真域名白标 DNS、通知/定时任务基建 | 与本轮无关，仍是 §10.1.5 B1/B2 的未完成项 | 见该节 |
-| `apps/console/package-lock.json` | 在 console 里误用 `npm install` 的副产物（该 app 的锁文件是 `pnpm-lock.yaml`），**未跟踪**。已加进 `.gitignore`（console/platform 走 pnpm；backend 与 mcp-server 走 npm，它们的 lock 是入库的） | 不用管；如果哪天要统一包管理器，那是另一件事 |
+| P8.1 判定层 | `src/jobs/trigger.calc.ts` | 事件源/动作白名单、规则归一化、SSRF URL 校验、条件求值（fail-closed）、循环防护、dedupe 指纹、HMAC 签名/验签、文件稳定化、退避、`planDeliveries`、`printProgressToTrigger` |
+| P8.1 | `src/jobs/file-parse.ts` | HotFolder 落盘文件解析：JSON（裸数组/`{rows}`/单对象）、CSV/TSV（引号内逗号与换行、自动分隔符）、TXT；行数/单元格截断 |
+| P8.1 | `src/jobs/webhook.sender.ts` | 出站 Webhook：投递前二次 SSRF 校验、HMAC 签名、5s 超时、失败不外抛 |
+| P8.1 | `src/jobs/trigger.entity.ts` / `scripts/saas_p8_triggers.sql` | `print_triggers` / `trigger_deliveries` 两张带 `tenant_id` 的表 + RLS 兜底 + dedupe 部分唯一索引 |
+| P8.1 | `src/jobs/trigger.service.ts` | CRUD（secret 密文落库、列表脱敏）、事件编排、去重 claim、三种动作执行、投递留痕与审计 |
+| P8.1 | `src/jobs/trigger.processor.ts` | 触发队列消费；查目录库构造 `TenantCtx`（含真实 `data_source_key`），后台上下文显式注入 |
+| P8.1 | `src/jobs/hotfolder.service.ts` | `fs.watch` 热目录、文件稳定化、归档/失败目录、事件入队 |
+| P8.1 | `src/jobs/trigger.controller.ts` / `dto/trigger.dto.ts` | 7 个端点（含 dryRun 试跑） |
+| P8.1 接线 | `jobs.module.ts` / `entities/index.ts` / `print.module.ts` / `print.processor.ts` | 注册队列与模块；打印完成事件入 trigger 队列；顺手修正 SSE `completed` 事件 `status` 恒为 `running` 的笔误 |
+| P8.2 | `src/print/vector-renderer.ts` | 整标签真矢量 SVG、矩阵拼版、变量/公式/系统变量求值、警告与上限 |
+| P8.2 | `src/print/pdf-export.ts` | pdf-lib 多页 PDF（mm→pt）、sharp 600dpi 栅格化、失败如实计数 |
+| P8.2 | `src/print/export.controller.ts` | `/print/export/svg` 与 `/print/export/pdf` |
+| 单测 | `src/jobs/__tests__/{trigger.calc,file-parse,webhook.sender}.test.ts`、`src/print/__tests__/{vector-renderer,pdf-export}.test.ts` | 52 条新增用例 |
 
-## 10.28 二维码内容框放大（2026-11-09 落地）
+新增端点见 `docs/05-api.md §5.14`。
 
-诉求原文：「二维码内容框太小了，调大一些，有些二维码的内容很长」。改的是 Console 属性面板的**可视面积**，不是打印链路，也不是「允许二维码带换行」。
+**部署增量**：
 
-- `PropsPanel.vue` 二维码组的「内容」由 `FText`（单行 input）换成 `FArea`：`rows=6`、可竖向拖高、长内容软换行整段可见。这一组同时覆盖 QRCODE / MICROQR / DATAMATRIX / PDF417 / AZTEC（它们共用 `el.qrcode`）。框下加一行字符数 `内容 N 字符`，容量口径不变，仍是 `validateBarcodeText`（QRCODE `maxLen 2953`、note「建议 ≤ 2000 字符」）。`designer.css` 新增 `.f-field-top`，多行时标签贴第一行而不是垂直居中。
-- **放大框子 ≠ 允许换行**：`FArea` 新增可选 prop `noNewline`，QR 内容开启它 ⇒ 回车被 `preventDefault`；粘贴 / 拖入的 `\r\n\t` 按空格接续，其余 C0 删除，并弹一行 `⚠ 内容有 N 个…`（8 秒自动收）。计数报的是「原始串里有几个控制字符」而不是「净删了几个」——换行换成空格时净删为 0，按净删报等于当着用户的面说假话。依据还是那句老规矩「宁可不打，不打错码」：
-  - ZPL：`esc()` 只处理 `\ ^ ~`，2D 数据是 `^FD${content}^FS`，整份 job 仍按 `\n` 拼接，内容里的换行会被当成行结束，后半段有被当作新指令读的风险；
-  - TSPL：命令按 CRLF 分行，同理；
-  - EPL：`epl-generator.ts:728-730` 已显式剔除控制字符并报 `[数据]` 告警（仓内唯一已有的换行策略，代价是它改了数据本身）；
-  - 位图（bwip）通道实测换行按字节原样保留 —— 提示里那句「只有位图通道能原样承载」是实测结论，不是推测。
-- **没做 / 边界（别按已完成理解）**：
-  1. 挡在输入侧只保护面板。模板 JSON 导入、AI 生成、`/templates` 接口写进来的内容仍可带 `\n`，三条原生通道不会报错，只会打出与预览不一致的码。要在核心侧收口，两条路选一条：(a) `planChannel` 加「2D + 内容含 C0 ⇒ bitmap」这条**内容级**规则（与既有「2D + `(AI)` ⇒ bitmap」同一形态），或 (b) ZPL/TSPL 对含控制字符的数据直接跳过该元素并报 `[数据]`。两者都会牵动 `CAP_MATRIX_VERSION`（现 `p7-2026-11-08.4`，仓内 69 处：两份 caps 副本、66 份 golden 头、本文 §10.27.1），改完必须 `npx tsx core/__tests__/golden/update.ts` 重生成并同步文档。**等口径定了再做，本轮没动核心。**
-  2. 一维码「内容」仍是 `FText`：单行 input 里浏览器会把粘贴的换行吃掉，长度也是几十字符量级，放大没收益。
-  3. 老前端 `web/js/inspector.js:518` 同为单行 input，**未跟改**（`web/` 已 DEPRECATED，口径是只对照行为、不新增功能）。
-- **验证**：`pnpm build`（含 `vue-tsc -b`）与 `pnpm lint` 均 rc 0；backend 零改动 ⇒ §10.27.8 的 388/380/0/8 与 `p7-acceptance.sh` 的 58 PASS 口径不变。console 无测试框架、沙箱也无可用浏览器，**没有做过真实渲染验证**：6 行高度、拖拽 resize、粘贴提示三条只到代码级确认，接手时请在浏览器里点一遍。
+1. 建表脚本 `backend/scripts/saas_p8_triggers.sql` 接在 `saas_p7_notifications.sql` 之后（含 RLS；不跑会导致新表在 `labelflow_app` 下无策略）。
+2. 新增环境变量：`HOTFOLDER_ENABLED=0` 可关闭热目录监听；`MAINTENANCE_SCHEDULER_ENABLED` 沿用。
+3. 触发队列 `trigger` 复用现有 Redis；Worker 进程需加载 `AppModule`（`TriggerProcessor` 已注册），否则队列只积压不消费。
+4. 无需新装依赖：`pdf-lib`、`sharp`、`@bwip-js/node` 均已在 `backend/package.json`。
+
+**实跑基线（2026-11-13）**：
+
+| 项 | 结果 |
+| --- | --- |
+| `npm run typecheck` | **0 error** |
+| `npm test` | **349 全绿**（342 pass / 7 skip / 0 fail，较 217 基线 +132、较上轮 297 +52） |
+| `npm run lint` | **0 error / 11 warning**（与基线一致，新增文件 0 warning） |
+| `tsc -p tsconfig.json` 全量编译 | 通过（含装饰器元数据） |
+| Nest DI 图 | 编译产物上 `createApplicationContext(AppModule)` 走到数据库连接阶段，**无依赖解析/循环错误** |
+| 真实 SVG→PDF 冒烟 | 2 行数据 × 2 列拼版 → 82×30mm sheet → **94516 字节合法 PDF**（`%PDF-`，1 页） |
+
+**仍待验收 / 明确未做**（口径与 §10.28.4 一致，不许按「已交付」表述）：
+
+| 项 | 状态 |
+| --- | --- |
+| 触发器 CRUD / delivery 落库 / Webhook 真实出站 / HotFolder 自动触发 | **未实跑**（沙盒无 PostgreSQL / Redis）；判定层 100% 单测覆盖，`fs.watch` 与 `parseDropFile` 有单测 |
+| 多实例 HotFolder | `fs.watch` 是单进程监听；多 worker 需共享存储 + 队列 jobId 指纹去重或分布式锁（V1 只做后者） |
+| 模板发布审批 / 防重打印 / 水印 / 数量策略（P8.3） | **代码已落地**，待真库并发验收，见 §10.29.1 |
+| MySQL/SQLServer 驱动、GS1 完整 AI 字典、MaxiCode/HIBC/PZN（P8.4） | **代码已落地**，待第二套数据库与真机译码验收，见 §10.29.2 |
+| Windows 本地打印代理 / USB / RFID / 喷码机（P8.5） | **协议层与服务端接入已落地，真机未验收**，见 §10.30 |
+| CMYK 专色、出血/裁切线、PDF 拆分与交叉合并、批量图片变量、弧形条码 | 未做；PDF 明确是 600dpi 位图而非矢量 |
+| 中文文本 | SVG `<text>` 依赖渲染端字体；缺中文字体时 PDF 栅格化会退化为方块，`warnings` 已提示 |
+
+---
+
+### 10.29 P8.3 / P8.4 落地清单（代码已落地，验收边界见 §10.28.4）
+
+> 两节沿用同一工程口径：**单一真源 + 纯函数可测核心 + 真实接入 + 诚实标注验收边界**。
+> 全部新增业务表带 `tenant_id` 并纳入 RLS 兜底；默认策略全宽松，存量租户零行为变化。
+
+#### 10.29.1 P8.3 企业治理
+
+| 文件 | 职责 |
+| --- | --- |
+| `src/governance/governance.calc.ts` | 判定层单一真源：模板状态机（`draft/in_review/published/rejected/archived`）、迁移表、编辑/打印前置判定、`printFingerprint`（显式带 `tenantId`，复用 `trigger.calc.fingerprint`）、防重与配额判定、水印位置与 SVG/HTML 层生成（`escapeXml` + 变量展开防注入） |
+| `src/governance/governance.entity.ts` / `scripts/saas_p8_governance.sql` | `governance_settings` / `template_governance` / `template_reviews` / `print_dedupe`；`uq_print_dedupe_tenant_key` 唯一索引是并发防重最终防线 |
+| `src/governance/governance.service.ts` | 策略读写、审批编排（含通知/审计）、`prePrint()`、`recordPrint()`（`INSERT ... ON CONFLICT` 兜并发）、dedupe 清理 |
+| `src/governance/governance.controller.ts` | 7 个端点，见 `docs/05-api.md §5.15.1` |
+| `src/template/template.service.ts` | `update()` 保存前 `assertEditable()`；`rollback()` 走 `update()`，同样受发布锁定约束 |
+| `src/print/print.service.ts` | `createJob()` 前置治理校验（不通过写 `print.job.blocked_by_governance` 审计并 403），返回 `governanceWarnings` / `watermarkApplied` |
+| `src/print/vector-renderer.ts` / `html-renderer.ts` / `export.controller.ts` | 水印只叠加在 SVG / HTML / PDF 通道；**指令通道（ZPL/TSPL/EPL）不叠加水印**，响应里明确 `watermarkChannelNote` |
+| `src/governance/__tests__/governance.calc.test.ts` | 22 条状态机 / 防重 / 水印判定单测 |
+
+**关键不变量**：`DEFAULT_POLICY` 全部关闭，未写策略的租户行为与 P8.3 之前完全一致；水印层只负责「叠加」，策略归一化只在 `governance.calc.ts`，渲染层不另算一套。
+
+#### 10.29.2 P8.4 数据源与码制深化
+
+| 文件 | 职责 |
+| --- | --- |
+| `core/gs1-ai.ts` | GS1 AI 字典与合规校验单一真源：约 60 个精确 AI + 5 类模式族，定长/变长、字符集、YYMMDD 日期、模 10 校验位、未登记 AI warning、向导目录、整串 FNC1 校验。**明确声明非 GS1 General Specifications 全量** |
+| `core/symbology.capabilities.ts` | `encodeGs1()` 改为委托 `validateGs1()`（消除两套定长表漂移）；能力表从 20 扩到 26 种，新增 MaxiCode / HIBC 系列 / PZN，全部 `bitmap: true`、无原生指令、前端标「预览仅·需图像通道」 |
+| `core/barcode-renderer.ts` | 工业码制 `BWIP_MAP` + `is2d()` 判定，bwip-js 真实 SVG 出图 |
+| `src/datasource/sql-driver.calc.ts` | 方言层单一真源：postgres/mysql/mssql 占位符 `$1`/`?`/`@p1`、分页 `LIMIT OFFSET` / `OFFSET FETCH`（SQL Server 用 `ORDER BY (SELECT NULL)` 满足语法）、标识符引用、字段查找、`refreshPlan()` |
+| `src/datasource/sql-executor.ts` | 多驱动执行器：只读强制 + 参数化 + 懒加载 mysql2/mssql（未安装明确报错，不静默假装成功）+ `wrapSqlError()` 挂 cause |
+| `src/datasource/refresh-scheduler.calc.ts` | **自动刷新调度判定层**：job name 带 `tenant_id:source_id`、repeatable key 稳定化、`reconcileRepeat()` 五分支（含「参数相同绝不重复注册」「改参数必须先 remove 再 add」）、`bootstrapCandidates()` 启动期对齐 |
+| `src/datasource/refresh-scheduler.service.ts` | 真实 BullMQ 接入：`sync()` / `unschedule()` / `bootstrap()` / `scheduled()`；独立队列 `datasource_refresh`，`DATASOURCE_REFRESH_SCHEDULER_ENABLED=0` 可关 |
+| `src/datasource/refresh.processor.ts` | Worker：name/data 双重租户校验 → 目录库构造 `TenantCtx`（含真实 `data_source_key`）→ `tenantStorage.run()` 复用 `DataSourceService.refresh()`；单源失败只写回 `lastError`，不拖住其它租户 |
+| `src/datasource/datasource.service.ts` | 从 module 抽出（避免 ESM 循环）；`saveSql` / `setRefreshConfig` / `remove` 同步调度，Redis 不可用只告警、配置仍可保存；新增 `markRefreshError()` |
+| `src/barcode/barcode.module.ts` | `Gs1Controller`：`/gs1/ai-catalog` / `/gs1/ai/:ai/help` / `/gs1/validate` |
+| 单测 | `gs1-ai.test.ts` 16 条、`industrial-symbology.test.ts` 6 条、`sql-driver.calc.test.ts` 14 条、`refresh-scheduler.calc.test.ts` 9 条 |
+
+**架构决策**：刷新调度全部收在 `DataSourceModule` 内，不放 `JobsModule` —— 否则 `JobsModule → DataSourceModule`（Worker 要拿 Service）与 `DataSourceService → 调度器` 形成循环 DI。当前依赖单向：`DataSourceService → DatasourceRefreshService → Queue/catalog`、`Processor → DataSourceService`。
+
+**已知边界**：`bootstrap()` 从目录库扫 `data_sources`，**独立库租户的数据源在独立库，扫不到**，故启动期对齐只覆盖共享库租户；`catalog` 扫描失败只告警不阻断启动，配置变更时的即时 `sync()` 仍是可用链路。真 Redis / 真库端到端触发未实跑。
+
+#### 10.29.3 本轮实跑基线（P8.3 + P8.4 + P8.5 收口）
+
+| 项 | 结果 |
+| --- | --- |
+| `npm run typecheck` | **0 error** |
+| `npm test` | **442 全绿**（435 pass / 7 skip / 0 fail；P8.0–8.2 基线 349 → P8.3 371 → P8.4 416 → P8.5 442） |
+| 定向 lint（本轮全部新增/改动文件） | **0 error**；`src/datasource/`、`src/hardware/`、`src/governance/` 新增文件 0 warning |
+| `tsc -p tsconfig.json` 全量编译 | 通过（含装饰器元数据） |
+| Nest DI 图 | `createApplicationContext(AppModule)` 未在超时前出现依赖解析/循环错误，卡在沙盒无 PG/Redis 的外部连接，依赖图成立 |
+| P8.3 水印冒烟 | `SVG_WATERMARK_COUNT:1` / `HTML_WATERMARK_COUNT:1` / `NO_WM_BASELINE:true` |
+| P8.5 链路冒烟 | `PROVIDER_TYPE: windows_spooler` / `PRINT_RESULT: {"ok":true}` / `NO_SECRETS:true` / `REDACTED_FIELDS:["host","port","user","password","dsn"]` / `ZPL_HAS_XA:true` / `NO_PORT_FAILS_LOUDLY:true` |
+
+---
+
+### 10.30 P8.5 硬件层：协议落地与真机验收清单
+
+> **对外口径：协议层与服务端接入已落地，真机未验收，禁止承诺可用。**
+> 服务端在 Linux 沙盒里看不到用户 Windows 机器上的驱动打印机、USB 口、串口、RFID 读写器，
+> 因此不写任何「连 socket 到本机驱动」的假实现。正确形态是**本地代理主动出站**。
+
+#### 10.30.1 已落地内容
+
+| 文件 | 职责 |
+| --- | --- |
+| `src/hardware/agent-protocol.calc.ts` | 本地代理协议判定层：注册归一化（能力白名单 + agentId fail-closed）、心跳存活、确定性选代理、`agentJobEnvelope()` **字段白名单脱敏**（connection 只留 `driverName`；host/port/账号/密码/DSN/token 一律剔除并记 `redactedFields`）、回执状态机（终态不可改写）、`verifyReceipt()` 三重匹配、HMAC 签名（复用 P8.1 `verifySignature` 真源）、认领超时回收 |
+| `src/hardware/epc.calc.ts` | GS1 EPC TDS **SGTIN-96** 编解码（分区表、96bit 位拼接/反解、模 10 校验位复用 `core/checksum`）、`rfidWriteJob()` 写操作信封、`verifyEpcWrite()` 写后读回比对（归一化 + 不一致判失败）、`epcDedupeVerdict()` 防重写 |
+| `src/hardware/inkjet.calc.ts` | 厂商中立喷码作业：`{{varName}}` 同源占位、控制字符剔除、行/字符/件数夹取并 warnings、`validateInkjetJob()` 终检、`inkjetPayload()` 下发文本载荷。**不含任何厂商私有指令** |
+| `printer/printer-provider.interface.ts` | 新增 `WindowsSpoolerProvider` 并注册 —— 修复此前 `get('windows_spooler')` 直接抛「未注册的打印 Provider」的实质缺口；静态 `AgentEnqueuePort` 桥接静态注册表与 Nest DI，未注册时 `print()` 明确返回 `ok:false` |
+| `src/print/print.processor.ts` | 修复真实缺陷：Provider 返回 `ok:false` 时不再被记成 `success`，改走失败分支 |
+| `src/hardware/hardware.service.ts` / `hardware.entity.ts` / `hardware.module.ts` | 注册/心跳/拉取/回执/回收、入队幂等（jobKey 唯一索引 + 23505 兜并发）、RFID 编码/写任务/读回留痕、喷码作业端点；`HardwareModule.onModuleInit()` 注册 `AgentEnqueuePort` |
+| `scripts/saas_p8_hardware.sql` | `hardware_agents` / `hardware_agent_jobs` / `hardware_rfid_logs`，均带 `tenant_id` + RLS 兜底；`secret_enc` 用 `SQL_SECRET_KEY` AES-256-GCM 存密文（HMAC 需明文，只存 hash 不够） |
+| `src/hardware/__tests__/*.test.ts` | 26 条单测：脱敏、状态机、签名、EPC 位布局往返、写后读回、喷码夹取 |
+
+**协议要点**：代理注册时下发明文 `secret`（**仅此一次**，服务端只存密文 + SHA-256 指纹）；主鉴权用现有租户 JWT，HMAC 签名默认关闭（`HARDWARE_AGENT_SIGNATURE_REQUIRED=1` 开启，与 WP2 限流同款「新维度默认不影响存量租户」）；任务信封脱敏是硬约束，冒烟已验证 `NO_SECRETS:true`。
+
+#### 10.30.2 明确未做（不许含糊）
+
+- 没有 Windows 驱动打印、USB / 串口真实写入、RFID 读写器指令（LLRP / 厂商 SDK）、喷码机品牌协议（Videojet / Domino / Markem-Imaje / Linx）的任何实现。
+- 没有本地代理客户端程序（可执行文件 / 安装包 / 心跳守护进程），只有服务端协议与 API 契约。
+- EPC 只覆盖 SGTIN-96；SSCC-96 / GRAI-96 / GIAI-96 / DOD-96 等编码族未实现，需按 TDS 扩展。
+- 独立库租户的硬件表按 `tenant_id` 路由，但**跨库代理调度未做**（与 §10.29.2 的 bootstrap 边界同源）。
+- 新建表需执行 `scripts/saas_p8_hardware.sql`，否则 `labelflow_app` 角色下无 RLS 策略。
+
+#### 10.30.3 真机验收清单（逐项打勾，未全绿前不得对外承诺可用）
+
+| # | 验收项 | 环境 | 通过标准 |
+| --- | --- | --- | --- |
+| 1 | 建表 + RLS | PostgreSQL，先跑 `saas_p8_governance.sql` 再跑 `saas_p8_hardware.sql` | `labelflow_app` 下三张新表均有 `tenant_isolation` 策略；跨租户查询返回 0 行 |
+| 2 | 代理注册 / 密钥轮换 | Windows 10/11 + 服务端 | 注册返回 `secret` 一次；重新注册后旧密钥签名的请求被拒；库里无明文 secret |
+| 3 | 心跳与在线判定 | 同上 | 断网 90s 后 `GET /hardware/agents` 显示 `offline` 且 `pull` 不再下发任务 |
+| 4 | 驱动打印（核心） | Windows + Zebra/TSC 驱动打印机 | `/print/jobs` 选 `windows_spooler` → 代理拉取 → 真实出纸；`receipt` 回 `succeeded`；打印日志不记 `success` 除非 `provider.ok=true` |
+| 5 | 凭证不出域 | 抓包 / 代理日志 | 信封中无 host/password/DSN；`redactedFields` 完整；服务端 DSN 未落到用户机器 |
+| 6 | 并发入队幂等 | 多 worker 同时重打同一 job | `hardware_agent_jobs` 只有一条同 `job_key` 记录，第二请求返回幂等成功 |
+| 7 | 认领超时回收 | 拉取后杀掉代理进程 | 300s 后 `sweep` 把任务回 `pending` 或 `expired`，不会永久卡住 |
+| 8 | 回执状态机 | 伪造 `succeeded` 后再发 `failed` | 第二次被 400 拒绝，终态不可改写；跨租户伪造 `jobKey` 被拒 |
+| 9 | SGTIN-96 编码 | GS1 官方示例向量 | 与 TDS 官方 hex 一致；解码往返 GTIN 校验位可重建 |
+| 10 | RFID 真写 + 读回 | UHF 读写器 + 标签 | 写入后读回与 `expectedReadBack` 完全一致才 `verified:true`；故意错写一张必须被拦并落 `hardware_rfid_logs` |
+| 11 | 喷码作业 | 具体品牌喷码机 + 代理适配器 | `inkjetPayload()` 被正确翻译为该品牌指令；`{{var}}` 已展开、无控制字符、行数/长度在设备缓冲区内 |
+| 12 | 自动刷新端到端 | Redis + 真 PG + 第二套 MySQL/SQLServer | 配置 `intervalSec` → repeatable 到期 → Worker 真执行 SQL → `data_rows` 更新；改配置后旧 key 被撤销，不出现双周期 |
+| 13 | 并发防重打印 | 真 PG，多 worker 同时提交同批次 | `uq_print_dedupe_tenant_key` 撞 `23505` 后回查判重复，不产生两张相同标签 |
+| 14 | 中文字体 / 印前 | 真实浏览器 + 印刷链路 | PDF 中文不退化方块；如需印前交付，CMYK/专色/出血仍属 B3-6 未做 |
+
+> 第 4、10、11、12、13 项是**硬性真机门槛**。在此之前，P8.5 的准确表述是「协议与服务端接入已落地，待真机验收」。
 

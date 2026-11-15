@@ -23,11 +23,52 @@ export const DPI_OPTIONS = [203, 300, 600];
 export const BARCODE_SYMS = [
   'CODE128', 'GS1_128', 'CODE39', 'CODE93', 'EAN13', 'EAN8', 'UPC', 'UPC_E',
   'ITF14', 'ITF', 'CODABAR', 'MSI', 'PHARMACODE', 'CODE16K',
+  // P8.4 工业码制（位图预览，无打印机原生指令）
+  'HIBC_128', 'HIBC_CODE39', 'PZN',
 ];
 
 export const QRCODE_SYMS = [
   'QRCODE', 'MICROQR', 'DATAMATRIX', 'DATAMATRIX_RECT', 'PDF417', 'AZTEC',
+  // P8.4 工业码制（位图预览，无打印机原生指令）
+  'MAXICODE', 'HIBC_DATAMATRIX', 'HIBC_QR',
 ];
+
+// -----------------------------------------------------------------------------
+// P7.5 受限标记：与后端 core/symbology.capabilities.ts 的能力真源**同口径**。
+// 这里只存「该码制能原生打印的指令协议」，展示文案由 buildSymOptions 派生，
+// 保证前端下拉、生成器白名单、warnings 文案不各写一份（P7.2 复核的核心教训）。
+// 后端提供 GET /print/symbologies 返回权威列表；前端这份是**离线兜底**
+// （设计器首次加载、后端不可达时仍能正确标注），两者不一致以后端为准。
+// 口径：PHARMACODE / CODE16K 无任何指令协议 → "预览仅"；其余列出可用协议。
+// -----------------------------------------------------------------------------
+const PRINT_PROTOCOLS: Record<string, string[]> = {
+  CODE128: ['ZPL', 'TSPL', 'EPL'], GS1_128: ['ZPL', 'TSPL'],
+  CODE39: ['ZPL', 'TSPL', 'EPL'], CODE93: ['ZPL', 'TSPL'],
+  EAN13: ['ZPL', 'TSPL', 'EPL'], EAN8: ['ZPL', 'TSPL', 'EPL'],
+  UPC: ['ZPL', 'TSPL', 'EPL'], UPC_E: ['ZPL', 'TSPL', 'EPL'],
+  ITF14: ['ZPL', 'TSPL'], ITF: ['ZPL', 'TSPL', 'EPL'],
+  CODABAR: ['ZPL', 'TSPL', 'EPL'], MSI: ['ZPL', 'TSPL'],
+  PHARMACODE: [], CODE16K: [],
+  QRCODE: ['ZPL', 'TSPL', 'EPL'], MICROQR: ['ZPL'],
+  DATAMATRIX: ['ZPL'], DATAMATRIX_RECT: ['ZPL'],
+  PDF417: ['ZPL'], AZTEC: ['ZPL'],
+  // P8.4 工业码制：位图通道可用，ZPL/TSPL/EPL 均无原生指令 → 标「预览仅·需图像通道」
+  MAXICODE: [], HIBC_128: [], HIBC_CODE39: [], HIBC_DATAMATRIX: [], HIBC_QR: [], PZN: [],
+};
+
+/** 生成 [value, label] 元组选项（FSelect 原生支持），label 带受限标记 */
+export function buildSymOptions(syms: string[]): Array<[string, string]> {
+  return syms.map((sym) => {
+    const protocols = PRINT_PROTOCOLS[sym] ?? [];
+    const badge = protocols.length
+      ? `（${protocols.join('/')}）`
+      : '（预览仅·需图像通道）';
+    return [sym, `${sym} ${badge}`] as [string, string];
+  });
+}
+
+export const BARCODE_SYM_OPTIONS = buildSymOptions(BARCODE_SYMS);
+export const QRCODE_SYM_OPTIONS = buildSymOptions(QRCODE_SYMS);
 
 export const MEDIA_TYPES = [
   { value: 'gap', label: '间隙标签（GAP）' },

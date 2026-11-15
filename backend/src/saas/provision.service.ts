@@ -54,17 +54,18 @@ export class ProvisionService {
     if (!dto.adminUsername?.trim()) throw new BadRequestException('管理员用户名不能为空');
     if (!dto.adminPassword || dto.adminPassword.length < 8) throw new BadRequestException('管理员密码至少 8 位');
 
-    // P6.2 D2：独立库的「开通编排」没做（建库 / 跑 DDL / 搬运数据 / 业务读写接管），
-    // 这里必须硬拒，不能先建一个 type='dedicated' 的租户让所有业务查询落到共享库——
-    // 那就是「以为隔离了其实没隔离」，比不做更糟。
+    // P6.2 阶段 B：独立库租户必须走专用编排端点（建库 → DDL → 搬数据 → 行数校验 → 切 key）。
+    // 通用 provision 接口仍然只建 shared 租户，避免有人绕过编排直接写 data_source_key，
+    // 造成「租户标记独立库、业务却仍落共享库」的假隔离。
     if (dto.type === 'dedicated') {
       throw new BadRequestException(
-        '独立库租户暂不支持在开通接口创建：请先用 POST /platform/datasources 注册 dataSourceKey，' +
-        '再按 docs/11 §11.11 P6.2 的二阶段（建库 → 跑 DDL → 迁移租户行 → 切换 routing）人工编排',
+        '独立库租户请走 POST /platform/tenants/dedicated（一条命令开通编排），' +
+        '或先开通共享租户再调 POST /platform/tenants/:id/dedicated/provision 迁移；' +
+        '通用开通接口不接受 type=dedicated',
       );
     }
     if (dto.dataSourceKey) {
-      throw new BadRequestException('共享库租户不能指定 dataSourceKey（独立库编排未实现）');
+      throw new BadRequestException('共享库租户不能指定 dataSourceKey；独立库编排请用 POST /platform/tenants/dedicated');
     }
 
     const tenants = this.dataSource.getRepository(Tenant);

@@ -1,5 +1,6 @@
 import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
 import { Observable } from 'rxjs';
+import { DataSource } from 'typeorm';
 import { tenantStorage, TenantCtx } from './tenant.context';
 import { ModulesService } from '../saas/modules.service';
 import { PermissionsService } from '../saas/permissions.service';
@@ -19,6 +20,8 @@ export class TenantContextInterceptor implements NestInterceptor {
     private modulesSvc: ModulesService,
     private permsSvc: PermissionsService,
     private configSvc: TenantConfigService,
+    /** 目录库连接：tenants 表永远在共享库，独立库租户的 data_source_key 从这里读 */
+    private ds: DataSource,
   ) {}
 
   async intercept(ctx: ExecutionContext, next: CallHandler): Promise<Observable<any>> {
@@ -32,19 +35,26 @@ export class TenantContextInterceptor implements NestInterceptor {
     let store: TenantCtx = { tenantId, userId, roles, modules: [], permissions: [] };
 
     if (tenantId > 0) {
-      const [modules, permissions, plan, features, dataScopes] = await Promise.all([
+      const [modules, permissions, plan, features, dataScopes, dsRows] = await Promise.all([
         this.modulesSvc.listTenantActive(tenantId).catch(() => [] as string[]),
         this.permsSvc.listByRoles(roles).catch(() => [] as string[]),
         this.modulesSvc.getPlan(tenantId).catch(() => null),
         this.configSvc.featuresFor(tenantId).catch(() => ({}) as Record<string, boolean>),
         this.configSvc.dataScopeFor(tenantId, userId, roles).catch(() => null),
+        // P6.2 阶段 B：从**目录库（共享库）**读真实 data_source_key。
+        // 独立库租户的 Repository 代理据此把业务读写路由到 tdsm.get(ctx)；
+        // 查不到/老库没这列一律回落 'default'（容错，不把请求打挂）。
+        this.ds.query(
+          `select data_source_key from public.tenants where id = $1`, [tenantId],
+        ).catch(() => [] as any[]),
       ]);
+      const dataSourceKey = String(dsRows?.[0]?.data_source_key ?? '').trim() || 'default';
       store = {
         tenantId, userId, roles, modules, permissions,
         plan: plan?.code ?? null,
         features,
         dataScopes,
-        dataSourceKey: 'default',   // D2：P0 只有共享库，字段先留好
+        dataSourceKey,
       };
     }
 

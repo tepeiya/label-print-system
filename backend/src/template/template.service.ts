@@ -7,6 +7,8 @@ import { useTenant, useTenantId } from '../common/tenant.context';
 import { AuditService } from '../audit/audit.module';
 import { renderThumbnail } from '../print/thumbnail-renderer';
 import { assertAclAccess } from '../common/acl-check';
+// P8.3：严格发布模式下，已发布/待审批模板必须先退回草稿才能改（发布锁定）
+import { GovernanceService } from '../governance/governance.service';
 
 const CURRENT_SCHEMA = 1;
 // 导入兼容迁移（按 schemaVersion 路由）
@@ -20,6 +22,7 @@ export class TemplateService {
     @InjectRepository(Template) private tpl: Repository<Template>,
     @InjectRepository(TemplateVersion) private ver: Repository<TemplateVersion>,
     private audit: AuditService,
+    private governance: GovernanceService,
   ) {}
 
   private tid() { return useTenantId(); }
@@ -69,6 +72,9 @@ export class TemplateService {
   async update(id: number, dto: { name?: string; content?: any; updatedBy?: number }) {
     const t = await this.get(id);
     assertAclAccess(t, true);
+    // P8.3 发布锁定：严格模式下 published/in_review/archived 禁止直接保存。
+    // 该检查在「默认宽松」策略下立即返回（policy 查不到也放行），不影响存量租户。
+    await this.governance.assertEditable(id);
     const next = t.currentVersion + 1;
     if (dto.content) await this.ver.save({ tenantId: this.tid(), templateId: id, version: next, content: dto.content, createdBy: dto.updatedBy });
     const saved = await this.tpl.save({ ...t, ...dto, currentVersion: next });
