@@ -618,6 +618,10 @@ Excel 数据文件仍在原生版/后端解析，预览弹窗只吃 JSON/CSV/TSV
 **🟡 B6. 条码预览引擎**
 - 前端预览用 bwip-js 生成 SVG，打印时**重新编码**（ZPL/TSPL/PNG），两者可能不一致（码制宽度计算、静区、校验位追加时机）。
 - BarTender 的预览是**最终渲染**——所见即所得。这里要保证：`designer/engine/barcode.ts`（bwip-js SVG）与 `backend/core/barcode-encoder.ts`（位图）与 `backend/core/zpl-generator.ts`（指令）三者对同一份内容产出**完全相同的条码图案**。
+- **矢量渲染口径（2026-11-09 已落地）**：一维码/二维码全链路只出 SVG（`viewBox` 缩放，不栅格化图片）；
+  SVG 根节点统一加 `shape-rendering="crispEdges"` 关闭抗锯齿，避免被拉伸到非整数尺寸时条空/模块边缘插值出灰边
+  （视觉发虚，小模块宽还可能扫不出）。落点：`apps/console/.../engine/barcode.ts#crisp`、`backend/core/barcode-renderer.ts#crispSvg`，
+  由 `engines.test.ts` 的「矢量-一维码/二维码 SVG 带 crispEdges」锁定。仅模板列表缩略图与 `/barcode/png` 存档接口是位图。
 
 #### C. 下一轮开发路线（P7 条码打印核心修复）
 

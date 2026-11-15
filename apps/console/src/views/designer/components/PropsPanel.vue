@@ -215,7 +215,7 @@
       <FGroup v-else-if="el!.type === 'qrcode'" title="二维码内容">
         <FRow>
           <FLabel text="码制" />
-          <FSelect :model-value="qr!.sym ?? 'QRCODE'" :options="qrSymOptions" @update:model-value="setQr({ sym: $event })" />
+          <FSelect :model-value="qr!.sym ?? 'QRCODE'" :options="qrSymOptions" @update:model-value="setQrSym($event)" />
         </FRow>
         <!-- 同「一维码」：受限码制给一行 capNote 小字，取值集合不变 -->
         <span v-for="(line, i) in qrCapHint" :key="`cap${i}`" class="f-hint f-hint-warn">⚠ {{ line }}</span>
@@ -400,6 +400,30 @@ function setBarcodeTextFont(patch: { size?: number; family?: string }) {
 
 function setQr(patch: Partial<QrcodeSpec>) {
   set({ qrcode: { ...(qr.value ?? {}), ...patch } });
+}
+
+/**
+ * 切换二维码制时同步元素框比例。
+ * PDF417（堆叠长条）与矩形 DataMatrix 是标准规定的非正方形，留在 18×18 方框里
+ * 只会大片留白。规则：保持较大边不变，另一侧按符号自然比例收缩，下限 4mm；
+ * 内容仍含占位符或编码失败取不到比例时只改码制，不动尺寸。
+ */
+function setQrSym(sym: string) {
+  const cur = el.value;
+  if (!cur) return;
+  const spec = { ...(qr.value ?? {}), sym };
+  const ratio = qrNaturalAspect(spec, interpolate(spec.content ?? '', previewCtx));
+  if (!ratio) {
+    set({ qrcode: spec });
+    return;
+  }
+  const w = cur.w ?? 18;
+  const h = cur.h ?? 18;
+  const round1 = (v: number) => Math.max(4, Math.round(v * 10) / 10);
+  set({
+    qrcode: spec,
+    ...(ratio >= 1 ? { w, h: round1(w / ratio) } : { w: round1(h * ratio), h }),
+  });
 }
 
 /** 下拉给回来的是字符串，这里收敛到 spec 的联合类型（取值集合与原生版一致） */

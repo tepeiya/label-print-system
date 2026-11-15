@@ -81,11 +81,21 @@ function applyGs1Bwip(opts: BwipOptions, bcid: string, raw: string): void {
 
 function toSvg(opts: BwipOptions): string | null {
   try {
-    return bwipjs.toSVG(opts as never);
+    return crisp(bwipjs.toSVG(opts as never));
   } catch (e) {
     console.warn('[bwip] 编码失败', (e as Error)?.message || e);
     return null;
   }
+}
+
+/**
+ * 条码/二维码必须锐利：关闭抗锯齿，让条空与模块边缘吸附到设备像素。
+ * 不加这一条时，SVG 被拉伸到非整数尺寸会插值出灰边——屏幕上像位图发虚，
+ * 小模块宽还可能扫不出来（JsBarcode 等专业库默认同口径）。
+ */
+function crisp(svg: string): string {
+  if (!svg || svg.includes('shape-rendering')) return svg;
+  return svg.replace('<svg ', '<svg shape-rendering="crispEdges" ');
 }
 
 /** 从 SVG viewBox 推算物理尺寸（mm） */
@@ -189,6 +199,7 @@ export function makeQrSvg(spec: BarcodeLikeOptions | undefined, content: unknown
       svgStr,
       modules: Math.round(metrics.naturalWmm / moduleSize),
       naturalWmm: metrics.naturalWmm,
+      naturalHmm: metrics.naturalHmm,
     };
     CACHE.qr.set(key, out);
     return out;
@@ -280,4 +291,19 @@ export function validateBarcodeText(sym: unknown, content: unknown): BarcodeChec
 export function barcodeNaturalWidth(spec: BarcodeLikeOptions | undefined, content: unknown): number | null {
   if (/\{\{[^}]+\}\}/.test(String(content ?? ''))) return null;
   return makeBarcodeSvg(spec, content).naturalWmm;
+}
+
+/**
+ * 二维码符号的自然长宽比（w/h）。
+ * QR / Micro QR / DataMatrix / Aztec 恒为 1；PDF417（堆叠长条）与
+ * 矩形 DataMatrix 是标准规定的非正方形，切换码制时用它把元素框调成同一比例，
+ * 避免在 18×18 方框里留大片白。无法得知内容（仍含占位符 / 编码失败）返回 null，保持原尺寸。
+ */
+export function qrNaturalAspect(spec: BarcodeLikeOptions | undefined, content: unknown): number | null {
+  const text = String(content ?? '');
+  if (!text.trim() || /\{\{[^}]+\}\}/.test(text)) return null;
+  const r = makeQrSvg(spec, text);
+  if (!r.naturalHmm || !Number.isFinite(r.naturalHmm)) return null;
+  const ratio = r.naturalWmm / r.naturalHmm;
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : null;
 }

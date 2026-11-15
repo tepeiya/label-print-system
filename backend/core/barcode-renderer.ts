@@ -219,11 +219,21 @@ export function qrcodeBwipOptions(spec: QrcodeSpec, opts: RenderOpts = {}): any 
 
 /** 生成 SVG 字符串（同步、矢量、含静区；前端可直接内联打印） */
 export function renderBarcodeSvg(spec: BarcodeSpec): string {
-  return bwipjs.toSVG(barcodeBwipOptions(spec, { svg: true }));
+  return crispSvg(bwipjs.toSVG(barcodeBwipOptions(spec, { svg: true })));
 }
 
 export function renderQrcodeSvg(spec: QrcodeSpec): string {
-  return bwipjs.toSVG(qrcodeBwipOptions(spec, { svg: true }));
+  return crispSvg(bwipjs.toSVG(qrcodeBwipOptions(spec, { svg: true })));
+}
+
+/**
+ * 条码/二维码矢量出图必须关抗锯齿：条空与模块边缘吸附设备像素。
+ * 否则 SVG 被拉伸到非整数尺寸会插值出灰边（视觉发虚、小模块宽可能扫不出），
+ * 与前端 apps/console 的 engine/barcode.ts#crisp 同一口径。
+ */
+function crispSvg(svg: string): string {
+  if (!svg || svg.includes('shape-rendering')) return svg;
+  return svg.replace('<svg ', '<svg shape-rendering="crispEdges" ');
 }
 
 /** 生成 PNG（异步；按 dpi 出图，供存档/第三方集成） */

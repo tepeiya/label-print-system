@@ -175,6 +175,14 @@ export const STATUS_SUFFIX: Record<CapStatus, string> = {
   previewOnly: '（仅预览·不能直接打印）',
 };
 
+/** ZPL/TSPL 结论不同时的并列短标签（只用于下拉后缀，不改判定） */
+const STATUS_SHORT: Record<CapStatus, string> = {
+  native: '原生',
+  degraded: '有差异',
+  bitmap: '位图',
+  previewOnly: '仅预览',
+};
+
 /** 缺省协议口径下的最差状态；未知码制返回 undefined（UI 一律按原样呈现，不猜） */
 export function worstStatusFor(sym: string): CapStatus | undefined {
   const c = capOf(sym);
@@ -195,11 +203,21 @@ export function capStatus(sym: string, protocol?: PrintProtocol): CapStatus | un
 /**
  * 码制下拉 options（FSelect 认 [value, label] 元组）。
  * value 必须是 model.ts 里 BARCODE_SYMS / QRCODE_SYMS 的原值 —— 只改展示，不改取值集合。
+ *
+ * 无协议上下文时不再只写「最差一档」：ZPL 与 TSPL 结论不同的码制并列写出，
+ * 例如 `DATAMATRIX（ZPL 原生 / TSPL 位图）`。原来的最差口径会把 DataMatrix / PDF417 / Aztec
+ * 在斑马机上的原生能力也标成「位图打印」，误导以 ZPL 为主的用户。
  */
 export function capOptions(syms: string[], protocol?: PrintProtocol): Array<[string, string]> {
   return syms.map((s) => {
-    const st = capStatus(s, protocol);
-    return [s, s + (st ? STATUS_SUFFIX[st] : '')];
+    if (protocol) {
+      const st = statusFor(s, protocol);
+      return [s, s + (st ? STATUS_SUFFIX[st] : '')];
+    }
+    const c = capOf(s);
+    if (!c) return [s, s];
+    if (c.zpl === c.tspl) return [s, s + STATUS_SUFFIX[c.zpl]];
+    return [s, `${s}（ZPL ${STATUS_SHORT[c.zpl]} / TSPL ${STATUS_SHORT[c.tspl]}）`];
   });
 }
 
