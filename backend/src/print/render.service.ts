@@ -31,12 +31,12 @@ export class RenderService {
         e._skip = true;
       }
       if (e.type === 'text' || e.type === 'richtext') {
-        e.text = this.interp(e.text ?? '', ctx);
-        if (Array.isArray(e.cells)) e.cells = e.cells.map((c: any) => this.interp(String(c ?? ''), ctx));
+        e.text = this.interp(e.text ?? '', ctx, serials, rowIndex);
+        if (Array.isArray(e.cells)) e.cells = e.cells.map((c: any) => this.interp(String(c ?? ''), ctx, serials, rowIndex));
       } else if (e.type === 'barcode') {
-        e.barcode = { ...e.barcode, content: this.interp(e.barcode.content ?? '', ctx) };
+        e.barcode = { ...e.barcode, content: this.interp(e.barcode.content ?? '', ctx, serials, rowIndex) };
       } else if (e.type === 'qrcode') {
-        e.qrcode = { ...e.qrcode, content: this.interp(e.qrcode.content ?? '', ctx) };
+        e.qrcode = { ...e.qrcode, content: this.interp(e.qrcode.content ?? '', ctx, serials, rowIndex) };
       } else if (e.type === 'formula') {
         const r = safeEval(e.formula.expr, ctx);
         e.rendered = r.ok ? String(r.value) : '{{ERROR}}'; // 出错不阻断整单
@@ -44,30 +44,118 @@ export class RenderService {
         const arr = serials[e.id] ?? [];
         e.rendered = arr[rowIndex] ?? ''; // 第 rowIndex 行的流水号（按行切片）
       } else if (e.type === 'datetime') {
-        e.rendered = this.formatDate(e.datetime?.pattern ?? 'YYYY-MM-DD', e.datetime?.source === 'data' ? ctx : new Date(), e.datetime?.source, ctx);
+        e.rendered = this.formatDate(e.datetime?.pattern ?? 'YYYY-MM-DD', e.datetime?.source === 'data' ? ctx : new Date(), e.datetime?.source, ctx, e.datetime?.offset ?? '');
       } else if (e.type === 'sysvar') {
         const key = e.sysvar?.key ?? e.key ?? '';
         e.rendered = key && key in ctx ? String(ctx[key]) : '';
       } else if (e.type === 'image') {
-        e.src = this.interp(e.src ?? '', ctx);
+        e.src = this.interp(e.src ?? '', ctx, serials, rowIndex);
       }
       return e;
     });
   }
 
-  /** 替换 {{name}} 占位（变量缺失留空，不报错） */
-  private interp(s: string, ctx: Record<string, any>): string {
-    return String(s ?? '').replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, k) => (k in ctx ? String(ctx[k]) : ''));
+  /** 替换 {{name}} 占位（变量缺失留空，不报错）。支持 @系统占位符（如 {{@serial}} {{@printDate}}） */
+  private interp(s: string, ctx: Record<string, any>, serials: Record<string, string[]> = {}, rowIndex = 0): string {
+    return String(s ?? '').replace(/\{\{\s*([@A-Za-z_][^}]*?)\s*\}\}/g, (_, raw: string) => {
+      if (!raw.startsWith('@')) return raw in ctx ? String(ctx[raw]) : '';
+      const body = raw.slice(1);
+      const ci = body.indexOf(':');
+      const key = ci < 0 ? body : body.slice(0, ci);
+      const rest = ci < 0 ? '' : body.slice(ci + 1).trim();
+      // 格式与偏移用 | 分隔：{{@printDate:YYYYMMDD|+3d}}
+      const pi = rest.indexOf('|');
+      const pattern = pi < 0 ? rest : rest.slice(0, pi).trim();
+      const offset = pi < 0 ? '' : rest.slice(pi + 1).trim();
+      return this.systemPlaceholder(key, ctx, serials, rowIndex, pattern, offset);
+    });
+  }
+
+  /**
+   * 系统占位符 @xxx：打印期上下文，与前端 engine/context#systemPlaceholder 同口径。
+   *   @serial      当前标签流水号（取模板首个 serial 元素的预分配值；无 serial 元素则回退 (rowIndex+1) 补零5位）
+   *   @printDate @printTime @pageNo @pageTotal @uuid @copyIndex @printerName @tenantName @printUser → 查 sysVars
+   */
+  private systemPlaceholder(key: string, ctx: Record<string, any>, serials: Record<string, string[]>, rowIndex: number, pattern = '', offset = ''): string {
+    switch (key) {
+      case 'serial': {
+        const keys = Object.keys(serials || {});
+        if (keys.length) {
+          const v = serials[keys[0]]?.[rowIndex];
+          if (v !== undefined) return String(v);
+        }
+        return String((rowIndex ?? 0) + 1).padStart(5, '0');
+      }
+      case 'printDate':
+      case 'printTime':
+        // 给了格式或偏移（如 {{@printDate:YYYYMMDD|+3d}}）就按 _now 重算；否则沿用 sysVars 里已格式化的字符串，保持兼容
+        if (pattern || offset) {
+          const base = ctx._now instanceof Date ? ctx._now : new Date();
+          const d = this.shiftDate(base, offset);
+          return this.formatDate(pattern || (key === 'printDate' ? 'YYYY-MM-DD' : 'HH:mm:ss'), d, 'print', ctx);
+        }
+        return key in ctx ? String(ctx[key]) : '';
+      case 'pageNo':
+      case 'pageTotal':
+      case 'uuid':
+      case 'copyIndex':
+      case 'printerName':
+      case 'tenantName':
+      case 'printUser':
+        return key in ctx ? String(ctx[key]) : '';
+      default:
+        return '';
+    }
+  }
+
+  /** 日期偏移：解析 [+-]n[unit]，unit ∈ y/M/w/d/h/m（月大写、分小写），可累加如 '+1M3d'；与前端 shiftDate 同口径 */
+  private shiftDate(base: Date, spec: string): Date {
+    const s = String(spec ?? '').trim();
+    if (!s) return base;
+    const d = new Date(base.getTime());
+    const re = /([+-]?)(\d+)([yMwdhm]?)/g;
+    let m: RegExpExecArray | null;
+    let matched = false;
+    while ((m = re.exec(s))) {
+      matched = true;
+      const sign = m[1] === '-' ? -1 : 1;
+      const n = sign * (parseInt(m[2], 10) || 0);
+      const unit = m[3] || 'd';
+      switch (unit) {
+        case 'y': {
+          const day = d.getDate();
+          d.setDate(1);
+          d.setFullYear(d.getFullYear() + n);
+          const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+          d.setDate(Math.min(day, last));
+          break;
+        }
+        case 'M': {
+          const day = d.getDate();
+          d.setDate(1);
+          d.setMonth(d.getMonth() + n);
+          const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+          d.setDate(Math.min(day, last));
+          break;
+        }
+        case 'w': d.setDate(d.getDate() + n * 7); break;
+        case 'd': d.setDate(d.getDate() + n); break;
+        case 'h': d.setHours(d.getHours() + n); break;
+        case 'm': d.setMinutes(d.getMinutes() + n); break;
+      }
+    }
+    return matched ? d : base;
   }
 
   /** 简单日期格式化：YYYY/YY/MM/DD/HH/mm/ss；source=fixed 用 e.datetime.value */
-  private formatDate(pattern: string, value: any, source: string | undefined, ctx: Record<string, any>): string {
+  private formatDate(pattern: string, value: any, source: string | undefined, ctx: Record<string, any>, offset = ''): string {
     let d: Date;
     if (value instanceof Date) d = value;
     else if (typeof value === 'string' || typeof value === 'number') d = new Date(value);
     else if (source === 'fixed' && typeof ctx.__fixed === 'string') d = new Date(ctx.__fixed);
     else d = new Date();
     if (isNaN(d.getTime())) d = new Date();
+    d = this.shiftDate(d, offset);
     const p2 = (n: number) => String(n).padStart(2, '0');
     return String(pattern || 'YYYY-MM-DD')
       .replace(/YYYY/g, String(d.getFullYear()))

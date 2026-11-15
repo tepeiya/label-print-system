@@ -69,6 +69,7 @@ export function renderPrintHtml(input: HtmlRenderInput): HtmlRenderOutput {
       pageNo, pageTotal,
       copyIndex,
       uuid: require('crypto').randomUUID?.() ?? 'no-uuid',
+      _now: new Date(),
     };
     const serials: Record<string, string[]> = {}; // 预览不预分配，留空
     const rendered = render.renderRow(templateContent.elements, row, serials, sysVars, copyIndex);

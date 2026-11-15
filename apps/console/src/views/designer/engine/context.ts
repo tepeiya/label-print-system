@@ -5,6 +5,7 @@
 // =============================================================================
 
 import type { ElementData, TemplateData } from '../types';
+import { checksum } from './checksum';
 
 export interface RenderContext {
   row: Record<string, unknown>;
@@ -19,12 +20,14 @@ export interface RenderContext {
   tenantName?: string;
   printUser?: string;
   uuid?: string;
+  /** 主流水号元素配置，供 @serial 占位引用（使其与 serial 元素显示一致） */
+  _serialSpec?: { prefix?: string; suffix?: string; digits?: number } | undefined;
 }
 
 export function buildContext(
   template: TemplateData,
   row: Record<string, unknown> = {},
-  extra: Partial<Pick<RenderContext, 'pageNo' | 'pageTotal' | 'copies' | 'serialNo' | 'now' | 'uuid' | 'printerName' | 'tenantName' | 'printUser'>> = {},
+  extra: Partial<Pick<RenderContext, 'pageNo' | 'pageTotal' | 'copies' | 'serialNo' | 'now' | 'uuid' | 'printerName' | 'tenantName' | 'printUser' | '_serialSpec'>> = {},
 ): RenderContext {
   return {
     row: row || {},
@@ -38,13 +41,44 @@ export function buildContext(
     tenantName: extra.tenantName,
     printUser: extra.printUser,
     uuid: extra.uuid,
+    _serialSpec: extra._serialSpec,
   };
 }
 
 function varValue(name: string, ctx: RenderContext): unknown {
+  // @系统占位符：在 {{}} 中以 @ 开头引用打印期上下文（日期/流水号/页码/UUID…）
+  //   支持格式参数：{{@printDate:YYYYMMDD}} 会把冒号后的串作为日期格式（与后端同口径）
+  if (name.startsWith('@')) {
+    const body = name.slice(1);
+    const ci = body.indexOf(':');
+    const key = ci < 0 ? body : body.slice(0, ci);
+    const rest = ci < 0 ? '' : body.slice(ci + 1).trim();
+    // 格式与偏移用 | 分隔：{{@printDate:YYYYMMDD|+3d}}
+    const pi = rest.indexOf('|');
+    const pattern = pi < 0 ? rest : rest.slice(0, pi).trim();
+    const offset = pi < 0 ? '' : rest.slice(pi + 1).trim();
+    return systemPlaceholder(key, pattern, offset, ctx);
+  }
   if (ctx.row && Object.prototype.hasOwnProperty.call(ctx.row, name)) return ctx.row[name];
   const v = ctx.vars.find((x) => x.name === name);
   return v ? v.defaultValue ?? '' : '';
+}
+
+/** 系统占位符 @xxx 的取值（与后端 render.service#systemPlaceholder 同口径） */
+function systemPlaceholder(key: string, pattern: string, offset: string, ctx: RenderContext): unknown {
+  switch (key) {
+    case 'serial': return serialValue(ctx._serialSpec, ctx);
+    case 'printDate':
+    case 'printTime':
+    case 'pageNo':
+    case 'pageTotal':
+    case 'uuid':
+    case 'printerName':
+    case 'tenantName':
+    case 'printUser':
+      return sysvarValue(key, ctx, pattern, offset);
+    default: return '';
+  }
 }
 
 /**
@@ -59,7 +93,7 @@ export function sampleRowOf(template: TemplateData): Record<string, unknown> {
 
 /** 文本插值：{{var}} → 值 */
 export function interpolate(str: unknown, ctx: RenderContext): string {
-  return String(str ?? '').replace(/\{\{\s*([A-Za-z_][\w.]*)\s*\}\}/g, (_, name: string) => {
+  return String(str ?? '').replace(/\{\{\s*([@A-Za-z_][^}]*?)\s*\}\}/g, (_, name: string) => {
     const v = varValue(name, ctx);
     return v == null ? '' : String(v);
   });
@@ -77,6 +111,7 @@ export function fmtDateTime(pattern: unknown, date?: Date): string {
   const d = date || new Date();
   return String(pattern ?? '')
     .replace(/YYYY/g, String(d.getFullYear()))
+    .replace(/YY/g, String(d.getFullYear()).slice(2))
     .replace(/MM/g, pad(d.getMonth() + 1, 2))
     .replace(/DD/g, pad(d.getDate(), 2))
     .replace(/HH/g, pad(d.getHours(), 2))
@@ -84,11 +119,55 @@ export function fmtDateTime(pattern: unknown, date?: Date): string {
     .replace(/ss/g, pad(d.getSeconds(), 2));
 }
 
-export function sysvarValue(key: unknown, ctx: RenderContext): string {
-  const d = ctx.now || new Date();
+/**
+ * 日期偏移（前后端同口径）：解析 [+-]n[unit] 串，unit ∈ y/M/w/d/h/m（月大写、分小写），
+ * 可累加如 '+1M3d'；纯数字按天。月/年偏移做月末钳制：1/31 + 1M → 2/28。
+ * 例：+3d / -7d / +1M / +1y / -2h / +30m / +1M15d
+ */
+export function shiftDate(base: Date, spec: string): Date {
+  const s = String(spec ?? '').trim();
+  if (!s) return base;
+  const d = new Date(base.getTime());
+  const re = /([+-]?)(\d+)([yMwdhm]?)/g;
+  let m: RegExpExecArray | null;
+  let matched = false;
+  while ((m = re.exec(s))) {
+    matched = true;
+    const sign = m[1] === '-' ? -1 : 1;
+    const n = sign * (parseInt(m[2], 10) || 0);
+    const unit = m[3] || 'd';
+    switch (unit) {
+      case 'y': {
+        const day = d.getDate();
+        d.setDate(1);
+        d.setFullYear(d.getFullYear() + n);
+        const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+        d.setDate(Math.min(day, last));
+        break;
+      }
+      case 'M': {
+        const day = d.getDate();
+        d.setDate(1);
+        d.setMonth(d.getMonth() + n);
+        const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+        d.setDate(Math.min(day, last));
+        break;
+      }
+      case 'w': d.setDate(d.getDate() + n * 7); break;
+      case 'd': d.setDate(d.getDate() + n); break;
+      case 'h': d.setHours(d.getHours() + n); break;
+      case 'm': d.setMinutes(d.getMinutes() + n); break;
+    }
+  }
+  // 全串无合法片段（如 'abc'）时按原样返回，避免误伤
+  return matched ? d : base;
+}
+
+export function sysvarValue(key: unknown, ctx: RenderContext, pattern = '', offset = ''): string {
+  const d = shiftDate(ctx.now || new Date(), offset);
   switch (String(key)) {
-    case 'printDate': return fmtDateTime('YYYY-MM-DD', d);
-    case 'printTime': return fmtDateTime('HH:mm:ss', d);
+    case 'printDate': return fmtDateTime(pattern || 'YYYY-MM-DD', d);
+    case 'printTime': return fmtDateTime(pattern || 'HH:mm:ss', d);
     case 'pageNo': return String(ctx.pageNo ?? 1);
     case 'pageTotal': return String(ctx.pageTotal ?? 1);
     case 'printerName': return ctx.printerName ?? '未指定';
@@ -162,37 +241,115 @@ function tokenize(src: string): Token[] {
 
 type Fn = (...args: any[]) => any;
 
-const FN: Record<string, Fn> = {
-  LEN: (s) => String(s ?? '').length,
-  UPPER: (s) => String(s ?? '').toUpperCase(),
-  LOWER: (s) => String(s ?? '').toLowerCase(),
-  TRIM: (s) => String(s ?? '').trim(),
-  LEFT: (s, n) => String(s ?? '').slice(0, Number(n) || 0),
-  RIGHT: (s, n) => {
-    const k = Number(n) || 0;
-    return k <= 0 ? '' : String(s ?? '').slice(-k);
-  },
-  MID: (s, start, len) => String(s ?? '').substr((Number(start) || 1) - 1, Number(len) || 0),
-  ROUND: (n, d = 0) => {
-    const p = 10 ** (Number(d) || 0);
-    return Math.round((Number(n) || 0) * p) / p;
-  },
-  INT: (n) => Math.floor(Number(n) || 0),
-  ABS: (n) => Math.abs(Number(n) || 0),
-  NUM: (s) => {
-    const n = parseFloat(String(s ?? '').replace(/[^0-9.-]/g, ''));
-    return Number.isFinite(n) ? n : 0;
-  },
-  CONCAT: (...a) => a.map((x) => (x == null ? '' : String(x))).join(''),
-  IF: (c, a, b) => (c ? a : b),
-  PAD: (n, w) => pad(Number(n) || 0, Number(w) || 0),
-};
+// 与后端 backend/core/formula-engine.ts#truthy 同口径
+function truthyFormula(v: unknown): boolean {
+  return v !== false && v != null && v !== '' && v !== 0;
+}
 
-export const FORMULA_FUNCTIONS = Object.keys(FN);
+// 与后端 FORMAT / DATEFORMAT / DATEDIFF 同口径（预览所见即打印所得）
+function formatNum(v: unknown, fmt: string): string {
+  const n = Number(v);
+  if (isNaN(n)) return String(v);
+  if (/^0*\.\d+$/.test(fmt)) return n.toFixed(fmt.split('.')[1].length);
+  if (/^0+$/.test(fmt)) return n.toFixed(0).padStart(fmt.length, '0');
+  return String(n);
+}
+
+function formatDateStr(d: Date, fmt: string): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  const date = toDate(d);
+  return String(fmt ?? '')
+    .replace('YYYY', String(date.getFullYear()))
+    .replace('MM', p(date.getMonth() + 1))
+    .replace('DD', p(date.getDate()))
+    .replace('HH', p(date.getHours()))
+    .replace('mm', p(date.getMinutes()))
+    .replace('ss', p(date.getSeconds()));
+}
+
+function toDate(v: unknown): Date {
+  return v instanceof Date ? v : new Date(String(v ?? ''));
+}
+
+function diffDate(a: unknown, b: unknown, unit: unknown): number {
+  const ms = toDate(a).getTime() - toDate(b).getTime();
+  if (unit === 'hour') return ms / 3_600_000;
+  if (unit === 'minute') return ms / 60_000;
+  return ms / 86_400_000;
+}
+
+/**
+ * 函数表（白名单）——必须与 backend/core/formula-engine.ts#FUNCS 完全一致。
+ * 依赖 ctx 的函数（NOW/TODAY）用工厂注入；设计态用 ctx.now 保证预览可复现，
+ * 打印态后端用真实当前时间。两端函数名单与语义由 formula-parity 测试锁定。
+ */
+function makeFns(ctx: RenderContext): Record<string, Fn> {
+  return {
+    // 文本
+    LEN: (s) => String(s ?? '').length,
+    UPPER: (s) => String(s ?? '').toUpperCase(),
+    LOWER: (s) => String(s ?? '').toLowerCase(),
+    TRIM: (s) => String(s ?? '').trim(),
+    LEFT: (s, n) => String(s ?? '').slice(0, Number(n) || 0),
+    RIGHT: (s, n) => {
+      const k = Number(n) || 0;
+      return k <= 0 ? '' : String(s ?? '').slice(-k);
+    },
+    MID: (s, start, len) => String(s ?? '').substr((Number(start) || 1) - 1, Number(len) || 0),
+    REPLACE: (s, a, b) => String(s ?? '').split(String(a ?? '')).join(String(b ?? '')),
+    CONCAT: (...a) => a.map((x) => (x == null ? '' : String(x))).join(''),
+    // 数值
+    ROUND: (n, d = 0) => {
+      const p = 10 ** (Number(d) || 0);
+      return Math.round((Number(n) || 0) * p) / p;
+    },
+    FLOOR: (n) => Math.floor(Number(n) || 0),
+    CEIL: (n) => Math.ceil(Number(n) || 0),
+    ABS: (n) => Math.abs(Number(n) || 0),
+    INT: (n) => Math.trunc(Number(n) || 0),
+    NUM: (s) => {
+      const n = parseFloat(String(s ?? '').replace(/[^0-9.-]/g, ''));
+      return Number.isFinite(n) ? n : 0;
+    },
+    FORMAT: (v, fmt) => formatNum(v, String(fmt ?? '')),
+    PAD: (n, w) => pad(Number(n) || 0, Number(w) || 0),
+    PADLEFT: (s, n, ch = ' ') => String(s ?? '').padStart(Number(n) || 0, String(ch ?? ' ')),
+    PADRIGHT: (s, n, ch = ' ') => String(s ?? '').padEnd(Number(n) || 0, String(ch ?? ' ')),
+    // 逻辑
+    IF: (c, a, b) => (truthyFormula(c) ? a : b),
+    AND: (...a) => a.every(truthyFormula),
+    OR: (...a) => a.some(truthyFormula),
+    NOT: (c) => !truthyFormula(c),
+    ISEMPTY: (v) => v === undefined || v === null || String(v).length === 0,
+    // 日期
+    NOW: () => ctx.now || new Date(),
+    TODAY: () => {
+      const d = new Date((ctx.now || new Date()).getTime());
+      d.setHours(0, 0, 0, 0);
+      return d;
+    },
+    DATE: (y, m, d) => new Date(Number(y), Number(m) - 1, Number(d)),
+    DATEDIFF: (a, b, unit) => diffDate(a, b, unit),
+    DATEFORMAT: (d, fmt) => formatDateStr(d, String(fmt ?? '')),
+    // 条码校验位
+    CHECKSUM: (scheme, data) => checksum(String(scheme ?? ''), String(data ?? '')),
+  };
+}
+
+export const FORMULA_FUNCTIONS = Object.keys(makeFns({} as RenderContext));
+
+/** 公式内的 {{var}} 必须真实存在；系统占位符 @xxx 由 systemPlaceholder 兜底 */
+function hasVar(name: string, ctx: RenderContext): boolean {
+  if (name.startsWith('@')) return true;
+  if (ctx.row && Object.prototype.hasOwnProperty.call(ctx.row, name)) return true;
+  return ctx.vars.some((x) => x.name === name);
+}
 
 function evalExpr(src: string, ctx: RenderContext): unknown {
+  const fns = makeFns(ctx);
   // 变量替换：{{name}} → 字面量（数字或带引号字符串）
-  const text = String(src ?? '').replace(/\{\{\s*([A-Za-z_][\w.]*)\s*\}\}/g, (_, name: string) => {
+  const text = String(src ?? '').replace(/\{\{\s*([@A-Za-z_][^}]*?)\s*\}\}/g, (_, name: string) => {
+    if (!hasVar(name, ctx)) throw new FormulaError(`未定义变量: ${name}`);
     const v = varValue(name, ctx);
     if (typeof v === 'number' && Number.isFinite(v)) return `(${v})`;
     const s = v == null ? '' : String(v);
@@ -239,7 +396,7 @@ function evalExpr(src: string, ctx: RenderContext): unknown {
           }
         }
         expect(')');
-        const fn = FN[upper];
+        const fn = fns[upper];
         if (!fn) throw new FormulaError(`未知函数: ${t.v}`);
         return fn(...args);
       }
@@ -346,7 +503,7 @@ export function elementText(el: ElementData, ctx: RenderContext): string {
       return v == null ? (el.formula?.defaultOnError || '#公式错误') : v;
     }
     case 'serial': return serialValue(el.serial ?? {}, ctx);
-    case 'datetime': return fmtDateTime(el.datetime?.pattern, ctx.now);
+    case 'datetime': return fmtDateTime(el.datetime?.pattern, shiftDate(ctx.now, el.datetime?.offset ?? ''));
     case 'sysvar': return sysvarValue(el.sysvar?.key, ctx);
     default: return '';
   }
@@ -365,7 +522,7 @@ export interface PlaceholderPart {
 export function splitPlaceholders(raw: unknown, ctx: RenderContext): PlaceholderPart[] {
   const parts = String(raw ?? '').split(/(\{\{[^}]+\}\})/g);
   return parts.filter((p) => p !== '').map((p) => {
-    const m = /^\{\{\s*([A-Za-z_][\w.]*)\s*\}\}$/.exec(p);
+    const m = /^\{\{\s*([@A-Za-z_][^}]*?)\s*\}\}$/.exec(p);
     if (!m) return { text: p, placeholder: false, resolved: p };
     const name = m[1];
     const val = varValue(name, ctx);

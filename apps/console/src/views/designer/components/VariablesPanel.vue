@@ -53,7 +53,7 @@ const commit = inject(COMMIT_KEY, NO_COMMIT);
 const vars = computed(() => store.variables);
 
 /** 提示语里要出现真正的花括号，写在模板里会被当成插值，所以放这儿 */
-const HINT = '在文本/条码/单元格里写 {{变量名}} 即可绑定数据';
+const HINT = '写 {{变量名}} 绑定数据；打印日期可带格式与偏移，如 {{@printDate:YYYYMMDD|+3d}}（+3d 后天、-1M 上月、+1y 明年）';
 const ph = (name: string) => `占位：{{${name}}}`;
 
 function patch(v: VariableSpec, p: Partial<VariableSpec>) {

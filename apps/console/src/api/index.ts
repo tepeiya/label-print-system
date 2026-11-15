@@ -168,6 +168,29 @@ export const apiPrintCommands = (
   config?: Record<string, any>,
 ): Promise<PrintCommandsResult> => http.post('/print/commands', data, config);
 
+// ========== Printers ==========
+// 后端 PrinterController（backend/src/printer/printer.module.ts）：
+// GET /printers · POST /printers · GET /printers/:id · PUT /printers/:id ·
+// DELETE /printers/:id · POST /printers/:id/calibrate · /test · /test-print · /test-commands
+export const apiListPrinters = () => http.get('/printers');
+export const apiGetPrinter = (id: number) => http.get(`/printers/${id}`);
+export const apiCreatePrinter = (data: any) => http.post('/printers', data);
+export const apiUpdatePrinter = (id: number, data: any) => http.put(`/printers/${id}`, data);
+export const apiDeletePrinter = (id: number) => http.delete(`/printers/${id}`);
+export const apiCalibratePrinter = (id: number, data: any) => http.post(`/printers/${id}/calibrate`, data);
+export const apiTestPrinter = (id: number) => http.post(`/printers/${id}/test`);
+export const apiTestPrintPrinter = (id: number) => http.post(`/printers/${id}/test-print`);
+export const apiTestCommandsPrinter = (id: number, protocol?: string) =>
+  http.post(`/printers/${id}/test-commands`, protocol ? { protocol } : {});
+
+// ========== Print Job 提交 ==========
+// 后端 PrintController.create：{ templateId, printerId, rows, copies, params?, serialMap? }
+export const apiCreatePrintJob = (data: any) => http.post('/print/jobs', data);
+export const apiGetPrintJob = (id: number) => http.get(`/print/jobs/${id}`);
+export const apiCancelPrintJob = (id: number) => http.post(`/print/jobs/${id}/cancel`);
+export const apiRetryPrintJob = (id: number, seqNos?: number[]) =>
+  http.post(`/print/jobs/${id}/retry`, seqNos ? { seqNos } : {});
+
 // ========== Backups ==========
 export const apiListBackups = () => http.get('/backups');
 export const apiCreateBackup = (name?: string) => http.post('/backups', { name });

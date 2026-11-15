@@ -22,6 +22,8 @@ export const MENU_CATALOG: MenuNode[] = [
     module: 'print',
     children: [
       { key: 'print-jobs', name: '打印任务', icon: 'List', path: '/print-jobs', module: 'print', permission: 'print:job:read' },
+      { key: 'printers', name: '打印机', icon: 'Printer', path: '/printers', module: 'print' },
+      { key: 'print', name: '打印', icon: 'Promotion', path: '/print', module: 'print', permission: 'print:job:write' },
       { key: 'designer', name: '标签设计器', icon: 'Edit', path: '/designer', module: 'templates', permission: 'template:write' },
       { key: 'templates', name: '模板库', icon: 'Document', path: '/templates', module: 'templates', permission: 'template:read' },
     ],

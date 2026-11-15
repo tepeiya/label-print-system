@@ -123,6 +123,7 @@ export class PrintCommandsController {
         printDate: new Date().toISOString().slice(0, 10),
         printTime: new Date().toISOString().slice(11, 19),
         uuid: crypto.randomUUID(),
+        _now: new Date(),
       };
       const rendered = this.render.renderRow(tpl.elements ?? [], row, b.serialMap ?? {}, sysVars, i);
       if (protocol === 'zpl') {

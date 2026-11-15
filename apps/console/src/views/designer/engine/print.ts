@@ -151,11 +151,14 @@ export function buildPrintHtml(template: TemplateData, rows: Record<string, unkn
   const labelCount = data.length * copies;
   const labels: string[] = [];
   let serial = opts.serialStart ?? 1;
+  // 主流水号元素配置，供 @serial 占位引用（与 serial 元素显示一致；无则回退默认 5 位补零）
+  const mainSerial = (template.elements ?? []).find((e) => e.type === 'serial' && e.serial) as { serial?: any } | undefined;
 
   for (const row of data) {
     for (let c = 0; c < copies; c++) {
       const ctx = buildContext(template, row, {
         pageNo: labels.length + 1, pageTotal: labelCount, serialNo: serial, copies, uuid: opts.uuid,
+        _serialSpec: mainSerial?.serial,
       });
       const visible = template.elements
         .filter((e) => e.visible !== false)

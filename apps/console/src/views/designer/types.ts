@@ -113,7 +113,7 @@ export interface ElementData {
   font?: FontSpec;
   formula?: { expr?: string; defaultOnError?: string };
   serial?: { sequenceRef?: string; digits?: number; prefix?: string; suffix?: string };
-  datetime?: { pattern?: string; source?: string };
+  datetime?: { pattern?: string; source?: string; offset?: string };
   sysvar?: { key?: string };
 
   // 图形

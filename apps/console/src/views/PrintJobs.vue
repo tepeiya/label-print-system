@@ -2,7 +2,7 @@
   <div>
     <div class="page-header">
       <h2>🖨️ 打印任务</h2>
-      <el-tag type="info">最近 {{ days }} 天</el-tag>
+      <el-tag type="info">全部任务（按创建时间倒序）</el-tag>
     </div>
     <div class="card">
       <el-table :data="jobs" v-loading="loading" stripe>
@@ -45,8 +45,18 @@ function formatTime(t: string) { return t ? new Date(t).toLocaleString() : '-'; 
 
 async function load() {
   loading.value = true;
-  try { jobs.value = await apiListPrintJobs({ days: days.value }); }
-  finally { loading.value = false; }
+  try {
+    const res = await apiListPrintJobs({ days: days.value });
+    // 后端 list() 用 findAndCount 返回 [rows, total] 元组，这里取行数组；
+    // 若未来后端改成 { rows, total } 信封也兼容。
+    jobs.value = Array.isArray(res)
+      ? (res[0] ?? [])
+      : (Array.isArray((res as any)?.rows) ? (res as any).rows : (res ?? []));
+  } catch {
+    jobs.value = [];
+  } finally {
+    loading.value = false;
+  }
 }
 onMounted(load);
 </script>

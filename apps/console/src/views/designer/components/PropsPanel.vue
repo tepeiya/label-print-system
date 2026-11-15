@@ -298,6 +298,14 @@
             />
           </FField>
           <span class="f-hint">可用: YYYY 年 · MM 月 · DD 日 · HH 时 · mm 分 · ss 秒</span>
+          <FField label="日期偏移">
+            <FText
+              :model-value="dt!.offset ?? ''"
+              placeholder="如 +3d / -1M / +1y / +1M15d"
+              @update:model-value="setDatetime({ offset: $event })"
+            />
+          </FField>
+          <span class="f-hint">相对当前取值偏移：y 年 · M 月 · w 周 · d 天 · h 时 · m 分，可叠加如 +1M15d</span>
           <FRow>
             <FLabel text="取值" />
             <FSelect

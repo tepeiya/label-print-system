@@ -264,6 +264,7 @@ export function buildExportSvgs(input: ExportInput): SheetLayout {
       pageNo: i + 1, pageTotal: count,
       copyIndex: Math.floor(i / rows.length),
       uuid: `export-${i + 1}`,
+      _now: new Date(),
     };
     const rendered = render.renderRow(tpl.elements, row, input.serialMap ?? {}, sysVars, i);
     const one = renderLabelSvg(rendered, tpl.page, input.watermarkLayer);

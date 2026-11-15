@@ -147,19 +147,29 @@ class Parser {
 const FUNCS: Record<string, (...a: any[]) => any> = {
   LEN: (s: string) => String(s ?? '').length,
   LEFT: (s: string, n: number) => String(s ?? '').slice(0, n),
-  RIGHT: (s: string, n: number) => String(s ?? '').slice(-n),
-  MID: (s: string, a: number, b: number) => String(s ?? '').substring(a, a + b),
+  RIGHT: (s: string, n: number) => {
+    const k = Number(n) || 0;
+    return k <= 0 ? '' : String(s ?? '').slice(-k);
+  },
+  // 1-based 起始位（与 Excel / 前端预览口径一致）
+  MID: (s: string, a: number, b: number) => String(s ?? '').substr((Number(a) || 1) - 1, Number(b) || 0),
   UPPER: (s: string) => String(s ?? '').toUpperCase(),
   LOWER: (s: string) => String(s ?? '').toLowerCase(),
   TRIM: (s: string) => String(s ?? '').trim(),
-  REPLACE: (s: string, a: string, b: string) => String(s ?? '').split(a).join(b),
-  CONCAT: (...a: any[]) => a.map(String).join(''),
+  REPLACE: (s: string, a: string, b: string) => String(s ?? '').split(String(a ?? '')).join(String(b ?? '')),
+  CONCAT: (...a: any[]) => a.map((x) => (x == null ? '' : String(x))).join(''),
   FORMAT: (v: any, fmt: string) => formatNumber(v, fmt),
   ROUND: (v: number, d = 0) => { const p = 10 ** d; return Math.round(v * p) / p; },
   FLOOR: (v: number) => Math.floor(v),
   CEIL: (v: number) => Math.ceil(v),
   ABS: (v: number) => Math.abs(v),
   INT: (v: number) => Math.trunc(v),
+  // 前端历史函数，后端补齐以保证两端函数表完全一致
+  NUM: (s: any) => {
+    const n = parseFloat(String(s ?? '').replace(/[^0-9.-]/g, ''));
+    return Number.isFinite(n) ? n : 0;
+  },
+  PAD: (n: any, w: number) => String(Number(n) || 0).padStart(Number(w) || 0, '0'),
   NOW: () => new Date(),
   TODAY: () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; },
   DATE: (y: number, m: number, d: number) => new Date(y, m - 1, d),
@@ -175,6 +185,10 @@ const FUNCS: Record<string, (...a: any[]) => any> = {
   // 条码校验位（接 checksum.ts）
   CHECKSUM: (scheme: string, data: string) => checksum(String(scheme), String(data)),
 };
+
+/** 对外暴露函数名单，供前后端一致性测试核对 */
+export const FORMULA_FUNCTIONS = Object.keys(FUNCS).sort();
+
 function truthy(v: any) { return v !== false && v != null && v !== '' && v !== 0; }
 
 // ----------------------------- 求值 -----------------------------
@@ -288,18 +302,22 @@ function formatNumber(v: any, fmt: string): string {
   if (/^0+$/.test(fmt)) { const len = fmt.length; return n.toFixed(0).padStart(len, '0'); }
   return String(n);
 }
+function toDate(v: any): Date {
+  return v instanceof Date ? v : new Date(String(v ?? ''));
+}
 function formatDate(d: Date, fmt: string): string {
   const p = (n: number) => String(n).padStart(2, '0');
-  return fmt
-    .replace('YYYY', String(d.getFullYear()))
-    .replace('MM', p(d.getMonth() + 1))
-    .replace('DD', p(d.getDate()))
-    .replace('HH', p(d.getHours()))
-    .replace('mm', p(d.getMinutes()))
-    .replace('ss', p(d.getSeconds()));
+  const date = toDate(d);
+  return String(fmt ?? '')
+    .replace('YYYY', String(date.getFullYear()))
+    .replace('MM', p(date.getMonth() + 1))
+    .replace('DD', p(date.getDate()))
+    .replace('HH', p(date.getHours()))
+    .replace('mm', p(date.getMinutes()))
+    .replace('ss', p(date.getSeconds()));
 }
 function diffDate(a: Date, b: Date, unit: string): number {
-  const ms = a.getTime() - b.getTime();
+  const ms = toDate(a).getTime() - toDate(b).getTime();
   const day = 86_400_000;
   if (unit === 'hour') return ms / 3_600_000;
   if (unit === 'minute') return ms / 60_000;
