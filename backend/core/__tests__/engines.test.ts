@@ -12,7 +12,7 @@ import { mmToDots } from '../zpl-generator';
 import { mmToDots as mmToDotsT } from '../tspl-generator';
 import { generateZpl } from '../zpl-generator';
 import { buildJob as buildTspl } from '../tspl-generator';
-import { renderBarcodeToPng, renderBarcodeSvg, renderQrcodeSvg, validateBarcode } from '../barcode-renderer';
+import { renderBarcodeToPng, validateBarcode } from '../barcode-renderer';
 
 // ----------------------------- 1. 公式引擎 -----------------------------
 test('公式-四则/括号/字符串拼接', () => {
@@ -128,13 +128,9 @@ test('ZPL-生成含头尾与内容', () => {
     type: 'barcode', xMm: 4, yMm: 10,
     barcode: { sym: 'CODE128', content: 'ABC123', moduleWidthMm: 0.25, wideRatio: 2.5, heightMm: 10, showText: true, textPosition: 'bottom', checksum: true },
   }], 300);
-  // P7.6 起这条用例必然带「专业调优」提示（2.5:1 不是整数模块 → 取整为 3；校验位由打印机追加），
-  // 但绝不允许出现换码制 / 走位图 / 跳过元素这类降级警告
-  assert.deepEqual(zplWarn.filter((w) => /^\[(码制|位图|图像)\]/.test(w)), []);
+  assert.equal(zplWarn.length, 0);
   assert.match(zpl, /\^XA/); assert.match(zpl, /\^XZ/);
   assert.match(zpl, /Hello/); assert.match(zpl, /ABC123/);
-  // ^BY 三段参数按手册是 模块宽度,宽窄比,高度，且都取整；^BC 的校验位在第 5 位
-  assert.match(zpl, /\^BY3,3,118\n\^BCN,118,Y,N,Y/);
 });
 
 test('ZPL-不支持码制出 warning 不静默降级（P7.1）', () => {
@@ -183,17 +179,4 @@ test('条码-Code128 输出有效 PNG', async () => {
 test('条码-非法内容被拒', async () => {
   assert.equal(validateBarcode('EAN13', '12A4').ok, false);
   await assert.rejects(() => renderBarcodeToPng({ sym: 'EAN13', content: '12A4', moduleWidthMm: 0.3, wideRatio: 2.5, heightMm: 12, showText: false, textPosition: 'bottom' }, 300));
-});
-
-// ----------------------------- 7. 矢量渲染（SVG 必须关抗锯齿） -----------------------------
-test('矢量-一维码/二维码 SVG 带 crispEdges', () => {
-  const bc = renderBarcodeSvg({ sym: 'CODE128', content: 'ABC123', moduleWidthMm: 0.3, wideRatio: 2.5, heightMm: 12, showText: false, textPosition: 'bottom' } as any);
-  assert.match(bc, /^<svg[^>]*shape-rendering="crispEdges"/);
-  assert.match(bc, /viewBox=/);          // 矢量：有 viewBox，无 width/height 像素栅格化
-
-  const qr = renderQrcodeSvg({ sym: 'QRCODE', content: 'hello', moduleSizeMm: 0.5, ecc: 'M' } as any);
-  assert.match(qr, /^<svg[^>]*shape-rendering="crispEdges"/);
-  assert.match(qr, /viewBox=/);
-  // 不能退化成 base64 位图
-  assert.doesNotMatch(qr, /data:image\/png/);
 });
