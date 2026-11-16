@@ -67,7 +67,7 @@ const NAME_RULES: { re: RegExp; name: string; label: string }[] = [
 const DATE_RE = /\b((?:19|20)\d{2})[-/.](0?[1-9]|1[0-2])[-/.](0?[1-9]|[12]\d|3[01])\b|\b(0?[1-9]|[12]\d|3[01])[-/.](0?[1-9]|1[0-2])[-/.]((?:19|20)\d{2})\b/;
 const TIME_RE = /^\s*\d{1,2}:\d{2}(:\d{2})?\s*$/;
 const KV_RE = /^(.{1,24}?)[:：]\s*(.+)$/;
-const PLACEHOLDER_RE = /\{\{\s*([A-Za-z_][\w.]*)\s*\}\}/;
+const PLACEHOLDER_RE = /\{\{\s*([^{}]+?)\s*\}\}/;
 
 /** 安全变量名 */
 function safeName(raw: string): string {

@@ -30,6 +30,14 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'AI 生成模板', icon: 'MagicStick', module: 'ai', permission: 'ai:generate' } },
       { path: 'datasource', component: () => import('@/views/DataSources.vue'),
         meta: { title: '数据源管理', icon: 'Coin', module: 'datasource', permission: 'datasource:read' } },
+      // 库存与出入库：与 backend/src/saas/menu.catalog.ts 的 '/inventory' 对齐。
+      // 读权限进得来，写入按钮在页面内按 inventory:stock:adjust / transfer 再判一次。
+      { path: 'inventory', component: () => import('@/views/Inventory.vue'),
+        meta: { title: '库存与出入库', icon: 'Box', module: 'inventory', permission: 'inventory:stock:read' } },
+      // 基础资料：产品/仓库/库位。后端 Controller 的模块门是 masterdata，
+      // 但它是 inventory 的依赖（module-deps 会自动展开），菜单与路由用 inventory 保持一致。
+      { path: 'masterdata', component: () => import('@/views/Masterdata.vue'),
+        meta: { title: '基础资料', icon: 'Files', module: 'inventory', permission: 'masterdata:item:read' } },
       {
         path: 'users',
         component: () => import('@/views/UserManagement.vue'),

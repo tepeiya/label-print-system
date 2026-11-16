@@ -14,7 +14,7 @@ export { AgentClient, AgentToken, AgentApproval, ToolIdempotency, AgentPrompt } 
 // P6.4 白标实体（表 tenant_domains 建在 P0，补列见 scripts/saas_p6_branding.sql）
 export { TenantDomain } from '../saas/branding/tenant-domain.entity';
 // P4 库存最小读模型实体
-export { Warehouse, Material, StockBatch, Bom, BomItem } from '../inventory/inventory.entity';
+export { Warehouse, WarehouseLocation, ProductGroup, Material, StockBatch, StockMove, Bom, BomItem } from '../inventory/inventory.entity';
 // P7 / B2.5 站内信（DDL: scripts/saas_p7_notifications.sql）
 export { Notification } from '../notify/notification.entity';
 // P8.1 自动化触发器（DDL: scripts/saas_p8_triggers.sql）

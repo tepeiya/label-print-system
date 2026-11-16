@@ -16,6 +16,36 @@ export class Warehouse {
   @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
 }
 
+/** 仓库库位（DDL: scripts/inventory_masterdata.sql） */
+@Entity('warehouse_locations')
+@Index('ix_wlocations_warehouse', ['tenantId', 'warehouseId'])
+export class WarehouseLocation {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ name: 'tenant_id', type: 'bigint' }) tenantId: number;
+  @Column({ name: 'warehouse_id', type: 'bigint' }) warehouseId: number;
+  @Column({ length: 40 }) code: string;
+  @Column({ length: 80 }) name: string;
+  @Column({ length: 40, type: 'varchar', nullable: true }) zone: string | null;
+  @Column({ default: true }) active: boolean;
+  @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
+}
+
+/** 产品分组（品牌 / 供应商 / 自定义，DDL: scripts/inventory_product_groups.sql） */
+@Entity('product_groups')
+@Index('ix_product_groups_tenant', ['tenantId', 'type'])
+export class ProductGroup {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ name: 'tenant_id', type: 'bigint' }) tenantId: number;
+  @Column({ length: 40 }) code: string;
+  @Column({ length: 120 }) name: string;
+  // 显式 type：字面量联合反射成 Object 会让 TypeORM 启动失败
+  @Column({ type: 'varchar', length: 20, default: 'custom' }) type: 'brand' | 'supplier' | 'custom';
+  @Column({ name: 'default_warehouse_id', type: 'bigint', nullable: true }) defaultWarehouseId: number | null;
+  @Column({ name: 'default_location_id', type: 'bigint', nullable: true }) defaultLocationId: number | null;
+  @Column({ default: true }) active: boolean;
+  @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
+}
+
 @Entity('materials')
 @Index('ix_materials_tenant', ['tenantId'])
 export class Material {
@@ -28,6 +58,12 @@ export class Material {
   @Column({ length: 20, default: '件' }) unit: string;
   @Column({ length: 60, type: 'varchar', nullable: true }) category: string | null;
   @Column({ name: 'safety_stock', type: 'numeric', precision: 14, scale: 3, default: 0 }) safetyStock: string;
+  @Column({ name: 'template_id', type: 'bigint', nullable: true }) templateId: number | null;
+  @Column({ name: 'group_id', type: 'bigint', nullable: true }) groupId: number | null;
+  @Column({ name: 'auto_print', default: false }) autoPrint: boolean;
+  @Column({ name: 'printer_id', type: 'bigint', nullable: true }) printerId: number | null;
+  @Column({ name: 'default_warehouse_id', type: 'bigint', nullable: true }) defaultWarehouseId: number | null;
+  @Column({ name: 'default_location_id', type: 'bigint', nullable: true }) defaultLocationId: number | null;
   @Column({ default: true }) active: boolean;
   @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
 }
@@ -40,12 +76,35 @@ export class StockBatch {
   @Column({ name: 'material_id', type: 'bigint' }) materialId: number;
   @Column({ name: 'warehouse_id', type: 'bigint' }) warehouseId: number;
   @Column({ name: 'batch_no', length: 60 }) batchNo: string;
+  @Column({ name: 'location_id', type: 'bigint', nullable: true }) locationId: number | null;
   @Column({ type: 'numeric', precision: 14, scale: 3, default: 0 }) qty: string;
   @Column({ name: 'unit_cost_cents', type: 'bigint', nullable: true }) unitCostCents: string | null;
   @Column({ name: 'produced_at', type: 'date', nullable: true }) producedAt: string | null;
   @Column({ name: 'expires_at', type: 'date', nullable: true }) expiresAt: string | null;
   @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
   @UpdateDateColumn({ name: 'updated_at' }) updatedAt: Date;
+}
+
+/** 出入库台账：每次库存变动按批次落一行（DDL: scripts/inventory_stock_moves.sql） */
+@Entity('stock_moves')
+@Index('ix_stock_moves_tenant_time', ['tenantId', 'createdAt'])
+export class StockMove {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ name: 'tenant_id', type: 'bigint' }) tenantId: number;
+  @Column({ name: 'move_no', length: 40 }) moveNo: string;
+  // 显式 type：字面量联合反射成 Object 会让 TypeORM 启动失败（同 Bom.status）
+  @Column({ type: 'varchar', length: 10 }) kind: 'in' | 'out' | 'transfer';
+  @Column({ name: 'material_id', type: 'bigint' }) materialId: number;
+  @Column({ name: 'warehouse_id', type: 'bigint' }) warehouseId: number;
+  @Column({ name: 'to_warehouse_id', type: 'bigint', nullable: true }) toWarehouseId: number | null;
+  @Column({ name: 'batch_no', length: 60 }) batchNo: string;
+  @Column({ name: 'location_id', type: 'bigint', nullable: true }) locationId: number | null;
+  @Column({ type: 'numeric', precision: 14, scale: 3 }) qty: string;
+  @Column({ name: 'before_qty', type: 'numeric', precision: 14, scale: 3 }) beforeQty: string;
+  @Column({ name: 'after_qty', type: 'numeric', precision: 14, scale: 3 }) afterQty: string;
+  @Column({ length: 200 }) reason: string;
+  @Column({ length: 80 }) operator: string;
+  @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
 }
 
 @Entity('boms')

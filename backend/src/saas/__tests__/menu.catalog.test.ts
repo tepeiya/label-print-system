@@ -11,6 +11,10 @@ import { buildMenus, MENU_CATALOG } from '../menu.catalog';
 const keys = (tree: any[]) => tree.map((n) => n.key);
 const childKeys = (tree: any[], key: string) => keys(tree.find((n) => n.key === key)?.children ?? []);
 
+// print 分组下的两个「无门槛」叶子，断言里必须算上：
+//   printers —— 目录里特意不挂 permission（docs/10 §11.12.1 保持 operator 原有能力），只认模块门；
+//   print    —— 打印页，permission=print:job:write，只有通配（print:* / *）或显式授权才出现。
+
 test('订阅页永远可见，哪怕没有任何模块和权限', () => {
   assert.deepEqual(keys(buildMenus([], [])), ['subscription']);
 });
@@ -23,7 +27,7 @@ test('模块订阅 + 权限点都齐时，返回完整菜单', () => {
   ];
   const tree = buildMenus(modules, permissions);
   assert.deepEqual(keys(tree), ['dashboard', 'print', 'data', 'system', 'subscription']);
-  assert.deepEqual(childKeys(tree, 'print'), ['print-jobs', 'designer', 'templates']);
+  assert.deepEqual(childKeys(tree, 'print'), ['print-jobs', 'printers', 'designer', 'templates']);
   assert.deepEqual(childKeys(tree, 'system'), ['users', 'audit', 'backups']);
 });
 
@@ -42,29 +46,29 @@ test('AI 入口：订阅 ai 且有 ai:generate 才出现；只有模块没有权
 test('只订阅 print + print:job:read 时，设计器和模板库不可见，数据源/系统管理整组消失', () => {
   const tree = buildMenus(['print'], ['print:job:read']);
   assert.deepEqual(keys(tree), ['print', 'subscription']);
-  assert.deepEqual(childKeys(tree, 'print'), ['print-jobs']);
+  assert.deepEqual(childKeys(tree, 'print'), ['print-jobs', 'printers']);
 });
 
 test('权限点决定叶子：有 templates 模块但没有 template:write 时设计器被过滤', () => {
   const tree = buildMenus(['print', 'templates'], ['template:read']);
-  assert.deepEqual(childKeys(tree, 'print'), ['templates']);
+  assert.deepEqual(childKeys(tree, 'print'), ['printers', 'templates']);
 });
 
 test('模块门决定叶子：有 template:read 权限但未订阅 templates 模块时仍不可见（模块是门，权限是钥匙）', () => {
   const tree = buildMenus(['print'], ['print:job:read', 'template:read']);
-  assert.deepEqual(childKeys(tree, 'print'), ['print-jobs']);
+  assert.deepEqual(childKeys(tree, 'print'), ['print-jobs', 'printers']);
 });
 
 test('通配权限 print:* 放行该模块下的读入口', () => {
   const tree = buildMenus(['print'], ['print:*']);
   assert.deepEqual(keys(tree), ['dashboard', 'print', 'subscription']);
-  assert.deepEqual(childKeys(tree, 'print'), ['print-jobs']);
+  assert.deepEqual(childKeys(tree, 'print'), ['print-jobs', 'printers', 'print']);
 });
 
 test('* 全局通配：权限维度假设成立，但模块门仍然限制未订阅的模块', () => {
   const tree = buildMenus(['print'], ['*']);
   assert.deepEqual(keys(tree), ['dashboard', 'print', 'subscription']);
-  assert.deepEqual(childKeys(tree, 'print'), ['print-jobs']);
+  assert.deepEqual(childKeys(tree, 'print'), ['print-jobs', 'printers', 'print']);
 });
 
 test('叶子节点不带 children 字段，分组节点保留 children', () => {

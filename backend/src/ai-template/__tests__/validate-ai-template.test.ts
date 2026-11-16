@@ -101,12 +101,13 @@ test('一维码：完全未知的码制回落 CODE128 并计入 fixedCount', () 
   assert.ok(r.fixedCount >= 1);
 });
 
-test('非法变量名替换为 varN，重名变量追加序号', () => {
+test('非法变量名替换为 varN，中文名保留，重名变量追加序号', () => {
   const r = run({
     variables: [{ name: '1abc' }, { name: '好' }, { name: 'sku' }, { name: 'sku' }],
     elements: [],
   });
-  assert.deepEqual(r.template.variables.map((v: any) => v.name), ['var1', 'var2', 'sku', 'sku2']);
+  // 数字开头的仍非法 → var1；中文变量名现在合法，应原样保留
+  assert.deepEqual(r.template.variables.map((v: any) => v.name), ['var1', '好', 'sku', 'sku2']);
 });
 
 test('未声明的 {{var}} 自动补变量并给出 warning', () => {

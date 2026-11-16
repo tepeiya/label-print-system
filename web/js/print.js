@@ -179,7 +179,7 @@ function templateVarNames() {
   const t = store.state.template;
   const out = new Set((t.variables ?? []).map((v) => v.name).filter(Boolean));
   const walk = (s) => {
-    String(s ?? '').replace(/\{\{\s*([A-Za-z_][\w.]*)\s*\}\}/g, (_, n) => { out.add(n); return ''; });
+    String(s ?? '').replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, n) => { out.add(n); return ''; });
   };
   for (const el of t.elements ?? []) {
     walk(el.text);

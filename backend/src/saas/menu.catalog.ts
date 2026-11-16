@@ -37,6 +37,20 @@ export const MENU_CATALOG: MenuNode[] = [
       { key: 'datasource', name: '数据源管理', icon: 'Coin', path: '/datasource', module: 'datasource', permission: 'datasource:read' },
     ],
   },
+  // 库存/出入库：模块门 inventory + 三段式权限点（P0/P4 已种库）。
+  // 读入口用 inventory:stock:read，写入按钮在页面内另按 adjust/transfer 权限点控制。
+  {
+    key: 'inventory',
+    name: '库存管理',
+    icon: 'Box',
+    module: 'inventory',
+    children: [
+      { key: 'inventory-stock', name: '库存与出入库', icon: 'Box', path: '/inventory', module: 'inventory', permission: 'inventory:stock:read' },
+      // 基础资料的后端模块门是 masterdata（inventory 的依赖会自动展开），
+      // 菜单侧沿用 inventory 模块门，避免出现「有库存却看不到基础资料」。
+      { key: 'masterdata', name: '基础资料', icon: 'Files', path: '/masterdata', module: 'inventory', permission: 'masterdata:item:read' },
+    ],
+  },
   // AI 工作台：BASIC 也含 ai 模块（历史种子，见 docs/10 §10.15.5 第 1 条），入口权限点用 ai:generate
   { key: 'ai', name: 'AI 生成模板', icon: 'MagicStick', path: '/ai', module: 'ai', permission: 'ai:generate' },
   // 注：serial 模块已订阅且后端有 @RequireModule('serial')，但 serial-sequences 只有

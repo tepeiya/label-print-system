@@ -945,9 +945,9 @@ function variablesView() {
   });
 
   wrap.appendChild(btn('＋ 新增变量', () => {
-    const n = prompt('变量名（英文/数字，如 orderNo）', 'field' + (vars.length + 1));
+    const n = prompt('变量名（支持中文，如 产品名称）', 'field' + (vars.length + 1));
     if (!n) return;
-    if (!/^[A-Za-z_][\w]*$/.test(n)) { alert('变量名只能由字母、数字、下划线组成，且以字母或下划线开头'); return; }
+    if (!/^[^\s{}@0-9][^\s{}]*$/.test(n)) { alert('变量名不能含空格、花括号，不能以数字或 @ 开头；支持中文'); return; }
     if (vars.some((v) => v.name === n)) { alert('变量已存在'); return; }
     commit(() => { vars.push({ name: n, type: 'text', label: n, defaultValue: '' }); });
   }));

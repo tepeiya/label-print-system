@@ -84,6 +84,8 @@ export interface VariableSpec {
   name: string;
   type?: string;
   label?: string;
+  /** 计算变量：填公式后由数据行实时求值；与 defaultValue 互斥（有 expr 时 defaultValue 仅作错误兜底） */
+  expr?: string;
   defaultValue?: string | number | null;
   required?: boolean;
   unique?: boolean;

@@ -29,8 +29,12 @@ export function buildContext(
   row: Record<string, unknown> = {},
   extra: Partial<Pick<RenderContext, 'pageNo' | 'pageTotal' | 'copies' | 'serialNo' | 'now' | 'uuid' | 'printerName' | 'tenantName' | 'printUser' | '_serialSpec'>> = {},
 ): RenderContext {
+  const now = extra.now ?? new Date();
+  // 计算变量在本行数据之上按依赖顺序求值，结果并入 row，
+  // 使 {{amount}} 这类引用走 varValue 的 row 优先分支（普通变量/系统占位符语义不变）
+  const { row: resolvedRow } = resolveComputedVars(template.variables, row || {}, now);
   return {
-    row: row || {},
+    row: resolvedRow,
     vars: template.variables ?? [],
     pageNo: extra.pageNo ?? 1,
     pageTotal: extra.pageTotal ?? 1,
@@ -43,6 +47,93 @@ export function buildContext(
     uuid: extra.uuid,
     _serialSpec: extra._serialSpec,
   };
+}
+
+// ---------------------------------------------------------------------------
+// 计算变量：VariableSpec.expr 有值时，按依赖顺序求值后并入 row，
+// 让 {{amount}} 走 row 优先分支。环检测与值归一化口径与后端 computed-vars.ts 一致。
+// ---------------------------------------------------------------------------
+
+export interface ComputedVarsResult {
+  row: Record<string, unknown>;
+  cycle: string[];
+}
+
+function computedDeps(expr: string): string[] {
+  const out = new Set<string>();
+  const re = /\{\{\s*([^}]+?)\s*\}\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(String(expr ?? '')))) out.add(m[1].trim());
+  return [...out];
+}
+
+/** 三色 DFS 环检测，算法与后端 formula-engine.ts#detectCircularDeps 相同 */
+export function detectComputedCycle(fields: Record<string, string>): string[] {
+  const graph: Record<string, string[]> = {};
+  for (const [name, expr] of Object.entries(fields)) graph[name] = computedDeps(expr);
+  const WHITE = 0, GRAY = 1, BLACK = 2;
+  const color: Record<string, number> = {};
+  const stack: string[] = [];
+  let cycle: string[] = [];
+  const dfs = (n: string): boolean => {
+    color[n] = GRAY; stack.push(n);
+    for (const dep of graph[n] || []) {
+      if (color[dep] === GRAY) { cycle = stack.slice(stack.indexOf(dep)); return true; }
+      if ((color[dep] ?? WHITE) === WHITE && dfs(dep)) return true;
+    }
+    color[n] = BLACK; stack.pop();
+    return false;
+  };
+  for (const n of Object.keys(graph)) color[n] = WHITE;
+  for (const n of Object.keys(graph)) {
+    if (color[n] === WHITE && dfs(n)) break;
+  }
+  return cycle;
+}
+
+/**
+ * 求值所有计算变量：返回并入结果的新 row，不修改入参。
+ * 依赖其他计算变量时按拓扑序求值；环上的变量用 defaultValue 兜底。
+ */
+export function resolveComputedVars(
+  variables: Array<{ name: string; expr?: string; defaultValue?: string | number | null }> | undefined,
+  row: Record<string, unknown>,
+  now: Date,
+): ComputedVarsResult {
+  const fields: Record<string, string> = {};
+  for (const v of variables ?? []) {
+    if (v.expr && String(v.expr).trim()) fields[v.name] = String(v.expr);
+  }
+  const names = Object.keys(fields);
+  if (!names.length) return { row, cycle: [] };
+
+  const cycle = detectComputedCycle(fields);
+  const working: Record<string, unknown> = { ...row };
+  const resolved = new Set<string>();
+
+  // 拓扑序：每轮取「依赖的计算变量都已解析」的项；剩余为环或缺失依赖
+  let pending = new Set(names);
+  while (pending.size) {
+    let progressed = false;
+    for (const name of [...pending]) {
+      const deps = computedDeps(fields[name]).filter((d) => names.includes(d) && d !== name);
+      if (deps.some((d) => pending.has(d))) continue;
+      const value = evalFormula(fields[name], {
+        row: working, vars: variables ?? [], pageNo: 1, pageTotal: 1,
+        copies: 1, serialNo: 1, now,
+      });
+      working[name] = value ?? (variables ?? []).find((v) => v.name === name)?.defaultValue ?? '';
+      pending.delete(name);
+      resolved.add(name);
+      progressed = true;
+    }
+    if (!progressed) break;
+  }
+  // 环上/无法解析的变量：用示例值兜底，保证不阻断整单
+  for (const name of pending) {
+    working[name] = (variables ?? []).find((v) => v.name === name)?.defaultValue ?? '';
+  }
+  return { row: working, cycle };
 }
 
 function varValue(name: string, ctx: RenderContext): unknown {
@@ -93,7 +184,7 @@ export function sampleRowOf(template: TemplateData): Record<string, unknown> {
 
 /** 文本插值：{{var}} → 值 */
 export function interpolate(str: unknown, ctx: RenderContext): string {
-  return String(str ?? '').replace(/\{\{\s*([@A-Za-z_][^}]*?)\s*\}\}/g, (_, name: string) => {
+  return String(str ?? '').replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, name: string) => {
     const v = varValue(name, ctx);
     return v == null ? '' : String(v);
   });
@@ -348,7 +439,7 @@ function hasVar(name: string, ctx: RenderContext): boolean {
 function evalExpr(src: string, ctx: RenderContext): unknown {
   const fns = makeFns(ctx);
   // 变量替换：{{name}} → 字面量（数字或带引号字符串）
-  const text = String(src ?? '').replace(/\{\{\s*([@A-Za-z_][^}]*?)\s*\}\}/g, (_, name: string) => {
+  const text = String(src ?? '').replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, name: string) => {
     if (!hasVar(name, ctx)) throw new FormulaError(`未定义变量: ${name}`);
     const v = varValue(name, ctx);
     if (typeof v === 'number' && Number.isFinite(v)) return `(${v})`;
@@ -522,7 +613,7 @@ export interface PlaceholderPart {
 export function splitPlaceholders(raw: unknown, ctx: RenderContext): PlaceholderPart[] {
   const parts = String(raw ?? '').split(/(\{\{[^}]+\}\})/g);
   return parts.filter((p) => p !== '').map((p) => {
-    const m = /^\{\{\s*([@A-Za-z_][^}]*?)\s*\}\}$/.exec(p);
+    const m = /^\{\{\s*([^{}]+?)\s*\}\}$/.exec(p);
     if (!m) return { text: p, placeholder: false, resolved: p };
     const name = m[1];
     const val = varValue(name, ctx);

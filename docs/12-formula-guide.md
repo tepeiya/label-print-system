@@ -20,6 +20,8 @@
 - `{{@pageNo}}`、`{{@pageTotal}}` — 页码系统变量
 - `{{@printDate}}` — 打印日期，可带格式与偏移，如 `{{@printDate:YYYYMMDD|+3d}}`
 
+一处计算、多处引用？给变量填「计算公式」即可，见第七节。
+
 ## 三、语法
 
 | 类别 | 写法 |
@@ -98,6 +100,19 @@
 - 打印态：失败元素显示 `{{ERROR}}`，不会中断整张打印单。
 - 常见错误：未定义变量、未知函数、括号不匹配、除零。
 
-## 七、前后端一致性
+## 七、计算变量（把公式结果当变量用）
 
-设计态引擎在 `apps/console/src/views/designer/engine/context.ts`，打印引擎在 `backend/core/formula-engine.ts`。两者的函数表与语义完全一致，由 `backend/core/__tests__/formula-parity.test.ts` 用 37 条表达式逐条比对锁定。新增或修改函数时，必须同时更新两端并让该测试通过，否则会出现「预览对、打印错」。
+在「变量」面板给变量填写「计算公式」，它就成为计算变量：按数据行实时求值，结果可直接用 `{{变量名}}` 在文本、条码、其他公式里引用——一处计算、多处复用。
+
+![变量面板](images/formula/variables-panel.png)
+
+例：定义 `price`、`qty` 后新增变量 `amount`，公式填 `{{price}} * {{qty}}`。此后写 `{{amount}}` 即得金额，无需在每个公式元素里重复乘式。
+
+- 计算变量可引用其它计算变量（如 `discount` = `{{amount}} * 0.9`），系统按依赖顺序求值；打印时每行重算。
+- 有公式时「示例值」变为出错兜底值：求值失败或依赖成环时显示该值，不阻断整单。
+- 变量面板实时提示循环依赖（如 `a = {{b}}+1`、`b = {{a}}+1`），环上变量回落到兜底值。
+- 普通变量（不填公式）行为不变。
+
+## 八、前后端一致性
+
+设计态引擎在 `apps/console/src/views/designer/engine/context.ts`，打印引擎在 `backend/core/formula-engine.ts`，计算变量求值分别在 `context.ts#resolveComputedVars` 与 `backend/core/computed-vars.ts`。两端的函数表、求值语义与计算变量结果由 `backend/core/__tests__/formula-parity.test.ts` 用 37 条表达式及计算变量用例逐条比对锁定。新增或修改函数、改动计算变量求值时，必须同时更新两端并让该测试通过，否则会出现「预览对、打印错」。

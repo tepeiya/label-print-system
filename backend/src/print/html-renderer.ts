@@ -4,6 +4,7 @@
 
 import { RenderService } from './render.service';
 import { renderBarcodeSvg, renderQrcodeSvg } from '../../core/barcode-renderer';
+import type { ComputedVariable } from '../../core/computed-vars';
 
 /** 让 bwip SVG 拉伸填满容器（一维码按元素宽高铺满） */
 function svgToFill(svg: string): string {
@@ -29,6 +30,7 @@ export interface HtmlRenderInput {
     schemaVersion?: number;
     page: { widthMm: number; heightMm: number; dpi: number; orientation?: number };
     elements: any[];
+    variables?: ComputedVariable[];
   };
   rows?: Record<string, any>[];
   copies?: number;
@@ -72,7 +74,7 @@ export function renderPrintHtml(input: HtmlRenderInput): HtmlRenderOutput {
       _now: new Date(),
     };
     const serials: Record<string, string[]> = {}; // 预览不预分配，留空
-    const rendered = render.renderRow(templateContent.elements, row, serials, sysVars, copyIndex);
+    const rendered = render.renderRow(templateContent.elements, row, serials, sysVars, copyIndex, templateContent.variables ?? []);
     labels.push(renderedToLabel(rendered, mmToPx, watermarkHtml));
   }
 

@@ -125,7 +125,7 @@ export class PrintCommandsController {
         uuid: crypto.randomUUID(),
         _now: new Date(),
       };
-      const rendered = this.render.renderRow(tpl.elements ?? [], row, b.serialMap ?? {}, sysVars, i);
+      const rendered = this.render.renderRow(tpl.elements ?? [], row, b.serialMap ?? {}, sysVars, i, tpl.variables ?? []);
       if (protocol === 'zpl') {
         const zplOut = generateZpl(this.render.toZplElements(rendered), dpi);
         genWarnings.push(...zplOut.warnings);

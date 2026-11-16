@@ -32,7 +32,7 @@ function varValue(name, ctx) {
 
 /** 文本插值：{{var}} → 值 */
 export function interpolate(str, ctx) {
-  return String(str ?? '').replace(/\{\{\s*([A-Za-z_][\w.]*)\s*\}\}/g, (_, name) => {
+  return String(str ?? '').replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, name) => {
     const v = varValue(name, ctx);
     return v == null ? '' : String(v);
   });
@@ -159,7 +159,7 @@ const FN = {
 
 function evalExpr(src, ctx) {
   // 变量替换：{{name}} → 字面量（数字或带引号字符串）
-  const text = String(src ?? '').replace(/\{\{\s*([A-Za-z_][\w.]*)\s*\}\}/g, (_, name) => {
+  const text = String(src ?? '').replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, name) => {
     const v = varValue(name, ctx);
     if (typeof v === 'number' && Number.isFinite(v)) return `(${v})`;
     const s = v == null ? '' : String(v);

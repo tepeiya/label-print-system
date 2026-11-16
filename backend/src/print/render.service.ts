@@ -2,6 +2,7 @@
 // 注：不依赖 @nestjs/common 装饰器，既可在 NestJS 中作为 provider，也可独立单测。
 // 元素类型在后端本地定义，避免跨 rootDir 引用前端代码。
 import { safeEval } from '../../core/formula-engine';
+import { resolveComputedVars, type ComputedVariable } from '../../core/computed-vars';
 
 interface RenderElement {
   id: string; type: string; text?: string; font?: any;
@@ -18,9 +19,11 @@ export class RenderService {
    * @param row 数据行（变量来源：手动>导入>默认）
    * @param serials 预分配流水号（按元素 id 索引的值数组）
    * @param sysVars 系统变量（页码/打印人/UUID…）
+   * @param variables 模板变量定义；含 expr 的计算变量会在本行事先按依赖顺序求值并入 ctx
    */
-  renderRow(elements: RenderElement[], row: Record<string, any>, serials: Record<string, string[]>, sysVars: Record<string, any>, rowIndex = 0): RenderElement[] {
-    const ctx = { ...row, ...sysVars };
+  renderRow(elements: RenderElement[], row: Record<string, any>, serials: Record<string, string[]>, sysVars: Record<string, any>, rowIndex = 0, variables?: ComputedVariable[]): RenderElement[] {
+    const computed = resolveComputedVars(variables, row);
+    const ctx = { ...computed.row, ...sysVars };
     return elements.map((el) => {
       const e: any = { ...el };
       // 条件打印：printIf 表达式为假则跳过该元素
@@ -57,7 +60,7 @@ export class RenderService {
 
   /** 替换 {{name}} 占位（变量缺失留空，不报错）。支持 @系统占位符（如 {{@serial}} {{@printDate}}） */
   private interp(s: string, ctx: Record<string, any>, serials: Record<string, string[]> = {}, rowIndex = 0): string {
-    return String(s ?? '').replace(/\{\{\s*([@A-Za-z_][^}]*?)\s*\}\}/g, (_, raw: string) => {
+    return String(s ?? '').replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, raw: string) => {
       if (!raw.startsWith('@')) return raw in ctx ? String(ctx[raw]) : '';
       const body = raw.slice(1);
       const ci = body.indexOf(':');

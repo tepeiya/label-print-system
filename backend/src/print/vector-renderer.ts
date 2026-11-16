@@ -15,6 +15,7 @@
 // =============================================================================
 import { renderBarcodeSvg, renderQrcodeSvg } from '../../core/barcode-renderer';
 import { RenderService } from './render.service';
+import type { ComputedVariable } from '../../core/computed-vars';
 
 export const MAX_EXPORT_LABELS = 5000;
 
@@ -31,7 +32,7 @@ export interface VectorPage {
 }
 
 export interface ExportInput {
-  templateContent: { page: VectorPage; elements: any[] };
+  templateContent: { page: VectorPage; elements: any[]; variables?: ComputedVariable[] };
   rows?: Record<string, any>[];
   copies?: number;
   serialMap?: Record<string, string[]>;
@@ -266,7 +267,7 @@ export function buildExportSvgs(input: ExportInput): SheetLayout {
       uuid: `export-${i + 1}`,
       _now: new Date(),
     };
-    const rendered = render.renderRow(tpl.elements, row, input.serialMap ?? {}, sysVars, i);
+    const rendered = render.renderRow(tpl.elements, row, input.serialMap ?? {}, sysVars, i, tpl.variables ?? []);
     const one = renderLabelSvg(rendered, tpl.page, input.watermarkLayer);
     one.warnings.forEach((w) => warnings.add(w));
     labels.push(one.svg);

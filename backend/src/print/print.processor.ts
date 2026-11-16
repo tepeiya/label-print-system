@@ -88,6 +88,7 @@ export class PrintProcessor extends WorkerHost {
           serialMap ?? {},
           sysVars,
           idx,
+          content.variables ?? [],
         );
 
         let payload: any;

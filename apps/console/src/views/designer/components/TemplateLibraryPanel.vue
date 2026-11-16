@@ -102,7 +102,6 @@
 //     设计器弹窗 → 载入画布；模板库独立页 → 路由跳设计器打开。
 // =============================================================================
 import { computed, ref, onMounted } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
 import { apiExportTemplate, apiListTemplates } from '@/api/templates';
 import { useDesignerStore } from '../store';
 import { useTemplateIO } from '../useTemplateIO';

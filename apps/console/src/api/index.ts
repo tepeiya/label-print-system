@@ -168,6 +168,43 @@ export const apiPrintCommands = (
   config?: Record<string, any>,
 ): Promise<PrintCommandsResult> => http.post('/print/commands', data, config);
 
+// ========== Inventory / 出入库 ==========
+// 后端 InventoryController（backend/src/inventory/inventory.controller.ts）：
+// 读：/inventory/stock · low-stock · expiring · moves · materials · warehouses
+// 写：/inventory/inbound · outbound · transfer（dryRun=true 可预演，不改库存）
+export const apiQueryStock = (params?: any) => http.get('/inventory/stock', { params });
+export const apiLowStock = (keyword?: string) => http.get('/inventory/low-stock', { params: { keyword } });
+export const apiExpiringStock = (params?: any) => http.get('/inventory/expiring', { params });
+export const apiQueryMoves = (params?: any) => http.get('/inventory/moves', { params });
+export const apiInventoryMaterials = (keyword?: string) => http.get('/inventory/materials', { params: { keyword } });
+export const apiInventoryWarehouses = () => http.get('/inventory/warehouses');
+export const apiStockInbound = (data: any) => http.post('/inventory/inbound', data);
+export const apiStockOutbound = (data: any) => http.post('/inventory/outbound', data);
+export const apiStockTransfer = (data: any) => http.post('/inventory/transfer', data);
+
+// ========== 基础资料：产品 / 仓库 / 库位 ==========
+const MD = '/inventory/masterdata';
+export const apiMdMaterials = (params?: any) => http.get(`${MD}/materials`, { params });
+export const apiMdCreateMaterial = (data: any) => http.post(`${MD}/materials`, data);
+export const apiMdUpdateMaterial = (id: number, data: any) => http.put(`${MD}/materials/${id}`, data);
+export const apiMdMaterialActive = (id: number, active: boolean) => http.post(`${MD}/materials/${id}/active`, { active });
+export const apiMdPrintMaterial = (id: number, data: any) => http.post(`${MD}/materials/${id}/print`, data);
+export const apiMdMaterialCategories = () => http.get(`${MD}/materials/categories`);
+export const apiMdBindTemplate = (data: any) => http.post(`${MD}/materials/bind-template`, data);
+export const apiMdGroups = (params?: any) => http.get(`${MD}/groups`, { params });
+export const apiMdCreateGroup = (data: any) => http.post(`${MD}/groups`, data);
+export const apiMdUpdateGroup = (id: number, data: any) => http.put(`${MD}/groups/${id}`, data);
+export const apiMdGroupActive = (id: number, active: boolean) => http.post(`${MD}/groups/${id}/active`, { active });
+export const apiMdSetDefaultLocation = (data: any) => http.post(`${MD}/materials/set-default-location`, data);
+export const apiMdWarehouses = (includeInactive = false) => http.get(`${MD}/warehouses`, { params: { includeInactive } });
+export const apiMdCreateWarehouse = (data: any) => http.post(`${MD}/warehouses`, data);
+export const apiMdUpdateWarehouse = (id: number, data: any) => http.put(`${MD}/warehouses/${id}`, data);
+export const apiMdWarehouseActive = (id: number, active: boolean) => http.post(`${MD}/warehouses/${id}/active`, { active });
+export const apiMdLocations = (params?: any) => http.get(`${MD}/locations`, { params });
+export const apiMdCreateLocation = (data: any) => http.post(`${MD}/locations`, data);
+export const apiMdUpdateLocation = (id: number, data: any) => http.put(`${MD}/locations/${id}`, data);
+export const apiMdLocationActive = (id: number, active: boolean) => http.post(`${MD}/locations/${id}/active`, { active });
+
 // ========== Printers ==========
 // 后端 PrinterController（backend/src/printer/printer.module.ts）：
 // GET /printers · POST /printers · GET /printers/:id · PUT /printers/:id ·

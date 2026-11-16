@@ -62,7 +62,7 @@ export function validateAiTemplate(raw: any, expected: { widthMm: number; height
   let vi = 0;
   for (const v of Array.isArray(src.variables) ? src.variables : []) {
     let name = String(v?.name ?? '').trim();
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    if (!/^[^\s{}@0-9][^\s{}]*$/.test(name)) {
       name = `var${++vi}`;
       fixedCount++;
     }
@@ -238,7 +238,7 @@ export function validateAiTemplate(raw: any, expected: { widthMm: number; height
   // ---- 补全 {{var}} 声明 ----
   const missing = new Set<string>();
   const scanText = (s: string) => {
-    const re = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
+    const re = /\{\{\s*([^{}]+?)\s*\}\}/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(s))) if (!varNames.has(m[1])) missing.add(m[1]);
   };
