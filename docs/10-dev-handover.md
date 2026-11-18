@@ -643,12 +643,12 @@ Excel 数据文件仍在原生版/后端解析，预览弹窗只吃 JSON/CSV/TSV
 |---|---|---|---|---|
 | **P7.1 移除 ZPL/TSPL 统一回落** | 1 天 | 🔴 必做 | `zpl-generator.ts` / `tspl-generator.ts`：不支持码制出 BadRequest + warnings | **✅ 2026-11-08 已完成** |
 | **P7.2 码制覆盖复核 + 降级策略** | 2 天 | 🔴 必做 | ZPL 一维 12 全齐 / 二维 6 全齐；TSPL 一维 12 全齐、MICROQR 降级标准 QR、DM/PDF417/Aztec 精确引导 | **✅ 2026-11-08 已完成** |
-| **P7.3 TSPL DataMatrix / PDF417** | 1 天 | 🟡 | TSPL 原生 `DATAMATRIX` / `PDF417` 指令，或走二维码降级 warnings | ⏳ |
-| **P7.4 GS1 FNC1 语义** | 1.5 天 | 🟡 | TSPL BARCODE 加 FNC1 前缀、GS1 DataMatrix/QR 结构 | ⏳ |
-| **P7.5 前端码制列表加"受限"标记** | 0.5 天 | 🟡 | `BARCODE_SYMS` 里不支持打印的加 `(预览仅)` 后缀 | ⏳ |
-| **P7.6 条码属性专业调优** | 2 天 | 🟢 | 静区自动计算、模块宽受 DPI 约束、旋转时明文位置修正 | ⏳ |
-| **P7.7 新增 EPL 通道（旧 Zebra 兼容）** | 1 天 | 🟢 | 先做一维码 + QR，其他回 warnings | ⏳ |
-| **P7.8 单测补齐** | 2 天 | 🟢 | 每个码制的 ZPL/TSPL 指令快照测试（golden file） | ⏳ |
+| **P7.3 TSPL DataMatrix / PDF417** | 1 天 | 🟡 | TSPL 原生 `DATAMATRIX` / `PDF417`（含 AZTEC）指令 | **✅ 2026-11-18 已完成** |
+| **P7.4 GS1 FNC1 语义** | 1.5 天 | 🟡 | TSPL BARCODE 加 FNC1 起始前缀、QR/DM 的 GS1 `~1` 结构、非法数据出 warning | **✅ 2026-11-18 已完成** |
+| **P7.5 前端码制列表加"受限"标记** | 0.5 天 | 🟡 | `buildSymOptions` 受限/降级标记 + 前端 BWIP_MAP 补齐 6 工业码制（预览不再错版） | **✅ 2026-11-18 已完成** |
+| **P7.6 条码属性专业调优** | 2 天 | 🟢 | 静区自动计算、模块宽受 DPI 约束、旋转时明文位置修正（纯函数已落地，属性面板已回显） | **✅ 2026-11-18 已完成** |
+| **P7.7 新增 EPL 通道（旧 Zebra 兼容）** | 1 天 | 🟢 | EPL 生成器 + controller 改用 `toEplElements`（一维 8 种 + QR，其他回 warnings） | **✅ 2026-11-18 已完成** |
+| **P7.8 单测补齐** | 2 天 | 🟢 | 三协议 × 全原生码制 × 3 内容的落盘 golden file（`golden-commands.test.ts`） | **✅ 2026-11-18 已完成** |
 
 **P7.1 已落地的关键改动**（2026-11-08 commit `efXXXXXX`）：
 - `backend/core/zpl-generator.ts`：`generateZpl` 返回 `{ text, warnings }`，新增 `SUPPORTED_ZPL_BARCODES` 显式白名单（12 个码制），`default` 分支移除，不支持码制在 warnings 里明确提示并跳过输出
@@ -669,10 +669,27 @@ Excel 数据文件仍在原生版/后端解析，预览弹窗只吃 JSON/CSV/TSV
   而生成器 P7.1 之后实际是跳过——同一响应里两条 warnings 自相矛盾。现码制维度提示统一由生成器产出，`buildWarnings` 只保留字体维度。
 - 实测：219 单测全绿；TSPL DATAMATRIX 只回 1 条"已跳过"提示；TSPL MICROQR 回 1 条"已降级"提示且指令里确有 `QRCODE`；ZPL DATAMATRIX 无 warnings 且输出 `^BX`。
 
+**P7.3~P7.8 已落地的关键改动**（2026-11-18，接手开发补完 P7 尾巴）：
+
+> ⚠️ **重要纠正**：P7.2 记的"TSPL 手册无 DATAMATRIX/PDF417/AZTEC 原生命令，跳过并引导"是**误判**——当时只核对了旧版 TSPL 子集。查 TSC 官方《TSPL/TSPL2 Programming Manual》（TSC AUTO ID，277 页）确认三指令**均存在**：
+> `DMATRIX x,y,w,h,[c#,x#,r#,a#,row,col,]"content"`（V6.89EZ+，`~1`=FNC1，`a1`=矩形需 V8.00EZ+）、
+> `PDF417 x,y,w,h,rotate,[option],"content"`（option 支持 E/W/H/R/C）、
+> `AZTEC x,y,rotate,size,ecp,flg,menu,multi,rev,bytes,content`（V6.91EZ+）。
+> 故 P7.3 按**原生指令**落地（而非降级），并在 caps.hint 标注固件门槛。
+
+- **P7.3**：`symbology.capabilities.ts` 把 DATAMATRIX/DATAMATRIX_RECT/PDF417/AZTEC 的 `caps.tspl` 从 `native:false` 改为 `native:true`；`tspl-generator.ts` 的 qrcode 分支按码制分派 `DMATRIX`/`PDF417`/`AZTEC` 原生指令（含命名参数 x#/a#/E/W/H 与 DPI 对齐的模块宽）。
+- **P7.4**：TSPL GS1-128 补**起始 FNC1**（`!` 前缀，`fnc1Prefix` 曾被忽略）；二维码 GS1 内容（`(AI)...`）经 `tspl2DContent` 用 `~1` 表达 FNC1；ZPL 把 GS1 非法数据校验提到主循环出 warning（原先在 `zplBarcodeLine` 内静默吞掉）。
+- **P7.5**：前端 `model.ts` 能力表同步 P7.3（DM/PDF417/AZTEC 改 `['ZPL','TSPL']`）+ MICROQR 降级标注；`engine/barcode.ts` 的 `BWIP_MAP`/`BC_RULES`/`is2dSym` 补齐 P8.4 六个工业码制——此前这些"预览仅"码制 fallback 成 code128，预览图与所选码制不符。
+- **P7.6**：核心纯函数（snapModuleWidth/quietZoneMm/suggestedHeightMm/humanReadablePlacement/resolveBarcodeGeometry）此前已落地；属性面板已具备模块宽/宽窄比/高/静区/明文/校验位全部字段，本轮核实无缺口。
+- **P7.7**：`print.controller.ts` EPL 分支由 `toTsplElements` 改为专用的 `toEplElements`（后者此前定义了却无人调用，导致 image/rect/line 被静默丢弃）；EPL 生成器补 ellipse 分支出 warning 而非静默忽略。
+- **P7.8**：新增 `backend/core/__tests__/golden-commands.test.ts` + `core/__tests__/golden/{zpl,tspl,epl}.golden.json`。三协议 × 各自原生码制 × 3 内容（短/边界/带校验位）逐字快照，ZPL 54 / TSPL 51 / EPL 27 条。漂移即 fail，`UPDATE_GOLDEN=1` 显式重生。
+- 全量回归：**463 单测全绿（456 pass / 0 fail / 7 skip）**，前端 `vue-tsc -b` 通过。环境补装了缺失的 `rxjs`（tenant-context 测试依赖）与前端依赖。
+
 **验收标准**（P7 全完）：
 1. 前端 `BARCODE_SYMS` 里可选的每一个码制，都能在 ZPL 或 TSPL 生成器里找到对应 `case` 分支（没有统一回落）。
 2. `print/commands` 接口对每张模板输出的指令里，warnings 字段**不会因为不支持码制而有值**（除非前端选了受限码制）。
-3. 新增 P7 验收脚本（类似 `p0-acceptance.sh` 的条码段），每个码制 3 条（短内容、边界长度、带校验位），对比 bwip-js 预览与 ZPL/TSPL 打印结果**图案一致**（mm 级位置偏差 <0.1mm）。
+3. 每个码制 3 条（短内容、边界长度、带校验位）的指令快照 —— **✅ `golden-commands.test.ts` 已落地**（三协议 132 条落盘 golden，逐字防漂移）。
+   > 剩余真机项：**对比 bwip-js 预览与 ZPL/TSPL 打印结果图案一致（mm 级位置偏差 <0.1mm）** 需要 PG/Redis + 实体标签机环境，沙箱内无法闭环。golden file 锁定的是"指令参数不漂移"，是图案一致的前置保证；真机图案比对待基础设施就绪后执行。
 
 ### 10.7.4 原生 DOM 设计器（web/ —— 老版本独立客户端）
 

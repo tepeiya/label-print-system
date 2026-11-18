@@ -83,12 +83,14 @@ export function generateTspl(els: TsplElement[], dpi: number): { text: string; w
         const wide = Math.max(narrow, Math.round(narrow * geo.wideRatio));
         const human = b.showText ? '1' : '0';
         // moduleWidth 对齐属静默规范化，不进 warnings（见 zpl-generator 同处说明）。
-        // P7.4：GS1-128 加 FNC1 前缀与变长 AI 分隔符；普通码制原样输出
+        // P7.4：GS1-128 加 FNC1 起始前缀与变长 AI 分隔符；普通码制原样输出。
+        // TSPL BARCODE "128" 内容里 `!` 即 FNC1：打头 `!` 标识 GS1 系统，
+        // 变长 AI 之间也用 `!` 断句。data 本身不含起始占位符，故显式补前缀。
         let content = b.content;
         if (sym === 'GS1_128') {
           const g = encodeGs1(b.content);
           if (g.invalid.length) warnings.push(`[TSPL] GS1 数据存疑：${g.invalid.join('；')}（已按原括号格式输出，请核对）`);
-          else content = gs1ToProtocol(g.data, 'tspl');
+          else content = (g.fnc1Prefix ? '!' : '') + gs1ToProtocol(g.data, 'tspl');
         }
         L.push(`BARCODE ${bx},${by},"${mapped}",${h},${human},${rot},${narrow},${wide},1,"${esc(content)}"`);
         break;
@@ -101,17 +103,45 @@ export function generateTspl(els: TsplElement[], dpi: number): { text: string; w
         const support = describeUnsupported('tspl', sym);
         warnings.push(...support.warnings);
         if (support.skip) break;
-        // P7.6 静区按码制自动（QR=4模块）
+
+        // P7.6 静区按码制自动（QR=4 / DM=1 / PDF417=2 / Aztec=0）
         const qz = resolveBarcodeGeometry({
-          sym: 'QRCODE', moduleWidthMm: q.moduleSizeMm ?? 0.5, heightMm: 15,
+          sym, moduleWidthMm: q.moduleSizeMm ?? 0.5, heightMm: e.hMm ?? 15,
           showText: false, textPosition: 'bottom', rotation: rot,
         }, dpi).quietZone;
         const qx = x + mmToDots(qz.left, dpi);
         const qy = y + mmToDots(qz.top, dpi);
-        // QRCODE x,y,ECC,cell size,mode,rotation,content
-        const eccMap: Record<string, string> = { L: 'L', M: 'M', Q: 'Q', H: 'H' };
-        const cell = Math.min(10, Math.max(1, mmToDots(q.moduleSizeMm ?? 0.5, dpi)));
-        L.push(`QRCODE ${qx},${qy},${eccMap[q.ecc ?? 'M'] ?? 'M'},${cell},A,${rot},"${esc(q.content)}"`);
+        // 模块大小按 DPI 对齐到整数 dot（P7.6），并夹到各指令合法区间
+        const moduleDots = Math.max(1, mmToDots(q.moduleSizeMm ?? 0.5, dpi));
+        const content = tspl2DContent(sym, q.content, warnings); // GS1 内容 → TSPL ~1 分隔符
+
+        // P7.3：按码制分派 TSPL/TSPL2 原生二维指令（语法依据 TSC 官方编程手册）
+        if (sym === 'DATAMATRIX' || sym === 'DATAMATRIX_RECT') {
+          // DMATRIX x,y,width,height,[c#,x#,r#,a#,row,col,]"content"
+          //   命名参数：x#=模块 dot、r#=旋转、a1=矩形。示例 DMATRIX 10,110,400,400,x8,18,18,"..."
+          // width/height 为条码区域尺寸（dots），取合理默认：内容越长区域越大
+          const area = Math.max(60, moduleDots * 24);
+          const opts = [`x${Math.min(20, moduleDots)}`, `r${rot}`];
+          if (sym === 'DATAMATRIX_RECT') opts.push('a1');
+          L.push(`DMATRIX ${qx},${qy},${area},${area},${opts.join(',')},"${esc(content)}"`);
+        } else if (sym === 'PDF417') {
+          // PDF417 x,y,width,height,rotate,[option,]"content"
+          //   option 用命名参数：W=模块宽(2~9)、H=条高(4~99)、E=纠错(0~8)
+          const w = Math.max(2, Math.min(9, moduleDots));
+          const h = Math.max(4, Math.min(99, Math.max(4, mmToDots(e.hMm ?? 8, dpi))));
+          const eccLevel = q.ecc === 'H' ? '8' : q.ecc === 'Q' ? '5' : q.ecc === 'L' ? '1' : '3';
+          L.push(`PDF417 ${qx},${qy},${Math.max(w * 30, 200)},${h * 4},${rot},E${eccLevel},W${w},H${h},"${esc(content)}"`);
+        } else if (sym === 'AZTEC') {
+          // AZTEC x,y,rotate,size,ecp,flg,menu,multi,rev,bytes,content （V6.91EZ+）
+          //   size=模块(1~20)、ecp=0 默认纠错；用带 bytes 的完整式，content 用引号包裹
+          const size = Math.max(1, Math.min(20, moduleDots));
+          L.push(`AZTEC ${qx},${qy},${rot},${size},0,0,0,1,1,${Buffer.byteLength(content, 'utf8')},"${esc(content)}"`);
+        } else {
+          // QR / Micro QR（含 MICROQR 的显式降级）：QRCODE x,y,ECC,cell,mode,rotation,content
+          const eccMap: Record<string, string> = { L: 'L', M: 'M', Q: 'Q', H: 'H' };
+          const cell = Math.min(10, moduleDots);
+          L.push(`QRCODE ${qx},${qy},${eccMap[q.ecc ?? 'M'] ?? 'M'},${cell},A,${rot},"${esc(content)}"`);
+        }
         break;
       }
       case 'box': {
@@ -192,6 +222,24 @@ function tsplSym(sym: string): string | undefined {
     CODABAR: 'CODABAR', MSI: 'MSI',
   };
   return map[key];
+}
+
+/**
+ * P7.3 / P7.4：二维码 GS1 内容 → TSPL 数据流。
+ * 人类可读格式 "(01)123...(10)AB..." 走 encodeGs1 解析：GS1 以 FNC1 起始，
+ * 变长 AI 之间插 FNC1 分隔。TSPL/TSPL2 手册明确 DMATRIX 内 `~1` = FNC1，
+ * QR 亦沿用 ~1 转义。非 GS1 内容原样返回。
+ */
+function tspl2DContent(sym: string, raw: string, warnings: string[]): string {
+  const s = String(raw ?? '');
+  if (!/^\(\d{2,4}\)/.test(s)) return s;
+  const g = encodeGs1(s);
+  if (g.invalid.length) {
+    warnings.push(`[TSPL] ${sym} GS1 数据存疑：${g.invalid.join('；')}（已按原内容输出，请核对）`);
+    return s;
+  }
+  const fnc1 = '~1';
+  return fnc1 + g.data.split('\u001D').join(fnc1);
 }
 
 function esc(s: string): string { return s.replace(/"/g, '""'); }

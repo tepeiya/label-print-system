@@ -39,7 +39,8 @@ export const QRCODE_SYMS = [
 // 保证前端下拉、生成器白名单、warnings 文案不各写一份（P7.2 复核的核心教训）。
 // 后端提供 GET /print/symbologies 返回权威列表；前端这份是**离线兜底**
 // （设计器首次加载、后端不可达时仍能正确标注），两者不一致以后端为准。
-// 口径：PHARMACODE / CODE16K 无任何指令协议 → "预览仅"；其余列出可用协议。
+// 口径：无任何指令协议 → "预览仅"；其余列出可用协议；有协议但某协议降级 → 标注。
+// P7.3：DMATRIX/PDF417/AZTEC 在 TSPL/TSPL2 官方手册有原生指令，从 ['ZPL'] 同步为 ['ZPL','TSPL']。
 // -----------------------------------------------------------------------------
 const PRINT_PROTOCOLS: Record<string, string[]> = {
   CODE128: ['ZPL', 'TSPL', 'EPL'], GS1_128: ['ZPL', 'TSPL'],
@@ -49,20 +50,31 @@ const PRINT_PROTOCOLS: Record<string, string[]> = {
   ITF14: ['ZPL', 'TSPL'], ITF: ['ZPL', 'TSPL', 'EPL'],
   CODABAR: ['ZPL', 'TSPL', 'EPL'], MSI: ['ZPL', 'TSPL'],
   PHARMACODE: [], CODE16K: [],
-  QRCODE: ['ZPL', 'TSPL', 'EPL'], MICROQR: ['ZPL'],
-  DATAMATRIX: ['ZPL'], DATAMATRIX_RECT: ['ZPL'],
-  PDF417: ['ZPL'], AZTEC: ['ZPL'],
+  QRCODE: ['ZPL', 'TSPL', 'EPL'], MICROQR: ['ZPL'],  // MICROQR 在 TSPL 降级为标准 QR
+  // P7.3：TSPL 原生二维指令（需固件门槛，见后端 caps.hint）
+  DATAMATRIX: ['ZPL', 'TSPL'], DATAMATRIX_RECT: ['ZPL', 'TSPL'],
+  PDF417: ['ZPL', 'TSPL'], AZTEC: ['ZPL', 'TSPL'],
   // P8.4 工业码制：位图通道可用，ZPL/TSPL/EPL 均无原生指令 → 标「预览仅·需图像通道」
   MAXICODE: [], HIBC_128: [], HIBC_CODE39: [], HIBC_DATAMATRIX: [], HIBC_QR: [], PZN: [],
 };
 
-/** 生成 [value, label] 元组选项（FSelect 原生支持），label 带受限标记 */
+/** 某些码制在指定协议下会降级（与后端 SymUiItem.degradeOn 同口径） */
+const DEGRADE_ON: Record<string, string[]> = {
+  MICROQR: ['TSPL'],  // TSPL 无 Micro QR，降级为标准 QRCODE
+};
+
+/** 生成 [value, label] 元组选项（FSelect 原生支持），label 带受限/降级标记 */
 export function buildSymOptions(syms: string[]): Array<[string, string]> {
   return syms.map((sym) => {
     const protocols = PRINT_PROTOCOLS[sym] ?? [];
-    const badge = protocols.length
-      ? `（${protocols.join('/')}）`
-      : '（预览仅·需图像通道）';
+    const degrade = DEGRADE_ON[sym] ?? [];
+    let badge: string;
+    if (!protocols.length) {
+      badge = '（预览仅·需图像通道）';
+    } else {
+      const degradeNote = degrade.length ? `；${degrade.join('/')}降级` : '';
+      badge = `（${protocols.join('/')}${degradeNote}）`;
+    }
     return [sym, `${sym} ${badge}`] as [string, string];
   });
 }

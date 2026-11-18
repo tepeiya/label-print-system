@@ -33,7 +33,7 @@ export function mmToDots(mm: number, dpi: number): number {
 }
 
 export interface EplElement {
-  type: 'text' | 'barcode' | 'qrcode' | 'image' | 'box' | 'line';
+  type: 'text' | 'barcode' | 'qrcode' | 'image' | 'box' | 'line' | 'ellipse';
   xMm: number; yMm: number;
   rotation?: 0 | 90 | 180 | 270;
   // text
@@ -150,6 +150,11 @@ export function generateEpl(els: EplElement[], dpi: number): { text: string; war
         const w = Math.max(1, mmToDots(e.wMm ?? 0, dpi));
         const h = Math.max(1, mmToDots(e.hMm ?? 0, dpi));
         L.push(`X${x},${y},${t},${w},${h}`);
+        break;
+      }
+      case 'ellipse': {
+        // EPL2 无椭圆原生指令，不静默忽略：出 warning 引导换通道
+        warnings.push('[EPL] 椭圆元素无 EPL2 原生指令，该元素已跳过。建议改用 ZPL（^GE）或 protocol=image');
         break;
       }
       case 'line': {

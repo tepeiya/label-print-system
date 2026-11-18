@@ -46,6 +46,15 @@ const BWIP_MAP: Record<string, string> = {
   QRCODE: 'qrcode', MICROQR: 'microqrcode', MICROQRCODE: 'microqrcode',
   DATAMATRIX: 'datamatrix', DATAMATRIX_RECT: 'datamatrixrectangular',
   PDF417: 'pdf417', AZTEC: 'azteccode', AZTECCODE: 'azteccode',
+  // P7.5：P8.4 工业码制。此前前端缺失导致这些"预览仅"码制 fallback 成 code128，
+  // 预览图与所选码制不符（标了预览却给错误的码）。与后端 core/barcode-renderer.ts
+  // 的 BWIP_MAP 同口径——那 6 个 bcid 已实测 bwip-js 可渲染。
+  MAXICODE: 'maxicode',
+  HIBC: 'hibccode128', HIBC_128: 'hibccode128',
+  HIBC_CODE39: 'hibccode39',
+  HIBC_DATAMATRIX: 'hibcdatamatrix',
+  HIBC_QR: 'hibcqrcode',
+  PZN: 'pzn',
 };
 
 export function bcidOf(sym: unknown): string {
@@ -53,7 +62,10 @@ export function bcidOf(sym: unknown): string {
 }
 
 export function is2dSym(sym: unknown): boolean {
-  return /^(QR|MICRO|DATAMATRIX|PDF417|AZTEC)/i.test(String(sym || ''));
+  const s = String(sym || '').toUpperCase();
+  // P7.5：HIBC 家族按载体区分，MAXICODE 是二维；HIBC_128 / HIBC_CODE39 / PZN 是一维
+  if (/^(MAXICODE|HIBC_QR|HIBC_DATAMATRIX|HIBC_QRCODE)/.test(s)) return true;
+  return /^(QR|MICRO|DATAMATRIX|PDF417|AZTEC)/i.test(s);
 }
 
 type BwipOptions = Record<string, unknown>;
@@ -219,6 +231,14 @@ const BC_RULES: Record<string, Rule> = {
   DATAMATRIX_RECT: { maxLen: 2000, note: '建议 ≤ 1500 字符' },
   PDF417: { maxLen: 1800, note: '建议 ≤ 1800 字符' },
   AZTEC: { maxLen: 1800, note: '建议 ≤ 1800 字符' },
+  // P7.5：P8.4 工业码制（预览仅，位图通道）。校验从宽，避免误拦合法 HIBC/GS1 载荷。
+  MAXICODE: { maxLen: 138, note: 'MaxiCode（UPS），建议 ≤ 138 字符；仅图像通道可打' },
+  HIBC: { note: 'HIBC，通常以 + 开头含 LIC/校验位；仅图像通道可打' },
+  HIBC_128: { note: 'HIBC Code 128 载体；仅图像通道可打' },
+  HIBC_CODE39: { note: 'HIBC Code 39 载体；仅图像通道可打' },
+  HIBC_DATAMATRIX: { maxLen: 2000, note: 'HIBC Data Matrix；仅图像通道可打' },
+  HIBC_QR: { maxLen: 2953, note: 'HIBC QR Code；仅图像通道可打' },
+  PZN: { maxLen: 8, re: /^\d{6,8}$/, note: 'PZN 德国药品编号，6~8 位数字；仅图像通道可打' },
 };
 
 export interface BarcodeCheck {

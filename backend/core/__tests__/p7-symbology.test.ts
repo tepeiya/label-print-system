@@ -59,7 +59,10 @@ test('P7-受限标记：PHARMACODE/CODE16K 无任何指令协议 → 预览仅',
   // 主流码制不是"预览仅"，且列出可用协议
   assert.equal(map.get('CODE128')!.previewOnly, false);
   assert.deepEqual(map.get('CODE128')!.printProtocols, ['zpl', 'tspl', 'epl']);
-  assert.deepEqual(map.get('DATAMATRIX')!.printProtocols, ['zpl']);
+  // P7.3：TSPL/TSPL2 官方手册有 DMATRIX/PDF417/AZTEC 原生指令，P7.2 曾误判为"手册无"
+  assert.deepEqual(map.get('DATAMATRIX')!.printProtocols, ['zpl', 'tspl']);
+  assert.deepEqual(map.get('PDF417')!.printProtocols, ['zpl', 'tspl']);
+  assert.deepEqual(map.get('AZTEC')!.printProtocols, ['zpl', 'tspl']);
   assert.ok(map.get('MICROQR')!.degradeOn.includes('tspl'), 'MICROQR 在 TSPL 显式降级');
 });
 
@@ -156,6 +159,23 @@ test('P7.4-ZPL/TSPL GS1-128 指令里确有 FNC1 前缀语义', () => {
   assert.equal(tail.separators, 0);
 });
 
+test('P7.4-TSPL 纯定长 AI 也带起始 FNC1（! 前缀，P7.4 补齐的缺口）', () => {
+  // (01)+(17) 全定长 → 无变长分隔符，但 GS1 起始 FNC1 必须有
+  const fixed = buildTspl([{ type: 'barcode', xMm: 2, yMm: 2, barcode: linear('GS1_128', '(01)12345678901231(17)251231') }], DPI, { widthMm: 60, heightMm: 40 });
+  const s = fixed.buffer.toString('ascii');
+  const m = s.match(/BARCODE[^\n]*"([^"]*)"/);
+  assert.ok(m, '应产出 BARCODE 指令');
+  assert.match(m![1], /^!/, 'GS1 内容必须以 ! (FNC1) 打头，即使全是定长 AI');
+});
+
+test('P7.4-ZPL GS1 非法数据出 warning（不静默吞掉，P7.4 补齐的缺口）', () => {
+  const bad = generateZpl([{ type: 'barcode', xMm: 2, yMm: 2, barcode: linear('GS1_128', '(01)123(17)251231') }], DPI);
+  assert.ok(bad.warnings.some((w) => /GS1 数据存疑/.test(w)), '非法 AI 长度必须出 warning');
+  // 合法内容不应误报
+  const good = generateZpl([{ type: 'barcode', xMm: 2, yMm: 2, barcode: linear('GS1_128', '(01)12345678901231(17)251231') }], DPI);
+  assert.ok(!good.warnings.some((w) => /GS1 数据存疑/.test(w)));
+});
+
 // ---------------------- 4. P7.6 条码几何专业调优 ----------------------
 test('P7.6-模块宽 DPI 对齐到整数点阵（原理：非整数 dot 会译码失败）', () => {
   const a = snapModuleWidth(0.25, 300);       // 0.25mm*300/25.4=2.95 → 3 dots
@@ -197,7 +217,42 @@ test('P7.6-最小打印点：dot = 25.4/dpi', () => {
   assert.ok(Math.abs(dotMm(300) - 0.08467) < 0.001);
 });
 
-// ---------------------- 5. P7.7 EPL 通道 ----------------------
+// ---------------------- 5. P7.3 TSPL 原生二维指令 ----------------------
+test('P7.3-TSPL DataMatrix 出 DMATRIX 原生指令（含模块宽/旋转，矩形带 a1）', () => {
+  const square = buildTspl([{ type: 'qrcode', xMm: 2, yMm: 2, qrcode: twoD('DATAMATRIX', 'HELLO123') }], DPI, { widthMm: 60, heightMm: 40 });
+  const s = square.buffer.toString('ascii');
+  assert.match(s, /DMATRIX \d+,\d+,\d+,\d+/, '方阵 DMATRIX 指令');
+  assert.match(s, /x\d+/, '带 x# 模块宽命名参数');
+  assert.match(s, /r0/, '带旋转参数');
+  assert.doesNotMatch(s, /DMATRIX[^\n]*a1/, '方阵不应带 a1');
+  assert.equal(square.warnings.length, 0, '原生指令不应有跳过/降级 warning');
+
+  const rect = buildTspl([{ type: 'qrcode', xMm: 2, yMm: 2, qrcode: twoD('DATAMATRIX_RECT', 'HELLO123') }], DPI, { widthMm: 60, heightMm: 40 });
+  assert.match(rect.buffer.toString('ascii'), /DMATRIX[^\n]*a1/, '矩形 DMATRIX 带 a1');
+});
+
+test('P7.3-TSPL PDF417 出 PDF417 原生指令（含纠错/模块宽/条高命名参数）', () => {
+  const { buffer, warnings } = buildTspl([
+    { type: 'qrcode', xMm: 2, yMm: 2, qrcode: { ...twoD('PDF417'), ecc: 'Q' } },
+  ], DPI, { widthMm: 60, heightMm: 40 });
+  const s = buffer.toString('ascii');
+  assert.match(s, /PDF417 \d+,\d+,\d+,\d+,\d+/, 'PDF417 指令含 x,y,w,h,rotate');
+  assert.match(s, /E5/, 'Q 级纠错映射到 E5');
+  assert.match(s, /W\d+/, '带 W 模块宽');
+  assert.match(s, /H\d+/, '带 H 条高');
+  assert.equal(warnings.length, 0);
+});
+
+test('P7.3-TSPL AZTEC 出 AZTEC 原生指令（完整参数式）', () => {
+  const { buffer, warnings } = buildTspl([
+    { type: 'qrcode', xMm: 2, yMm: 2, qrcode: twoD('AZTEC', 'AZTEC-TEST') },
+  ], DPI, { widthMm: 60, heightMm: 40 });
+  const s = buffer.toString('ascii');
+  assert.match(s, /AZTEC \d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,/, 'AZTEC 完整参数式（x,y,rot,size,ecp,flg,menu,multi,rev,bytes）');
+  assert.equal(warnings.length, 0);
+});
+
+// ---------------------- 6. P7.7 EPL 通道 ----------------------
 test('P7.7-EPL 页头/条码/打印命令齐全', () => {
   const { buffer, warnings } = buildEpl([
     { type: 'text', xMm: 2, yMm: 2, text: 'Hi', fontHeightMm: 3 },
@@ -222,7 +277,7 @@ test('P7.7-EPL 无原生码制精确引导、不静默出别的码', () => {
   assert.doesNotMatch(buffer.toString('ascii'), /B\d+,\d+,\d+,3,/); // 没回落成 Code128
 });
 
-// ---------------------- 6. 每码制 3 条指令结构 golden（短/边界/带校验位） ----------------------
+// ---------------------- 7. 每码制 3 条指令结构 golden（短/边界/带校验位） ----------------------
 test('P7.8-每码制三种内容的 ZPL 指令结构稳定（golden 摘要）', () => {
   for (const c of Object.values(SYMBOLOGIES)) {
     if (!hasNative('zpl', c.sym)) continue;

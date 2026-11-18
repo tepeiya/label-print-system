@@ -139,18 +139,24 @@ export const SYMBOLOGIES: Record<string, SymbologyCap> = {
     quietZoneX: QZ_QR,
     // TSPL 无 Micro QR 指令：显式的"降级为标准 QR"，形状变但可扫，必须回 warning
     caps: { zpl: { native: true, cmd: '^BQ model1' }, tspl: { native: false, noNativeInManual: true, degradeTo: 'QRCODE', hint: '已降级为标准 QRCODE（可扫）；要真 Micro QR 请用 ZPL' }, epl: { native: false, noNativeInManual: true, hint: IMG_HINT }, image: { native: true } } },
+  // P7.3：TSPL/TSPL2 官方编程手册（TSC AUTO ID, 2014）确有原生二维指令：
+  //   DMATRIX x,y,width,height,[c#,x#,r#,a#,row,col,]"content"  （V6.89EZ+，a# 矩形 V8.00EZ+）
+  //   PDF417  x,y,width,height,rotate,[option,]"content"
+  //   AZTEC   x,y,rotate,size,ecp,flg,menu,multi,rev,bytes,content （V6.91EZ+）
+  // P7.2 曾判"手册无原生命令"是误判（仅核对了旧版 TSPL 子集）。现按手册补齐原生指令，
+  // 但需提示固件版本门槛，避免老机型收到不认识的指令。
   DATAMATRIX:       { sym: 'DATAMATRIX', kind: '2d', label: 'Data Matrix', gs1: false, bitmap: true,
     quietZoneX: QZ_DM, ecc: 'ECC200',
-    caps: { zpl: { native: true, cmd: '^BX' }, tspl: { native: false, noNativeInManual: true, hint: `${ZPL_HINT} 或 ${IMG_HINT}` }, epl: { native: false, noNativeInManual: true, hint: IMG_HINT }, image: { native: true } } },
+    caps: { zpl: { native: true, cmd: '^BX' }, tspl: { native: true, cmd: 'DMATRIX', hint: '需 TSPL V6.89EZ+ 固件；老机型请改用 ZPL 或 protocol=image' }, epl: { native: false, noNativeInManual: true, hint: IMG_HINT }, image: { native: true } } },
   DATAMATRIX_RECT:  { sym: 'DATAMATRIX_RECT', kind: '2d', label: 'Data Matrix (矩形)', gs1: false, bitmap: true,
     quietZoneX: QZ_DM, ecc: 'ECC200',
-    caps: { zpl: { native: true, cmd: '^BX rect' }, tspl: { native: false, noNativeInManual: true, hint: `${ZPL_HINT} 或 ${IMG_HINT}` }, epl: { native: false, noNativeInManual: true, hint: IMG_HINT }, image: { native: true } } },
+    caps: { zpl: { native: true, cmd: '^BX rect' }, tspl: { native: true, cmd: 'DMATRIX a1', hint: '需 TSPL V8.00EZ+ 固件（矩形 a1 参数）；老机型请改用 ZPL 或 protocol=image' }, epl: { native: false, noNativeInManual: true, hint: IMG_HINT }, image: { native: true } } },
   PDF417:   { sym: 'PDF417', kind: '2d', label: 'PDF417', gs1: false, bitmap: true,
     quietZoneX: QZ_PDF417, ecc: '0-8',
-    caps: { zpl: { native: true, cmd: '^B2' }, tspl: { native: false, noNativeInManual: true, hint: `${ZPL_HINT} 或 ${IMG_HINT}` }, epl: { native: false, noNativeInManual: true, hint: IMG_HINT }, image: { native: true } } },
+    caps: { zpl: { native: true, cmd: '^B2' }, tspl: { native: true, cmd: 'PDF417' }, epl: { native: false, noNativeInManual: true, hint: IMG_HINT }, image: { native: true } } },
   AZTEC:    { sym: 'AZTEC', kind: '2d', label: 'Aztec', gs1: false, bitmap: true,
     quietZoneX: QZ_NONE,
-    caps: { zpl: { native: true, cmd: '^BO' }, tspl: { native: false, noNativeInManual: true, hint: `${ZPL_HINT} 或 ${IMG_HINT}` }, epl: { native: false, noNativeInManual: true, hint: IMG_HINT }, image: { native: true } } },
+    caps: { zpl: { native: true, cmd: '^BO' }, tspl: { native: true, cmd: 'AZTEC', hint: '需 TSPL V6.91EZ+ 固件；老机型请改用 ZPL 或 protocol=image' }, epl: { native: false, noNativeInManual: true, hint: IMG_HINT }, image: { native: true } } },
 
   // ------------------------------ P8.4 工业码制（位图通道） ------------------------------
   // 红线：区分「手册无原生指令」与「本产品暂未覆盖」。MaxiCode 在 ZPL 手册里确有 ^BD，

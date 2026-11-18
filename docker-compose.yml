@@ -1,5 +1,13 @@
 # LabelFlow 一键启动（开发/演示）
 # 用法：docker compose up -d
+#
+# 端口约定（与 docs/10-dev-handover.md §10.1.2 一致）：
+#   宿主访问端口：后端 API 3200 / PostgreSQL 5433 / Redis 6380 / 老前端 web 5180
+#   其他应用（不在本 compose 中）：console 5173 / platform 5181 / MCP HTTP 3300
+#   端口 3000 属其他项目，禁止占用。
+# 注意：容器内部仍使用镜像默认端口（PG 5432、Redis 6379），
+#       仅「宿主映射」与「容器内 API 监听端口」按上述约定设置；
+#       容器之间通过服务名互联（postgres:5432、redis:6379），不受宿主映射影响。
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -7,7 +15,7 @@ services:
       POSTGRES_USER: labelflow
       POSTGRES_PASSWORD: labelflow
       POSTGRES_DB: labelflow
-    ports: ["5432:5432"]
+    ports: ["5433:5432"]        # 宿主 5433 -> 容器 5432（PG 镜像默认端口不变）
     volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U labelflow"]
@@ -15,7 +23,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports: ["6379:6379"]
+    ports: ["6380:6379"]        # 宿主 6380 -> 容器 6379（Redis 镜像默认端口不变）
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -24,14 +32,15 @@ services:
     build: ./backend
     environment:
       DB_HOST: postgres
-      DB_PORT: "5432"
+      DB_PORT: "5432"                 # 容器网络内 postgres:5432（宿主映射 5433 不影响容器互联）
       DB_NAME: labelflow
       DB_USER: labelflow
       DB_PASS: labelflow
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://redis:6379   # 容器网络内 redis:6379（宿主映射 6380 不影响容器互联）
       JWT_SECRET: change-me-in-prod
+      PORT: "3200"                    # 容器内 API 监听端口（代码默认即 3200）
     depends_on: [postgres, redis]
-    ports: ["3000:3000"]
+    ports: ["3200:3200"]        # 宿主 3200 -> 容器 3200
 
   worker:
     build: ./backend
@@ -39,6 +48,7 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379
       - DB_HOST=postgres
+      - DB_PORT=5432
     depends_on: [postgres, redis]
 
   # ⚠️ DEPRECATED（已弃用）：web 是老版原生 HTML5 前端，仅作行为对照，不再新增功能。
@@ -50,7 +60,7 @@ services:
     ports: ["5180:80"]
     depends_on: [api]
     environment:
-      - API_BASE=http://api:3000/api/v1
+      - API_BASE=http://api:3200/api/v1   # 容器内经服务名访问 api:3200
 
 volumes:
   pgdata:

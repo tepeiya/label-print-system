@@ -133,10 +133,10 @@ export class PrintCommandsController {
         out = out.replace('^XZ', `^PQ${copies}^XZ`);
         frames.push(out);
       } else if (protocol === 'epl') {
-        // P7.7：EPL2 通道。toTsplElements 产出的元素形状（xMm/yMm/barcode/...）
-        // 与 EplElement 兼容，直接复用；offset 通过元素起点平移在页头无法表达，
-        // 故 EPL 的 dx/dy 校准由打印机硬件设置处理，这里不注入（与 TSPL 一致）。
-        const eplOut = buildEplJob(this.render.toTsplElements(rendered) as any, dpi, {
+        // P7.7：EPL2 通道。用专用的 toEplElements（不是 toTsplElements）——它会把
+        // image/rect/line/ellipse 也映射进来，让生成器对不支持的元素出明确 warning，
+        // 而不是像 toTsplElements 那样静默丢弃。offset 在 EPL 页头无法表达，由硬件校准。
+        const eplOut = buildEplJob(this.render.toEplElements(rendered) as any, dpi, {
           widthMm: b.widthMm ?? tpl.page.widthMm,
           heightMm: b.heightMm ?? tpl.page.heightMm,
           gapMm, copies,

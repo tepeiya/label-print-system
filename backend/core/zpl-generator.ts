@@ -109,6 +109,12 @@ export function generateZpl(els: ZplElement[], dpi: number): { text: string; war
         if (geo.heightTooSmall) {
           warnings.push(`[ZPL] ${sym} 高度 ${b.heightMm}mm 偏小（建议 ≥ ${geo.suggestedHeightMm}mm，约 ${10}×模块宽），可能影响扫描`);
         }
+        // P7.4：GS1-128 数据非法要显式告警，不静默吞掉。zplBarcodeLine 拿不到 warnings
+        // 数组（只返回指令串），故在主循环这里统一校验；指令内仍退回可打的括号剥离形式。
+        if (sym === 'GS1_128') {
+          const g = encodeGs1(b.content);
+          if (g.invalid.length) warnings.push(`[ZPL] GS1 数据存疑：${g.invalid.join('；')}（已按剥离括号的原始内容输出，请核对）`);
+        }
         out.push(`^FO${bx},${by}^BY${byW},${ratio},${bh}`);
         out.push(...zplBarcodeLine(sym, orient, bh, human, checksum, b.content, geo.humanReadable.zplFlag as 'Y' | 'N'));
         break;
