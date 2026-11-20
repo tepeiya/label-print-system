@@ -6,7 +6,8 @@ import { Template } from '../entities/template.entity';
 import { Printer } from '../entities/print.entity';
 import { PrintModule } from '../print/print.module';
 import {
-  Warehouse, WarehouseLocation, ProductGroup, Material, StockBatch, StockMove, Bom, BomItem,
+  Warehouse, WarehouseLocation, ProductGroup, Material, MaterialFieldDefinition,
+  StockBatch, StockMove, Bom, BomItem,
 } from './inventory.entity';
 import { InventoryService } from './inventory.service';
 import { InventoryController } from './inventory.controller';
@@ -15,7 +16,8 @@ import { MasterdataController } from './masterdata.controller';
 @Module({
   imports: [
     TypeOrmModule.forFeature([
-      Warehouse, WarehouseLocation, ProductGroup, Material, StockBatch, StockMove, Bom, BomItem, Template, Printer,
+      Warehouse, WarehouseLocation, ProductGroup, Material, MaterialFieldDefinition,
+      StockBatch, StockMove, Bom, BomItem, Template, Printer,
     ]),
     PrintModule,
   ],

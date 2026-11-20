@@ -7,16 +7,24 @@ import { BadRequestException, Inject, Injectable, NotFoundException } from '@nes
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository, type EntityManager } from 'typeorm';
 import {
-  Material, StockBatch, StockMove, Warehouse, WarehouseLocation, ProductGroup, Bom, BomItem,
+  Material, MaterialFieldDefinition, StockBatch, StockMove, Warehouse, WarehouseLocation, ProductGroup, Bom, BomItem,
 } from './inventory.entity';
 import { Template } from '../entities/template.entity';
 import { Printer } from '../entities/print.entity';
 import { PrintService } from '../print/print.service';
 import { computeKit, escapeLike, KitOutcome, round3 } from './kit.calc';
+import { assertFieldDef, normalizeCustomValues, toPrintFields } from './field-defs.calc';
 // P6.2 阶段 B：事务/原生 QB 也按 TenantCtx.dataSourceKey 路由（Repository 已由代理模块接管）
 import { TENANT_DATASOURCE, tenantDataSourceProxy } from '../common/tenant-routing';
 
 type TenantDataSource = ReturnType<typeof tenantDataSourceProxy>;
+
+/** jsonb 列经 getRawMany 可能是对象或字符串，统一解析为对象 */
+function parseJsonb(v: unknown): Record<string, any> {
+  if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, any>;
+  if (typeof v === 'string') { try { const o = JSON.parse(v); return o && typeof o === 'object' ? o : {}; } catch { return {}; } }
+  return {};
+}
 
 /** 一次库存变动落到的批次行（P5 写路径：adjust / transfer 复用） */
 export interface StockMoveLine {
@@ -78,6 +86,7 @@ export interface QueryMovesArgs {
 export class InventoryService {
   constructor(
     @InjectRepository(Material) private materials: Repository<Material>,
+    @InjectRepository(MaterialFieldDefinition) private fieldDefs: Repository<MaterialFieldDefinition>,
     @InjectRepository(Warehouse) private warehouses: Repository<Warehouse>,
     @InjectRepository(WarehouseLocation) private locations: Repository<WarehouseLocation>,
     @InjectRepository(ProductGroup) private groups: Repository<ProductGroup>,
@@ -187,9 +196,11 @@ export class InventoryService {
       .addSelect('m.auto_print', 'autoPrint').addSelect('m.printer_id', 'printerId')
       .addSelect('m.default_warehouse_id', 'defaultWarehouseId')
       .addSelect('m.default_location_id', 'defaultLocationId')
+      .addSelect('m.custom_fields', 'customFields')
       .orderBy('m.code', 'ASC').limit(Math.min(Math.max(limit, 1), 100)).getRawMany();
     return rows.map((r) => ({
       ...r, id: Number(r.id), safetyStock: Number(r.safetyStock),
+      customFields: parseJsonb(r.customFields),
       templateId: r.templateId == null ? null : Number(r.templateId),
       groupId: r.groupId == null ? null : Number(r.groupId),
       printerId: r.printerId == null ? null : Number(r.printerId),
@@ -197,6 +208,78 @@ export class InventoryService {
       defaultLocationId: r.defaultLocationId == null ? null : Number(r.defaultLocationId),
       autoPrint: !!r.autoPrint,
     }));
+  }
+
+  // ---------------- 产品自定义字段定义 ----------------
+
+  /** 字段定义列表（含停用，维护页用）；按 sortOrder 排序 */
+  async listFieldDefs(tenantId: number, includeInactive = false) {
+    const where: any = { tenantId };
+    if (!includeInactive) where.active = true;
+    const rows = await this.fieldDefs.find({ where, order: { sortOrder: 'ASC', id: 'ASC' } });
+    return rows.map((r) => ({
+      id: Number(r.id), fieldKey: r.fieldKey, label: r.label, type: r.type,
+      required: !!r.required, options: Array.isArray(r.options) ? r.options : [],
+      sortOrder: Number(r.sortOrder ?? 0), active: !!r.active,
+    }));
+  }
+
+  /** 用规范化定义校验产品自定义字段值（写入前统一入口） */
+  private async normalizeValues(
+    tenantId: number, raw: Record<string, unknown> | undefined,
+  ): Promise<Record<string, any>> {
+    const defs = await this.listFieldDefs(tenantId);
+    try {
+      return normalizeCustomValues(defs as any, raw);
+    } catch (e: any) {
+      throw new BadRequestException(e?.message ?? '自定义字段值不合法');
+    }
+  }
+
+  async createFieldDef(tenantId: number, b: {
+    fieldKey: string; label: string; type: string; required?: boolean;
+    options?: string[]; sortOrder?: number;
+  }) {
+    let def: any;
+    try { def = assertFieldDef(b); } catch (e: any) { throw new BadRequestException(e?.message); }
+    const dup = await this.fieldDefs.findOne({ where: { tenantId, fieldKey: def.fieldKey } });
+    if (dup) throw new BadRequestException(`字段标识已存在：${def.fieldKey}`);
+    const row = await this.fieldDefs.save(this.fieldDefs.create({
+      tenantId, fieldKey: def.fieldKey, label: def.label, type: def.type,
+      required: def.required, options: def.options, sortOrder: def.sortOrder,
+    }));
+    return { id: Number(row.id), ...def };
+  }
+
+  async updateFieldDef(tenantId: number, id: number, b: {
+    label?: string; type?: string; required?: boolean; options?: string[]; sortOrder?: number;
+  }) {
+    const row = await this.fieldDefs.findOne({ where: { tenantId, id } });
+    if (!row) throw new NotFoundException('字段定义不存在');
+    // 合并现有值后整体走 assertFieldDef，保证改类型/选项后仍合法
+    let def: any;
+    try {
+      def = assertFieldDef({
+        fieldKey: row.fieldKey,
+        label: b.label ?? row.label,
+        type: b.type ?? row.type,
+        required: b.required ?? row.required,
+        options: b.options ?? row.options,
+        sortOrder: b.sortOrder ?? row.sortOrder,
+      });
+    } catch (e: any) { throw new BadRequestException(e?.message); }
+    await this.fieldDefs.update({ id, tenantId }, {
+      label: def.label, type: def.type, required: def.required,
+      options: def.options, sortOrder: def.sortOrder,
+    });
+    return { id: Number(id), ...def };
+  }
+
+  async setFieldDefActive(tenantId: number, id: number, active: boolean) {
+    const row = await this.fieldDefs.findOne({ where: { tenantId, id } });
+    if (!row) throw new NotFoundException('字段定义不存在');
+    await this.fieldDefs.update({ id, tenantId }, { active });
+    return { id: Number(id), active };
   }
 
   /**
@@ -375,6 +458,7 @@ export class InventoryService {
     category?: string | null; safetyStock?: number; templateId?: number | null;
     groupId?: number | null; autoPrint?: boolean; printerId?: number | null;
     defaultWarehouseId?: number | null; defaultLocationId?: number | null;
+    customFields?: Record<string, unknown>;
   }) {
     const code = String(b.code ?? '').trim();
     if (!code || !String(b.name ?? '').trim()) throw new BadRequestException('编码与名称必填');
@@ -386,6 +470,7 @@ export class InventoryService {
     const printerId = await this.printerFor(tenantId, b.printerId);
     const autoPrint = !!b.autoPrint && templateId != null;
     const def = await this.defaultLocationPair(tenantId, b.defaultWarehouseId, b.defaultLocationId);
+    const customFields = await this.normalizeValues(tenantId, b.customFields);
     const row = await this.materials.save(this.materials.create({
       tenantId, code, name: String(b.name).trim(),
       spec: b.spec?.trim() || null, unit: b.unit?.trim() || '件',
@@ -393,6 +478,7 @@ export class InventoryService {
       safetyStock: String(round3(Number(b.safetyStock) || 0)),
       templateId, groupId, autoPrint, printerId,
       defaultWarehouseId: def.warehouseId, defaultLocationId: def.locationId,
+      customFields,
     }));
     return {
       ...row, id: Number(row.id), safetyStock: Number(row.safetyStock),
@@ -405,6 +491,7 @@ export class InventoryService {
     safetyStock?: number; templateId?: number | null;
     groupId?: number | null; autoPrint?: boolean; printerId?: number | null;
     defaultWarehouseId?: number | null; defaultLocationId?: number | null;
+    customFields?: Record<string, unknown>;
   }) {
     const row = await this.materials.findOne({ where: { tenantId, id } });
     if (!row) throw new NotFoundException('物料不存在');
@@ -432,6 +519,9 @@ export class InventoryService {
       );
       patch.defaultWarehouseId = def.warehouseId;
       patch.defaultLocationId = def.locationId;
+    }
+    if (b.customFields !== undefined) {
+      patch.customFields = await this.normalizeValues(tenantId, b.customFields);
     }
     await this.materials.update({ id, tenantId }, patch);
     return this.listMaterials(tenantId, row.code, 1).then((r) => r[0]);
@@ -511,6 +601,8 @@ export class InventoryService {
       产品编码: m.code, 产品名称: m.name, 规格型号: m.spec ?? '',
       单位: m.unit, 产品类别: m.category ?? '',
       defaultWarehouseId: m.defaultWarehouseId, defaultLocationId: m.defaultLocationId,
+      // 自定义字段：同时以字段标识和中文名暴露（模板写 {{field_key}} 或 {{中文名}} 均可）
+      ...toPrintFields(await this.listFieldDefs(tenantId), parseJsonb(m.customFields)),
     };
     const batchNos = Array.isArray(args.batchNos) ? args.batchNos.filter(Boolean) : [];
     const rows: any[] = [];

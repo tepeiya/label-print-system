@@ -10,8 +10,8 @@ import { RequirePermission } from '../common/permission.guard';
 import { useTenantId } from '../common/tenant.context';
 import { InventoryService } from './inventory.service';
 import {
-  ActiveDto, BindTemplateDto, CreateGroupDto, CreateLocationDto, CreateMaterialDto,
-  CreateWarehouseDto, PrintMaterialDto, SetDefaultLocationDto, UpdateGroupDto,
+  ActiveDto, BindTemplateDto, CreateFieldDefDto, CreateGroupDto, CreateLocationDto, CreateMaterialDto,
+  CreateWarehouseDto, PrintMaterialDto, SetDefaultLocationDto, UpdateFieldDefDto, UpdateGroupDto,
   UpdateLocationDto, UpdateMaterialDto, UpdateWarehouseDto,
 } from './dto/masterdata.dto';
 
@@ -36,6 +36,31 @@ export class MasterdataController {
   @Get('materials/categories')
   @RequirePermission('masterdata:item:read')
   materialCategories() { return this.svc.listMaterialCategories(useTenantId()); }
+
+  // ---------------- 产品自定义字段定义 ----------------
+
+  /** 字段定义列表；includeInactive=true 供维护页查看已停用字段 */
+  @Get('fields')
+  @RequirePermission('masterdata:item:read')
+  fields(@Query('includeInactive') includeInactive?: string) {
+    return this.svc.listFieldDefs(useTenantId(), includeInactive === 'true');
+  }
+
+  @Post('fields')
+  @RequirePermission('masterdata:item:write')
+  createField(@Body() b: CreateFieldDefDto) { return this.svc.createFieldDef(useTenantId(), b); }
+
+  @Put('fields/:id')
+  @RequirePermission('masterdata:item:write')
+  updateField(@Param('id') id: number, @Body() b: UpdateFieldDefDto) {
+    return this.svc.updateFieldDef(useTenantId(), Number(id), b);
+  }
+
+  @Post('fields/:id/active')
+  @RequirePermission('masterdata:item:write')
+  setFieldActive(@Param('id') id: number, @Body() b: ActiveDto) {
+    return this.svc.setFieldDefActive(useTenantId(), Number(id), b.active);
+  }
 
   /** 批量设置默认仓库/库位：选中的产品或整个分组一次联动 */
   @Post('materials/set-default-location')

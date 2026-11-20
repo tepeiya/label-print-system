@@ -191,6 +191,11 @@ export const apiMdMaterialActive = (id: number, active: boolean) => http.post(`$
 export const apiMdPrintMaterial = (id: number, data: any) => http.post(`${MD}/materials/${id}/print`, data);
 export const apiMdMaterialCategories = () => http.get(`${MD}/materials/categories`);
 export const apiMdBindTemplate = (data: any) => http.post(`${MD}/materials/bind-template`, data);
+// 产品自定义字段定义
+export const apiMdFields = (includeInactive = false) => http.get(`${MD}/fields`, { params: { includeInactive } });
+export const apiMdCreateField = (data: any) => http.post(`${MD}/fields`, data);
+export const apiMdUpdateField = (id: number, data: any) => http.put(`${MD}/fields/${id}`, data);
+export const apiMdFieldActive = (id: number, active: boolean) => http.post(`${MD}/fields/${id}/active`, { active });
 export const apiMdGroups = (params?: any) => http.get(`${MD}/groups`, { params });
 export const apiMdCreateGroup = (data: any) => http.post(`${MD}/groups`, data);
 export const apiMdUpdateGroup = (id: number, data: any) => http.put(`${MD}/groups/${id}`, data);

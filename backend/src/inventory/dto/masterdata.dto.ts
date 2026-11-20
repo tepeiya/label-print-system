@@ -1,5 +1,7 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, Length, Min } from 'class-validator';
+import {
+  IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Length, Min,
+} from 'class-validator';
 
 export class CreateMaterialDto {
   @IsString() @Length(1, 40) code!: string;
@@ -14,6 +16,8 @@ export class CreateMaterialDto {
   @IsOptional() @Type(() => Number) @IsInt() printerId?: number;
   @IsOptional() @Type(() => Number) @IsInt() defaultWarehouseId?: number;
   @IsOptional() @Type(() => Number) @IsInt() defaultLocationId?: number;
+  /** 自定义字段值：{ fieldKey: value }，按字段定义校验 */
+  @IsOptional() @IsObject() customFields?: Record<string, any>;
 }
 
 // 不继承 CreateMaterialDto：class-validator 装饰器沿原型链累加会把 code 重新变必填
@@ -29,6 +33,26 @@ export class UpdateMaterialDto {
   @IsOptional() @Type(() => Number) @IsInt() printerId?: number;
   @IsOptional() @Type(() => Number) @IsInt() defaultWarehouseId?: number;
   @IsOptional() @Type(() => Number) @IsInt() defaultLocationId?: number;
+  @IsOptional() @IsObject() customFields?: Record<string, any>;
+}
+
+/** 产品自定义字段定义 */
+export class CreateFieldDefDto {
+  @IsString() @Length(1, 40) fieldKey!: string;
+  @IsString() @Length(1, 60) label!: string;
+  @IsIn(['text', 'number', 'date', 'select', 'multiselect', 'boolean']) type!: string;
+  @IsOptional() @IsBoolean() required?: boolean;
+  @IsOptional() @IsArray() @IsString({ each: true }) options?: string[];
+  @IsOptional() @Type(() => Number) @IsInt() sortOrder?: number;
+}
+
+// 不继承 CreateFieldDefDto：避免装饰器累加导致字段变必填
+export class UpdateFieldDefDto {
+  @IsOptional() @IsString() @Length(1, 60) label?: string;
+  @IsOptional() @IsIn(['text', 'number', 'date', 'select', 'multiselect', 'boolean']) type?: string;
+  @IsOptional() @IsBoolean() required?: boolean;
+  @IsOptional() @IsArray() @IsString({ each: true }) options?: string[];
+  @IsOptional() @Type(() => Number) @IsInt() sortOrder?: number;
 }
 
 /** 批量设置产品默认仓库/库位 */

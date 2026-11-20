@@ -16,6 +16,7 @@
           <el-button v-if="canWrite" style="margin-left:auto" :disabled="!selectedMaterials.length"
                      @click="openBind('selected')">批量绑定（已选 {{ selectedMaterials.length }}）</el-button>
           <el-button v-if="canWrite" :disabled="!selectedMaterials.length" @click="openLocBind()">批量设位置</el-button>
+          <el-button v-if="canWrite" @click="openFieldMgr()">自定义字段</el-button>
           <el-button v-if="canWrite" type="success" @click="openMat()">+ 新增产品</el-button>
         </div>
         <el-table :data="materials" v-loading="matLoading" border stripe size="small"
@@ -26,6 +27,11 @@
           <el-table-column prop="spec" label="规格" min-width="140" />
           <el-table-column prop="unit" label="单位" width="80" />
           <el-table-column prop="category" label="类别" width="110" />
+          <el-table-column v-for="f in activeFields" :key="f.fieldKey" :label="f.label" min-width="110">
+            <template #default="{ row }">
+              <span>{{ formatCustomValue(row.customFields?.[f.fieldKey]) }}</span>
+            </template>
+          </el-table-column>
           <el-table-column label="分组" min-width="120">
             <template #default="{ row }">{{ row.groupName || '—' }}</template>
           </el-table-column>
@@ -208,10 +214,108 @@
                        :key="l.id" :label="`${l.code} · ${l.name}`" :value="l.id" />
           </el-select>
         </el-form-item>
+        <!-- 自定义字段（按字段定义动态渲染） -->
+        <el-divider content-position="left" v-if="activeFields.length">自定义字段</el-divider>
+        <el-form-item v-for="f in activeFields" :key="f.fieldKey"
+                      :label="f.label" :required="f.required">
+          <el-input v-if="f.type === 'text'" v-model="matForm.customFields[f.fieldKey]"
+                    :placeholder="`请输入${f.label}`" clearable />
+          <el-input-number v-else-if="f.type === 'number'" v-model="matForm.customFields[f.fieldKey]"
+                           :precision="3" controls-position="right" style="width:100%" />
+          <el-date-picker v-else-if="f.type === 'date'" v-model="matForm.customFields[f.fieldKey]"
+                          type="date" value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%" />
+          <el-select v-else-if="f.type === 'select'" v-model="matForm.customFields[f.fieldKey]"
+                     clearable filterable :placeholder="`请选择${f.label}`" style="width:100%">
+            <el-option v-for="opt in f.options" :key="opt" :label="opt" :value="opt" />
+          </el-select>
+          <el-select v-else-if="f.type === 'multiselect'" v-model="matForm.customFields[f.fieldKey]"
+                     multiple clearable filterable :placeholder="`可多选${f.label}`" style="width:100%">
+            <el-option v-for="opt in f.options" :key="opt" :label="opt" :value="opt" />
+          </el-select>
+          <el-switch v-else-if="f.type === 'boolean'" v-model="matForm.customFields[f.fieldKey]" />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="matDialog = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="saveMat">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 自定义字段管理弹窗 -->
+    <el-dialog v-model="fieldMgrDialog" title="产品自定义字段" width="680px">
+      <div class="field-mgr-tip">
+        在这里定义产品可填写的额外字段；定义后即可在新增/编辑产品时填写，并可用于标签模板占位符
+        <code v-text="'{{field_key}}'" /> 或 <code>中文名</code>。停用字段不会删除已有数据，但不再显示与校验。
+      </div>
+      <div class="filters" style="margin:8px 0">
+        <el-checkbox v-model="fieldShowInactive" @change="loadFields">显示已停用</el-checkbox>
+        <el-button type="primary" size="small" style="margin-left:auto" @click="openField()">+ 新增字段</el-button>
+      </div>
+      <el-table :data="allFields" border stripe size="small" v-loading="fieldLoading">
+        <el-table-column prop="label" label="字段名称" min-width="110" />
+        <el-table-column prop="fieldKey" label="标识" min-width="120">
+          <template #default="{ row }"><code>{{ row.fieldKey }}</code></template>
+        </el-table-column>
+        <el-table-column prop="type" label="类型" width="100">
+          <template #default="{ row }">{{ fieldTypeLabel(row.type) }}</template>
+        </el-table-column>
+        <el-table-column label="必填" width="70">
+          <template #default="{ row }">{{ row.required ? '是' : '否' }}</template>
+        </el-table-column>
+        <el-table-column label="选项" min-width="130">
+          <template #default="{ row }">{{ row.options?.join(' / ') || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="80">
+          <template #default="{ row }">
+            <el-tag :type="row.active ? 'success' : 'info'" size="small">{{ row.active ? '启用' : '停用' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="150" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" @click="openField(row)">编辑</el-button>
+            <el-button size="small" :type="row.active ? 'danger' : 'success'" @click="toggleField(row)">
+              {{ row.active ? '停用' : '启用' }}
+            </el-button>
+          </template>
+        </el-table-column>
+        <template #empty><el-empty description="暂无自定义字段" /></template>
+      </el-table>
+      <template #footer>
+        <el-button @click="fieldMgrDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 单条字段定义编辑弹窗 -->
+    <el-dialog v-model="fieldDialog" :title="fieldForm.id ? '编辑字段' : '新增字段'" width="460px"
+               append-to-body>
+      <el-form :model="fieldForm" label-width="92px">
+        <el-form-item label="字段名称" required>
+          <el-input v-model="fieldForm.label" placeholder="如 保质期 / 产地" :disabled="!!fieldForm.id" />
+        </el-form-item>
+        <el-form-item label="字段标识" required>
+          <el-input v-model="fieldForm.fieldKey" placeholder="如 shelf_life（小写字母/数字/下划线）"
+                    :disabled="!!fieldForm.id" />
+          <div class="field-hint">用于标签占位符 <span v-text="'{{shelf_life}}'" />，字母开头、不可与内置字段冲突</div>
+        </el-form-item>
+        <el-form-item label="类型" required>
+          <el-select v-model="fieldForm.type" style="width:100%">
+            <el-option v-for="t in FIELD_TYPES" :key="t.value" :label="t.label" :value="t.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="选项" v-if="fieldForm.type === 'select' || fieldForm.type === 'multiselect'">
+          <el-select v-model="fieldForm.options" multiple filterable allow-create default-first-option
+                     placeholder="输入后回车添加选项" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="必填">
+          <el-switch v-model="fieldForm.required" />
+        </el-form-item>
+        <el-form-item label="排序">
+          <el-input-number v-model="fieldForm.sortOrder" :min="0" controls-position="right" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="fieldDialog = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="saveField">保存</el-button>
       </template>
     </el-dialog>
 
@@ -398,9 +502,23 @@ import {
   apiMdMaterialCategories, apiMdBindTemplate,
   apiMdGroups, apiMdCreateGroup, apiMdUpdateGroup, apiMdGroupActive,
   apiMdSetDefaultLocation,
+  apiMdFields, apiMdCreateField, apiMdUpdateField, apiMdFieldActive,
 } from '@/api';
 import { apiListTemplates } from '@/api/templates';
 import { useAuthStore } from '@/store/auth';
+
+const FIELD_TYPES = [
+  { value: 'text', label: '单行文本' }, { value: 'number', label: '数字' },
+  { value: 'date', label: '日期' }, { value: 'select', label: '单选' },
+  { value: 'multiselect', label: '多选' }, { value: 'boolean', label: '开关' },
+];
+function fieldTypeLabel(t: string) { return FIELD_TYPES.find((x) => x.value === t)?.label || t; }
+function formatCustomValue(v: any) {
+  if (v == null || v === '') return '—';
+  if (Array.isArray(v)) return v.join('、');
+  if (typeof v === 'boolean') return v ? '是' : '否';
+  return String(v);
+}
 
 const canWrite = computed(() => useAuthStore().hasPermission('masterdata:item:write'));
 const canPrint = computed(() => useAuthStore().hasPermission('print:job:write'));
@@ -418,8 +536,19 @@ const matDialog = ref(false);
 const matForm = reactive<any>({
   id: null, code: '', name: '', spec: '', unit: '件', category: '', safetyStock: 0,
   templateId: undefined, groupId: undefined, autoPrint: false, printerId: undefined,
-  defaultWarehouseId: undefined, defaultLocationId: undefined,
+  defaultWarehouseId: undefined, defaultLocationId: undefined, customFields: {},
 });
+
+// 产品自定义字段
+const allFields = ref<any[]>([]);       // 字段定义（含停用，管理弹窗用）
+const fieldShowInactive = ref(false);
+const fieldLoading = ref(false);
+const fieldMgrDialog = ref(false);
+const fieldDialog = ref(false);
+const fieldForm = reactive<any>({
+  id: null, fieldKey: '', label: '', type: 'text', required: false, options: [] as string[], sortOrder: 0,
+});
+const activeFields = computed(() => allFields.value.filter((f) => f.active));
 
 // 产品一键打印
 const printDialog = ref(false);
@@ -565,10 +694,11 @@ function openMat(row?: any) {
     autoPrint: !!row.autoPrint, printerId: row.printerId ?? undefined,
     defaultWarehouseId: row.defaultWarehouseId ?? undefined,
     defaultLocationId: row.defaultLocationId ?? undefined,
+    customFields: { ...(row.customFields || {}) },
   } : {
     id: null, code: '', name: '', spec: '', unit: '件', category: '', safetyStock: 0,
     templateId: undefined, groupId: undefined, autoPrint: false, printerId: undefined,
-    defaultWarehouseId: undefined, defaultLocationId: undefined,
+    defaultWarehouseId: undefined, defaultLocationId: undefined, customFields: {},
   });
   matDialog.value = true;
 }
@@ -585,6 +715,7 @@ async function saveMat() {
       printerId: matForm.printerId ?? null,
       defaultWarehouseId: matForm.defaultWarehouseId ?? null,
       defaultLocationId: matForm.defaultLocationId ?? null,
+      customFields: matForm.customFields || {},
     };
     if (matForm.id) await apiMdUpdateMaterial(matForm.id, payload);
     else await apiMdCreateMaterial({ code: matForm.code, ...payload });
@@ -595,6 +726,45 @@ async function toggleMat(row: any) {
   await apiMdMaterialActive(row.id, !row.active);
   ElMessage.success(row.active ? '已停用' : '已启用');
   await loadMaterials();
+}
+
+// ---------------- 自定义字段 ----------------
+async function loadFields() {
+  fieldLoading.value = true;
+  try {
+    allFields.value = await apiMdFields(fieldShowInactive.value);
+  } finally { fieldLoading.value = false; }
+}
+function openFieldMgr() { fieldMgrDialog.value = true; loadFields(); }
+function openField(row?: any) {
+  Object.assign(fieldForm, row ? {
+    id: row.id, fieldKey: row.fieldKey, label: row.label, type: row.type,
+    required: !!row.required, options: [...(row.options || [])], sortOrder: row.sortOrder ?? 0,
+  } : {
+    id: null, fieldKey: '', label: '', type: 'text', required: false, options: [], sortOrder: 0,
+  });
+  fieldDialog.value = true;
+}
+async function saveField() {
+  if (!fieldForm.fieldKey || !fieldForm.label) return ElMessage.warning('字段名称与标识必填');
+  if ((fieldForm.type === 'select' || fieldForm.type === 'multiselect') && !fieldForm.options.length) {
+    return ElMessage.warning('单选/多选字段请至少添加一个选项');
+  }
+  saving.value = true;
+  try {
+    const payload: any = {
+      label: fieldForm.label, type: fieldForm.type, required: !!fieldForm.required,
+      options: fieldForm.options, sortOrder: Number(fieldForm.sortOrder) || 0,
+    };
+    if (fieldForm.id) await apiMdUpdateField(fieldForm.id, payload);
+    else await apiMdCreateField({ fieldKey: fieldForm.fieldKey, ...payload });
+    ElMessage.success('已保存'); fieldDialog.value = false; await loadFields();
+  } finally { saving.value = false; }
+}
+async function toggleField(row: any) {
+  await apiMdFieldActive(row.id, !row.active);
+  ElMessage.success(row.active ? '已停用' : '已启用');
+  await loadFields();
 }
 
 function onMatSelection(rows: any[]) { selectedMaterials.value = rows; }
@@ -711,7 +881,7 @@ onMounted(async () => {
   categories.value = cats ?? [];
   groups.value = gs ?? [];
   await loadWarehouses();
-  await Promise.all([loadMaterials(), loadLocations()]);
+  await Promise.all([loadMaterials(), loadLocations(), loadFields()]);
 });
 </script>
 
@@ -721,6 +891,8 @@ onMounted(async () => {
 .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
 .muted { color: #c0c4cc; }
 .field-hint { color: #909399; font-size: 12px; line-height: 1.6; margin-top: 4px; }
+.field-mgr-tip { color: #606266; font-size: 12px; line-height: 1.7; background: #f4f4f5; padding: 8px 12px; border-radius: 4px; }
+.field-mgr-tip code { color: #409eff; }
 .print-info { background: #f4f4f5; border-radius: 4px; padding: 10px 12px; margin-bottom: 14px; line-height: 1.9; }
 .batch-list { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow-y: auto; }
 </style>

@@ -64,6 +64,27 @@ export class Material {
   @Column({ name: 'printer_id', type: 'bigint', nullable: true }) printerId: number | null;
   @Column({ name: 'default_warehouse_id', type: 'bigint', nullable: true }) defaultWarehouseId: number | null;
   @Column({ name: 'default_location_id', type: 'bigint', nullable: true }) defaultLocationId: number | null;
+  // 自定义字段值（fieldKey -> value），字段定义在 material_field_definitions
+  @Column('jsonb', { name: 'custom_fields', default: {} }) customFields: Record<string, any>;
+  @Column({ default: true }) active: boolean;
+  @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
+}
+
+/**
+ * 产品自定义字段定义（租户级）。DDL: scripts/inventory_material_custom_fields.sql
+ * type 必须显式声明，避免字面量联合反射成 Object 让 TypeORM 启动失败（同 ProductGroup.type）。
+ */
+@Entity('material_field_definitions')
+@Index('ix_mfielddefs_tenant', ['tenantId', 'sortOrder'])
+export class MaterialFieldDefinition {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ name: 'tenant_id', type: 'bigint' }) tenantId: number;
+  @Column({ name: 'field_key', length: 40 }) fieldKey: string;
+  @Column({ length: 60 }) label: string;
+  @Column({ type: 'varchar', length: 16, default: 'text' }) type: 'text' | 'number' | 'date' | 'select' | 'multiselect' | 'boolean';
+  @Column({ default: false }) required: boolean;
+  @Column('jsonb', { default: [] }) options: string[];
+  @Column({ name: 'sort_order', type: 'int', default: 0 }) sortOrder: number;
   @Column({ default: true }) active: boolean;
   @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
 }

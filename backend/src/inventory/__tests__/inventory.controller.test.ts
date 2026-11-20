@@ -72,3 +72,43 @@ test('台账查询 DTO 只接受合法类型与分页上限', async () => {
   const bad = Object.assign(new QueryMovesDto(), { kind: 'delete', limit: 1000 });
   assert.ok((await validate(bad)).length > 0);
 });
+
+// ---- 产品自定义字段：MasterdataController 接线与 DTO 校验（本功能新增） ----
+import { MasterdataController } from '../masterdata.controller';
+import { CreateFieldDefDto, CreateMaterialDto, UpdateFieldDefDto } from '../dto/masterdata.dto';
+
+test('字段定义 REST 权限点：读用 masterdata:item:read，写用 masterdata:item:write', () => {
+  const expected: Record<string, string> = {
+    fields: 'masterdata:item:read',
+    createField: 'masterdata:item:write',
+    updateField: 'masterdata:item:write',
+    setFieldActive: 'masterdata:item:write',
+  };
+  for (const [method, code] of Object.entries(expected)) {
+    const fn = (MasterdataController.prototype as any)[method];
+    assert.ok(typeof fn === 'function', `缺少接口 ${method}`);
+    assert.deepEqual(reflector.get(PERMISSION_KEY, fn), [code], `${method} 权限点应为 ${code}`);
+  }
+});
+
+test('字段定义 DTO 拦截非法类型 / 空标识 / 空选项', async () => {
+  const good = Object.assign(new CreateFieldDefDto(), {
+    fieldKey: 'shelf_life', label: '保质期', type: 'text', required: true,
+  });
+  assert.deepEqual(await validate(good), []);
+  const bad = Object.assign(new CreateFieldDefDto(), { fieldKey: '', label: '', type: 'hack' });
+  assert.ok((await validate(bad)).length > 0);
+  const badUpdate = Object.assign(new UpdateFieldDefDto(), { type: 'drop-table' });
+  assert.ok((await validate(badUpdate)).length > 0);
+});
+
+test('产品 DTO 接受 customFields 对象', async () => {
+  const good = Object.assign(new CreateMaterialDto(), {
+    code: 'M-1', name: '测试', customFields: { shelf_life: '12个月', net_weight: 2.5 },
+  });
+  assert.deepEqual(await validate(good), []);
+  const bad = Object.assign(new CreateMaterialDto(), {
+    code: 'M-1', name: '测试', customFields: 'not-an-object',
+  });
+  assert.ok((await validate(bad)).length > 0, 'customFields 必须是对象');
+});
