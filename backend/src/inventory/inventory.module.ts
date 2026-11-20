@@ -9,20 +9,23 @@ import {
   Warehouse, WarehouseLocation, ProductGroup, Material, MaterialFieldDefinition,
   StockBatch, StockMove, Bom, BomItem,
 } from './inventory.entity';
+import { AlertRule, AlertEvent } from './alert.entity';
 import { InventoryService } from './inventory.service';
+import { AlertService } from './alert.service';
 import { InventoryController } from './inventory.controller';
 import { MasterdataController } from './masterdata.controller';
+import { AlertController } from './alert.controller';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([
       Warehouse, WarehouseLocation, ProductGroup, Material, MaterialFieldDefinition,
-      StockBatch, StockMove, Bom, BomItem, Template, Printer,
+      StockBatch, StockMove, Bom, BomItem, Template, Printer, AlertRule, AlertEvent,
     ]),
     PrintModule,
   ],
-  controllers: [InventoryController, MasterdataController],
-  providers: [InventoryService],
-  exports: [InventoryService],
+  controllers: [InventoryController, MasterdataController, AlertController],
+  providers: [InventoryService, AlertService],
+  exports: [InventoryService, AlertService],
 })
 export class InventoryModule {}

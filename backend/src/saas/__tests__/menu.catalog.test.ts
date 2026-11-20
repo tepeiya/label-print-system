@@ -78,6 +78,17 @@ test('叶子节点不带 children 字段，分组节点保留 children', () => {
   for (const c of leaf.children!) assert.equal('children' in c, false);
 });
 
+test('呆滞预警入口：订阅 alert 且有 alert:event:read 才出现在库存分组，路径 /alerts', () => {
+  const withAlert = buildMenus(['inventory', 'alert'], ['inventory:stock:read', 'alert:event:read']);
+  const inv = withAlert.find((n) => n.key === 'inventory');
+  assert.ok(inv?.children?.some((c) => c.key === 'alerts' && c.path === '/alerts' && c.module === 'alert'));
+
+  // 只订 inventory、没有 alert 模块：即便有权限点也不出现（模块是门）
+  const noModule = buildMenus(['inventory'], ['inventory:stock:read', 'alert:event:read']);
+  const inv2 = noModule.find((n) => n.key === 'inventory');
+  assert.ok(!inv2?.children?.some((c) => c.key === 'alerts'));
+});
+
 test('裁剪不修改目录常量（前端可安全复用 MENU_CATALOG）', () => {
   const before = JSON.stringify(MENU_CATALOG);
   buildMenus(['print'], ['*']);

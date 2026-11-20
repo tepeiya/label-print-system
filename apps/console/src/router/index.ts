@@ -38,6 +38,9 @@ const routes: RouteRecordRaw[] = [
       // 但它是 inventory 的依赖（module-deps 会自动展开），菜单与路由用 inventory 保持一致。
       { path: 'masterdata', component: () => import('@/views/Masterdata.vue'),
         meta: { title: '基础资料', icon: 'Files', module: 'inventory', permission: 'masterdata:item:read' } },
+      // 呆滞/效期预警：alert 模块（依赖 inventory 自动展开），读权限用 alert:event:read。
+      { path: 'alerts', component: () => import('@/views/Alerts.vue'),
+        meta: { title: '呆滞/效期预警', icon: 'Bell', module: 'alert', permission: 'alert:event:read' } },
       {
         path: 'users',
         component: () => import('@/views/UserManagement.vue'),

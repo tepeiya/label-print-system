@@ -20,6 +20,7 @@ import {
   AGENT_TOOLS, catalogDto, findTool, isWriteTool, needsApproval, ToolDef, visibleTools,
 } from './tool.catalog';
 import { InventoryService, StockWriteOutcome } from '../inventory/inventory.service';
+import { AlertService } from '../inventory/alert.service';
 import { shortageSummaryText } from '../inventory/kit.calc';
 import { ModulesService } from '../saas/modules.service';
 import { TenantConfigService, FeatureKey } from '../saas/tenant-config.service';
@@ -77,6 +78,7 @@ export class ToolsService {
     @InjectRepository(Tenant) private tenants: Repository<Tenant>,
     private agent: AgentService,
     private inventory: InventoryService,
+    private alerts: AlertService,
     private modulesSvc: ModulesService,
     private usage: UsageService,
     private audit: AuditService,
@@ -476,6 +478,9 @@ export class ToolsService {
       case 'inventory.list_expiring': return this.execBatches(ctx, args, true);
       case 'bom.check_kit_rate': return this.execKit(ctx, args, false);
       case 'bom.explain_shortage': return this.execKit(ctx, args, true);
+      // ---------------- alert 预警 ----------------
+      case 'alerts.list': return this.execAlertsList(ctx, args);
+      case 'alerts.ack': return this.execAlertsAck(ctx, args);
       // ---------------- P5 写 / 高危 ----------------
       case 'templates.create': return this.execTemplateCreate(ctx, args);
       case 'templates.update': return this.execTemplateUpdate(ctx, args);
@@ -646,6 +651,40 @@ export class ToolsService {
       warnings: items.filter((i) => i.expiresAt && new Date(i.expiresAt) <= new Date())
         .map((i) => `${i.name} ${i.batchNo} 已过期`),
       next_actions: expiring && items.length ? ['inventory.query_stock'] : [],
+    };
+  }
+
+  private async execAlertsList(ctx: AgentCtx, args: Record<string, any>): Promise<ToolResult> {
+    const res = await this.alerts.listEvents(ctx.tenantId, {
+      keyword: args.keyword, status: args.status, severity: args.severity,
+      type: args.type, limit: args.limit,
+    });
+    const items = res.items;
+    const s = res.summary;
+    return {
+      summary: s.total
+        ? `当前有 ${s.total} 条预警（待处理 ${s.open}，严重 ${s.critical}）：`
+          + items.slice(0, 3).map((i) => `${i.name}${i.batchNo ? `(${i.batchNo})` : ''} ${i.type === 'expiring' ? `到期剩${i.daysToExpire}天` : `呆滞${i.ageDays}天`}`).join('；')
+          + (items.length > 3 ? '…' : '')
+        : '当前没有预警记录。可由租户后台「呆滞/效期预警」页执行扫描后生成',
+      data: { items, total: s.total, summary: s },
+      warnings: items.filter((i) => i.severity === 'critical').slice(0, 5)
+        .map((i) => `严重：${i.name}${i.batchNo ? `(${i.batchNo})` : ''} ${i.qty}${i.unit}`),
+      next_actions: items.length ? ['alerts.ack', 'inventory.query_stock'] : [],
+    };
+  }
+
+  private async execAlertsAck(ctx: AgentCtx, args: Record<string, any>): Promise<ToolResult> {
+    if (!args.id) throw new BadRequestException('需要 id（预警事件 id，先用 alerts.list 取）');
+    const row = await this.alerts.ackEvent(
+      ctx.tenantId, Number(args.id), args.status === 'ignored' ? 'ignored' : 'ack',
+      args.note ? String(args.note) : undefined, `agent#${ctx.clientName}`,
+    );
+    return {
+      summary: `预警 #${row.id}（${row.name}）已标记为${row.status === 'ignored' ? '忽略' : '已处理'}`,
+      data: { item: row },
+      warnings: [],
+      next_actions: ['alerts.list'],
     };
   }
 

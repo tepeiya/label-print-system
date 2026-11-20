@@ -7,7 +7,8 @@
 //    出入见 docs/10 §10.20 偏离说明。
 // implemented=false 的行 = 已注册但无执行器（调用返回 400「后续版本开放」）：
 //    P5 开放了 5 个写工具 + print.get_status；print.estimate/wait_for_job/cancel_job、
-//    ai.*、alerts.* 仍属后续阶段（alert 域无表、ai 域要图片入参与计费联动）。
+//    ai.* 仍属后续阶段（ai 域要图片入参与计费联动）。
+//    呆滞预警 alert 域已落地（alerts.list / alerts.ack，DDL: scripts/inventory_alert.sql）。
 // P5 语义：risk==='high' → 必须 approval（§11.7.6）；risk!=='read' → 必须 idempotency_key（§11.7.4）。
 // =============================================================================
 import { matchPermission } from '../common/permission-match';
@@ -130,6 +131,29 @@ export const AGENT_TOOLS: ToolDef[] = [
       demand: { type: 'integer', minimum: 1 },
       warehouse: { type: 'string' },
     }, ['product', 'demand']),
+  },
+
+  // ---------------- 呆滞/效期预警（alert 模块，docs/11 §11.16） ----------------
+  {
+    name: 'alerts.list', title: '预警列表', risk: 'read', permission: 'alert:event:read', modules: ['alert'], implemented: true,
+    description: '查呆滞/效期预警事件；可先 scan 由租户后台扫描生成。支持按状态/级别/关键字过滤',
+    inputSchema: S({
+      keyword: { type: 'string', description: '物料编码/名称/批次模糊匹配' },
+      status: { type: 'string', enum: ['open', 'ack', 'ignored'] },
+      severity: { type: 'string', enum: ['warning', 'critical'] },
+      type: { type: 'string', enum: ['dead_stock', 'expiring'] },
+      limit: { type: 'integer', default: 20, maximum: 100 },
+    }),
+  },
+  {
+    name: 'alerts.ack', title: '处理预警', risk: 'write', permission: 'alert:event:ack', modules: ['alert'], implemented: true,
+    description: '确认或忽略一条预警事件（ack=确认处理，ignored=忽略）；同 idempotency_key 重试只生效一次',
+    inputSchema: S({
+      id: { type: 'integer', description: '预警事件 id（先用 alerts.list 取）' },
+      status: { type: 'string', enum: ['ack', 'ignored'] },
+      note: { type: 'string', description: '处理备注' },
+      idempotency_key: { type: 'string', description: '幂等键，重试安全' },
+    }, ['id', 'status', 'idempotency_key']),
   },
 
   // ---------------- P5 写工具（§11.7.4 强制 idempotency_key；risk=high 需 approval） ----------------

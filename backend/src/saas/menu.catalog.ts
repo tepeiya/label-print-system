@@ -49,6 +49,9 @@ export const MENU_CATALOG: MenuNode[] = [
       // 基础资料的后端模块门是 masterdata（inventory 的依赖会自动展开），
       // 菜单侧沿用 inventory 模块门，避免出现「有库存却看不到基础资料」。
       { key: 'masterdata', name: '基础资料', icon: 'Files', path: '/masterdata', module: 'inventory', permission: 'masterdata:item:read' },
+      // 呆滞/效期预警：alert 是独立模块（依赖 inventory 自动展开），入口用 alert:event:read。
+      // 放在库存分组下，和「库存/基础资料」形成 库存域三件套。
+      { key: 'alerts', name: '呆滞/效期预警', icon: 'Bell', path: '/alerts', module: 'alert', permission: 'alert:event:read' },
     ],
   },
   // AI 工作台：BASIC 也含 ai 模块（历史种子，见 docs/10 §10.15.5 第 1 条），入口权限点用 ai:generate

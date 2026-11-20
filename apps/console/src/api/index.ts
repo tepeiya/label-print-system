@@ -210,6 +210,22 @@ export const apiMdCreateLocation = (data: any) => http.post(`${MD}/locations`, d
 export const apiMdUpdateLocation = (id: number, data: any) => http.put(`${MD}/locations/${id}`, data);
 export const apiMdLocationActive = (id: number, active: boolean) => http.post(`${MD}/locations/${id}/active`, { active });
 
+// ========== 呆滞/效期预警（alert 模块）==========
+// 后端 AlertController（backend/src/inventory/alert.controller.ts）：
+// 规则：GET/POST /inventory/alerts/rules · PUT /rules/:id · POST /rules/:id/active · DELETE /rules/:id
+// 扫描/事件：POST /inventory/alerts/scan · GET /events · GET /summary · POST /events/:id/ack
+const AL = '/inventory/alerts';
+export const apiAlertRules = (includeInactive = false) => http.get(`${AL}/rules`, { params: { includeInactive } });
+export const apiAlertCreateRule = (data: any) => http.post(`${AL}/rules`, data);
+export const apiAlertUpdateRule = (id: number, data: any) => http.put(`${AL}/rules/${id}`, data);
+export const apiAlertRuleActive = (id: number, active: boolean) => http.post(`${AL}/rules/${id}/active`, { active });
+export const apiAlertDeleteRule = (id: number) => http.delete(`${AL}/rules/${id}`);
+export const apiAlertScan = (ruleId?: number) => http.post(`${AL}/scan`, ruleId ? { ruleId } : {});
+export const apiAlertEvents = (params?: any) => http.get(`${AL}/events`, { params });
+export const apiAlertSummary = () => http.get(`${AL}/summary`);
+export const apiAlertAck = (id: number, data: { status: 'ack' | 'ignored'; note?: string }) =>
+  http.post(`${AL}/events/${id}/ack`, data);
+
 // ========== Printers ==========
 // 后端 PrinterController（backend/src/printer/printer.module.ts）：
 // GET /printers · POST /printers · GET /printers/:id · PUT /printers/:id ·
