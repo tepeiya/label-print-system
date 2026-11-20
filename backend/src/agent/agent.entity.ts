@@ -98,4 +98,35 @@ export class AgentPrompt {
   @Column({ name: 'updated_by', type: 'bigint', nullable: true }) updatedBy: number | null;
   @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
   @Column({ name: 'updated_at', type: 'timestamptz', default: () => 'now()' }) updatedAt: Date;
+  /** 当前版本号（每次 upsert +1，与 agent_prompt_versions 对应） */
+  @Column({ default: 1 }) version: number;
+  /** 角色分发：空数组=全员可见；非空=仅这些角色码可见（管理端过滤，Agent 侧 fail-closed） */
+  @Column('jsonb', { name: 'roles', default: () => "'[]'" }) roles: string[];
+  /** 调用/渲染次数（preview 与 agent prompts/get 累加，运营观察用） */
+  @Column({ name: 'usage_count', default: 0 }) usageCount: number;
+}
+
+/**
+ * 提示词版本历史：每次 upsert 前把旧快照存一行，rollback 也存一行（形成可追溯链）。
+ * DDL: backend/scripts/saas_p6_prompt_versions.sql
+ */
+@Entity('agent_prompt_versions')
+@Index('ix_promptver_tenant_name', ['tenantId', 'name'])
+export class AgentPromptVersion {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ name: 'tenant_id', type: 'bigint' }) tenantId: number;
+  @Column({ length: 64 }) name: string;
+  /** 该快照对应的版本号 */
+  @Column({ type: 'int' }) version: number;
+  @Column({ length: 120 }) title: string;
+  @Column({ length: 500, default: '' }) description: string;
+  @Column('text') content: string;
+  @Column('jsonb', { default: () => "'[]'" }) arguments: any[];
+  @Column({ default: true }) enabled: boolean;
+  @Column({ name: 'sort_order', default: 100 }) sortOrder: number;
+  /** 操作类型：upsert（被覆盖前）/ rollback（回滚前）/ create 初始可为 initial */
+  @Column({ length: 20, default: 'upsert' }) action: string;
+  /** 触发这次版本记录的操作人 */
+  @Column({ name: 'actor_id', type: 'bigint', nullable: true }) actorId: number | null;
+  @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
 }

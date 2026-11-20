@@ -6,9 +6,11 @@
 // ⚠️ 权限点用库内真实码（两段式 template:read/write），与文档 print:template:* 的
 //    出入见 docs/10 §10.20 偏离说明。
 // implemented=false 的行 = 已注册但无执行器（调用返回 400「后续版本开放」）：
-//    P5 开放了 5 个写工具 + print.get_status；print.estimate/wait_for_job/cancel_job、
-//    ai.* 仍属后续阶段（ai 域要图片入参与计费联动）。
-//    呆滞预警 alert 域已落地（alerts.list / alerts.ack，DDL: scripts/inventory_alert.sql）。
+//    当前无 implemented=false 的工具。P5 开放 5 个写工具 + print.get_status；
+//    后续补齐 print.estimate/wait_for_job/cancel_job（复制打印链路，见 tools.service）、
+//    呆滞预警 alerts.list/alerts.ack（DDL: scripts/inventory_alert.sql）、
+//    BOM 齐套 bom.check_kit_rate/bom.explain_shortage。
+//    ai.* 仍属后续阶段（ai 域要图片入参与计费联动，未注册）。
 // P5 语义：risk==='high' → 必须 approval（§11.7.6）；risk!=='read' → 必须 idempotency_key（§11.7.4）。
 // =============================================================================
 import { matchPermission } from '../common/permission-match';
@@ -219,8 +221,34 @@ export const AGENT_TOOLS: ToolDef[] = [
   },
   {
     name: 'print.get_status', title: '查打印任务', risk: 'read', permission: 'print:job:read', modules: ['print'], implemented: true,
-    description: '查询打印任务进度（submit_job 之后的轮询；等待/取消留后续版本）',
+    description: '查询打印任务进度（submit_job 之后的轮询）',
     inputSchema: S({ job_id: { type: 'integer' } }, ['job_id']),
+  },
+  {
+    name: 'print.estimate', title: '预估打印量', risk: 'read', permission: 'print:job:read', modules: ['print'], implemented: true,
+    description: '按模板+份数+数据行预估标签总数与批次上限校验，不落库、不提交真实打印',
+    inputSchema: S({
+      template: { type: 'string', description: '模板 id 或名称（可选：不传则只按 copies×rows 估算）' },
+      copies: { type: 'integer', minimum: 1 },
+      rows: { type: 'array', items: { type: 'object' } },
+    }, []),
+  },
+  {
+    name: 'print.wait_for_job', title: '等待打印完成', risk: 'read', permission: 'print:job:read', modules: ['print'], implemented: true,
+    description: '轮询任务直到终态（done/failed/canceled）；timeout_ms 上限 60s，避免长时间占用',
+    inputSchema: S({
+      job_id: { type: 'integer' },
+      timeout_ms: { type: 'integer', minimum: 100, maximum: 60000, default: 10000 },
+      poll_ms: { type: 'integer', minimum: 100, maximum: 5000, default: 500 },
+    }, ['job_id']),
+  },
+  {
+    name: 'print.cancel_job', title: '取消打印任务（写）', risk: 'write', permission: 'print:job:write', modules: ['print'], implemented: true,
+    description: '取消尚未完成的任务；写操作必须带 idempotency_key，重复取消同一 job 安全',
+    inputSchema: S({
+      job_id: { type: 'integer' },
+      idempotency_key: { type: 'string' },
+    }, ['job_id', 'idempotency_key']),
   },
 ];
 

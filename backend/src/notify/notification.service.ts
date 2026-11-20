@@ -4,13 +4,14 @@
 // 红线：所有查询与更新**显式带 tenant_id**，绝不从前端参数决定数据范围。
 // 发布失败不抛给业务主流程（通知是旁路能力），但会记日志，便于运维发现通道故障。
 // =============================================================================
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Notification } from './notification.entity';
 import {
   ChannelDelivery, ChannelRegistry, InAppChannel, NotificationMessage,
 } from './notification.channel';
+import { NOTIFY_CONFIG, NotifyConfig } from './notify.config';
 
 export interface PublishResult {
   created: boolean;
@@ -33,7 +34,23 @@ export class NotificationService {
     @InjectRepository(Notification) private repo: Repository<Notification>,
     private inApp: InAppChannel,
     private channels: ChannelRegistry,
+    @Inject(NOTIFY_CONFIG) private notifyConfig: NotifyConfig,
   ) {}
+
+  /** 已注册通道 + 外部网关配置状态（供前端/运维核对，不含密钥） */
+  channelStatus() {
+    const cfg = this.notifyConfig;
+    return {
+      registered: this.channels.all().map((c) => c.kind),
+      external: {
+        // 飞书靠消息级 webhook 或默认 webhook；二者皆无则视为未配置
+        feishu: { configured: !!cfg.feishuWebhook },
+        email: { configured: !!cfg.emailGatewayUrl },
+        sms: { configured: !!cfg.smsGatewayUrl },
+      },
+      timeoutMs: cfg.timeoutMs,
+    };
+  }
 
   /**
    * 发布一条通知。站内信必须先落库成功；外部通道（邮件/飞书/…）是 best-effort，

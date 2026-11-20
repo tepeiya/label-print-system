@@ -31,8 +31,28 @@ export class PromptsController {
   constructor(private prompts: PromptsService, private audit: AuditService) {}
 
   @Get()
-  list() {
-    return this.prompts.list(useTenantId());
+  list(@Request() req: any) {
+    // 管理端按当前用户角色过滤「按角色分发」的提示词；SUPER_ROLES 看全部
+    const roles: string[] = Array.isArray(req.user?.roles) ? req.user.roles : [];
+    return this.prompts.list(useTenantId(), roles);
+  }
+
+  /** 版本历史（倒序） */
+  @Get(':name/versions')
+  versions(@Param('name') name: string) {
+    return this.prompts.listVersions(useTenantId(), name);
+  }
+
+  /** 回滚到指定版本（写一条 rollback 版本，版本链可追溯） */
+  @Post(':name/rollback')
+  @HttpCode(200)
+  async rollback(@Request() req: any, @Param('name') name: string, @Body() body: { version: number }) {
+    const tenantId = useTenantId();
+    const row = await this.prompts.rollback(tenantId, name, Number(body?.version), req.user?.sub ?? null);
+    await this.audit.write(tenantId, 'agent.prompt.rollback', {
+      name, version: Number(body?.version), currentVersion: row.version,
+    }, req.user?.sub, 'agent_prompt');
+    return row;
   }
 
   @Get(':name')
@@ -44,9 +64,10 @@ export class PromptsController {
   @Put(':name')
   async upsert(@Request() req: any, @Param('name') name: string, @Body() dto: UpsertPromptDto) {
     const tenantId = useTenantId();
-    const row = await this.prompts.upsert(tenantId, name, dto, req.user?.sub ?? null);
+    const row = await this.prompts.upsert(tenantId, name, dto, req.user?.sub ?? null, { roles: dto.roles });
     await this.audit.write(tenantId, 'agent.prompt.save', {
       name: row.name, title: row.title, enabled: row.enabled, overridden: row.overridden,
+      version: row.version, roles: row.roles,
       arguments: (row.arguments ?? []).map((a: any) => a?.name).filter(Boolean),
     }, req.user?.sub, 'agent_prompt');
     return row;

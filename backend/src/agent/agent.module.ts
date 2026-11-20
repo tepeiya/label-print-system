@@ -6,7 +6,7 @@ import { Module } from '@nestjs/common';
 // 代理版 TypeOrmModule：forFeature 注入的 Repository 按 TenantCtx.dataSourceKey 路由
 import { TypeOrmModule } from '../common/tenant-typeorm.module';
 import {
-  AgentApproval, AgentClient, AgentPrompt, AgentToken, ToolIdempotency,
+  AgentApproval, AgentClient, AgentPrompt, AgentPromptVersion, AgentToken, ToolIdempotency,
 } from './agent.entity';
 import { Tenant } from '../entities/tenant.entity';
 import { Template } from '../entities/template.entity';
@@ -30,7 +30,7 @@ import { PrintModule } from '../print/print.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([
-      AgentClient, AgentToken, AgentApproval, ToolIdempotency, AgentPrompt, Tenant, Template,
+      AgentClient, AgentToken, AgentApproval, ToolIdempotency, AgentPrompt, AgentPromptVersion, Tenant, Template,
     ]),
     InventoryModule, SaasModule, BillingModule, AuditModule, TemplateModule, PrintModule,
   ],

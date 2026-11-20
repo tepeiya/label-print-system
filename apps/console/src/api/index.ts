@@ -513,6 +513,25 @@ export interface AgentPrompt {
   source: 'system' | 'custom';
   overridden: boolean;
   updatedAt: string | null;
+  /** 当前版本号 */
+  version: number;
+  /** 按角色分发：空=全员 */
+  roles: string[];
+  /** 渲染/调用次数 */
+  usageCount: number;
+}
+
+export interface PromptVersion {
+  id: number;
+  version: number;
+  action: string;
+  summary: string;
+  title: string;
+  content: string;
+  arguments: PromptArgument[];
+  enabled: boolean;
+  actorId: number | null;
+  createdAt: string;
 }
 
 export interface PromptPreview {
@@ -528,11 +547,15 @@ export const apiGetPrompt = (name: string): Promise<AgentPrompt> =>
   http.get(`/agent-prompts/${encodeURIComponent(name)}`);
 export const apiSavePrompt = (
   name: string,
-  data: { title: string; description?: string; content: string; arguments?: PromptArgument[]; enabled?: boolean; sortOrder?: number },
+  data: { title: string; description?: string; content: string; arguments?: PromptArgument[]; enabled?: boolean; sortOrder?: number; roles?: string[] },
 ): Promise<AgentPrompt> => http.put(`/agent-prompts/${encodeURIComponent(name)}`, data);
 export const apiDeletePrompt = (name: string): Promise<{ name: string; removed: boolean; revertedToSystem: boolean }> =>
   http.delete(`/agent-prompts/${encodeURIComponent(name)}`);
 export const apiPreviewPrompt = (name: string, args: Record<string, string>): Promise<PromptPreview> =>
   http.post(`/agent-prompts/${encodeURIComponent(name)}/preview`, { arguments: args });
+export const apiPromptVersions = (name: string): Promise<PromptVersion[]> =>
+  http.get(`/agent-prompts/${encodeURIComponent(name)}/versions`);
+export const apiPromptRollback = (name: string, version: number): Promise<AgentPrompt> =>
+  http.post(`/agent-prompts/${encodeURIComponent(name)}/rollback`, { version });
 
 export default http;

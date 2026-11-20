@@ -42,6 +42,12 @@ export interface PromptSourceDef {
   enabled?: boolean;
   sortOrder?: number;
   updatedAt?: any;
+  /** 角色分发：空=全员；非空=仅这些角色可见 */
+  roles?: string[];
+  /** 当前版本号 */
+  version?: number;
+  /** 渲染/调用次数 */
+  usageCount?: number;
 }
 
 export interface MergedPrompt extends PromptSourceDef {
@@ -186,4 +192,72 @@ export function mergePromptList(system: PromptSourceDef[], tenantRows: PromptSou
 /** Agent 侧只下发启用项（禁用 = 从 prompts/list 消失，但管理列表仍可见） */
 export function enabledPrompts(list: MergedPrompt[]): MergedPrompt[] {
   return list.filter((p) => p.enabled);
+}
+
+// --------------------------------------------------------------------------- 版本历史 / 角色分发 / 调用统计
+
+/** 一条可快照的提示词内容（用于版本表） */
+export interface PromptSnapshot {
+  title: string;
+  description: string;
+  content: string;
+  arguments: PromptArg[];
+  enabled: boolean;
+  sortOrder: number;
+}
+
+/** 从任意「行」抽取内容快照（版本表与管理行共用） */
+export function snapshotOf(row: PromptSnapshot): PromptSnapshot {
+  return {
+    title: String(row.title ?? '').slice(0, 120),
+    description: String(row.description ?? ''),
+    content: String(row.content ?? ''),
+    arguments: Array.isArray(row.arguments) ? row.arguments : [],
+    enabled: row.enabled !== false,
+    sortOrder: Number.isFinite(Number(row.sortOrder)) ? Number(row.sortOrder) : 100,
+  };
+}
+
+/** 两版之间是否真的有内容变化（用来避免无意义地写版本行） */
+export function snapshotChanged(a: PromptSnapshot, b: PromptSnapshot): boolean {
+  return a.title !== b.title
+    || a.description !== b.description
+    || a.content !== b.content
+    || a.enabled !== b.enabled
+    || a.sortOrder !== b.sortOrder
+    || JSON.stringify(a.arguments) !== JSON.stringify(b.arguments);
+}
+
+/** 人类可读的变更摘要（版本列表展示用，纯函数） */
+export function versionSummary(prev: PromptSnapshot, next: PromptSnapshot, action: string): string {
+  const changes: string[] = [];
+  if (prev.content !== next.content) changes.push('正文');
+  if (prev.title !== next.title) changes.push('标题');
+  if (JSON.stringify(prev.arguments) !== JSON.stringify(next.arguments)) changes.push('参数');
+  if (prev.enabled !== next.enabled) changes.push(next.enabled ? '启用' : '停用');
+  const what = changes.length ? changes.join('、') + '变更' : '内容存档';
+  return `${action === 'rollback' ? '回滚' : '更新'}：${what}`;
+}
+
+/**
+ * 角色分发过滤：roles 为空 = 全员；非空 = 仅传入角色命中者可见。
+ * 注意 Agent 侧拿不到可靠角色（AgentCtx 无 role），因此 forAgent 不传角色 →
+ * 带 roles 限制的 prompt 会被这里过滤掉（fail-closed，不会误下发）。
+ */
+export interface RoleScoped<T extends { roles?: string[] }> {
+  roles?: string[];
+}
+export function visibleToRoles<T extends RoleScoped<T>>(items: T[], roles: string[] = []): T[] {
+  const held = new Set((roles ?? []).map((r) => String(r)));
+  return items.filter((item) => {
+    const need = item.roles ?? [];
+    if (!need.length) return true;
+    return need.some((r) => held.has(String(r)));
+  });
+}
+
+/** 版本号递增（防御：非正数/NaN 归 1） */
+export function nextVersion(v: unknown): number {
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) && n > 0 ? n + 1 : 2;
 }

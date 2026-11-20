@@ -488,6 +488,9 @@ export class ToolsService {
       case 'inventory.transfer': return this.execTransfer(ctx, args);
       case 'print.submit_job': return this.execSubmitJob(ctx, args);
       case 'print.get_status': return this.execJobStatus(ctx, args);
+      case 'print.estimate': return this.execEstimate(ctx, args);
+      case 'print.wait_for_job': return this.execWaitForJob(ctx, args);
+      case 'print.cancel_job': return this.execCancelJob(ctx, args);
       default:
         throw new BadRequestException(`工具 ${tool.name} 未实现`);
     }
@@ -905,6 +908,88 @@ export class ToolsService {
       },
       warnings: job.status === 'failed' ? ['任务失败，请检查打印机连接与模板'] : [],
       next_actions: ['done','failed'].includes(job.status) ? [] : ['print.get_status'],
+    };
+  }
+
+  /** 打印量预估：只算 copies×rows 与批量护栏，可选校验模板存在；不落库不打印 */
+  private async execEstimate(ctx: AgentCtx, args: Record<string, any>): Promise<ToolResult> {
+    const copies = Math.floor(Number(args.copies ?? 1));
+    const rows = Array.isArray(args.rows) ? args.rows : undefined;
+    const over = batchOverLimit(copies, rows);
+    if (over) throw new BadRequestException(`${over}（§11.7.7 护栏 5：单次批量 ≤ ${BATCH_LIMIT}）`);
+    const rowCount = rows?.length || 1;
+    const total = Math.max(1, copies) * rowCount;
+
+    let template: { id: number; name: string } | null = null;
+    const warnings: string[] = [];
+    if (args.template !== undefined && args.template !== null && String(args.template).trim()) {
+      try {
+        const t = await this.resolveTemplate(ctx, String(args.template));
+        template = { id: Number(t.id), name: t.name };
+      } catch (e) {
+        warnings.push(`模板解析失败，预估未完成模板维度校验：${(e as Error).message}`);
+      }
+    } else {
+      warnings.push('未传 template：仅按份数×行数估算，未校验模板内容/尺寸');
+    }
+    return {
+      summary: `预估打印 ${total} 张标签（${copies} 份 × ${rowCount} 行）${template ? `，模板「${template.name}」` : ''}。此为估算，未提交真实打印。`,
+      data: { copies: Math.max(1, copies), rows: rowCount, total, template, estimated: true },
+      warnings,
+      next_actions: template ? ['print.submit_job'] : ['templates.search', 'print.submit_job'],
+    };
+  }
+
+  /** 等待任务到终态：带超时/轮询上限，避免长时间占用 Agent 调用 */
+  private async execWaitForJob(ctx: AgentCtx, args: Record<string, any>): Promise<ToolResult> {
+    const id = Number(args.job_id);
+    if (!Number.isFinite(id) || id <= 0) throw new BadRequestException('需要 job_id');
+    const timeoutMs = Math.max(100, Math.min(60_000, Math.floor(Number(args.timeout_ms ?? 10_000))));
+    const pollMs = Math.max(100, Math.min(5_000, Math.floor(Number(args.poll_ms ?? 500))));
+    const deadline = Date.now() + timeoutMs;
+    const terminal = ['done', 'failed', 'canceled', 'cancelled'];
+    let job: any = null;
+
+    while (Date.now() <= deadline) {
+      job = await this.inAgentTenant(ctx, () => this.printSvc.getJob(id));
+      if (!job) throw new NotFoundException(`打印任务不存在：${id}`);
+      if (terminal.includes(job.status)) break;
+      await new Promise((r) => setTimeout(r, pollMs));
+    }
+    const reached = job && terminal.includes(job.status);
+    const done = Number(job?.done ?? 0);
+    const total = Number(job?.total ?? 0);
+    return {
+      summary: reached
+        ? `任务 #${Number(job.id)} 已结束：${job.status}，${done}/${total}`
+        : `等待超时（${timeoutMs}ms），任务 #${id} 仍为 ${job?.status ?? '未知'}，可继续轮询`,
+      data: {
+        jobId: id, status: job?.status ?? null, total, done,
+        failed: Number(job?.failed ?? 0), timedOut: !reached,
+      },
+      warnings: reached && job.status === 'failed' ? ['任务失败，请检查打印机连接与模板'] : [],
+      next_actions: reached ? [] : ['print.wait_for_job', 'print.get_status'],
+    };
+  }
+
+  /** 取消任务：写工具（框架已强制 idempotency_key），重复取消同一 job 安全 */
+  private async execCancelJob(ctx: AgentCtx, args: Record<string, any>): Promise<ToolResult> {
+    const id = Number(args.job_id);
+    if (!Number.isFinite(id) || id <= 0) throw new BadRequestException('需要 job_id');
+    const before = await this.inAgentTenant(ctx, () => this.printSvc.getJob(id));
+    if (!before) throw new NotFoundException(`打印任务不存在：${id}`);
+    if (['done', 'failed', 'canceled', 'cancelled'].includes(before.status)) {
+      return {
+        summary: `任务 #${id} 已是终态（${before.status}），无需取消`,
+        data: { jobId: id, status: before.status, changed: false },
+        warnings: [], next_actions: ['print.get_status'],
+      };
+    }
+    await this.inAgentTenant(ctx, () => this.printSvc.cancel(id));
+    return {
+      summary: `任务 #${id} 已取消（原状态 ${before.status}）`,
+      data: { jobId: id, status: 'canceled', changed: true },
+      warnings: [], next_actions: ['print.get_status'],
     };
   }
 

@@ -31,4 +31,6 @@ export class UpsertPromptDto {
   @IsOptional() @IsArray() @ArrayMaxSize(12) arguments?: any[];
   @IsOptional() enabled?: boolean;
   @IsOptional() @IsInt() @Min(0) @Max(10000) sortOrder?: number;
+  /** 按角色分发：空/缺省=全员可见；非空=仅这些角色码可见 */
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @IsString({ each: true }) roles?: string[];
 }

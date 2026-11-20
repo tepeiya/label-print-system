@@ -15,6 +15,16 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Notification } from './notification.entity';
 
+/** 外部通道投递目标（站内信不依赖它；邮件/飞书/短信各有其一即可） */
+export interface NotificationRecipients {
+  /** 收件邮箱，单个或列表 */
+  email?: string | string[];
+  /** 飞书群机器人 webhook 完整地址 */
+  feishuWebhook?: string;
+  /** 短信手机号 */
+  phone?: string;
+}
+
 export interface NotificationMessage {
   tenantId: number;
   /** NULL = 全租户广播 */
@@ -25,6 +35,8 @@ export interface NotificationMessage {
   /** 同一事件的稳定键；带它才具备幂等，重复投递只落一行 */
   dedupeKey?: string | null;
   metadata?: Record<string, any>;
+  /** 外部通道收件人；也可退化到 metadata.email/feishuWebhook/phone 读取 */
+  recipients?: NotificationRecipients;
 }
 
 export interface ChannelDelivery {

@@ -36,6 +36,12 @@ export class NotificationController {
     return { count: await this.notifications.unreadCount(useTenantId(), useTenant().userId) };
   }
 
+  /** 通知通道配置状态（哪些外部通道已接入，不含密钥） */
+  @Get('channels')
+  channelStatus() {
+    return this.notifications.channelStatus();
+  }
+
   @Post(':id/read')
   async markRead(@Param('id', ParseIntPipe) id: number) {
     return { changed: await this.notifications.markRead(useTenantId(), useTenant().userId, id) };

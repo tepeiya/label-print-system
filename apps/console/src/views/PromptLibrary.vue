@@ -39,6 +39,12 @@
         <el-table-column label="参数" width="80">
           <template #default="{ row }">{{ (row.arguments || []).length }}</template>
         </el-table-column>
+        <el-table-column label="版本" width="80" align="center">
+          <template #default="{ row }">v{{ row.version || 1 }}</template>
+        </el-table-column>
+        <el-table-column label="调用" width="80" align="right">
+          <template #default="{ row }">{{ row.usageCount || 0 }}</template>
+        </el-table-column>
         <el-table-column label="启用" width="80">
           <template #default="{ row }">
             <el-switch
@@ -52,10 +58,11 @@
         <el-table-column label="更新时间" width="170">
           <template #default="{ row }">{{ formatTime(row.updatedAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="270" fixed="right">
           <template #default="{ row }">
             <el-button link size="small" type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button link size="small" type="primary" @click="openPreview(row)">预览</el-button>
+            <el-button link size="small" @click="openHistory(row)">历史</el-button>
             <el-popconfirm
               v-if="row.source === 'custom'"
               :title="row.overridden ? `恢复系统默认后，本租户对「${row.name}」的修改会丢失。确认？` : `删除自定义提示词「${row.name}」？`"
@@ -86,6 +93,13 @@
         </el-form-item>
         <el-form-item label="说明">
           <el-input v-model="form.description" maxlength="500" show-word-limit />
+        </el-form-item>
+        <el-form-item label="角色分发">
+          <el-select v-model="form.roles" multiple filterable allow-create default-first-option
+                     placeholder="留空=全员可见；选填角色码则仅这些角色可用" style="width: 100%">
+            <el-option v-for="r in knownRoles" :key="r" :label="r" :value="r" />
+          </el-select>
+          <div class="hint">留空表示全员可见；填了角色码后，只有具备其中任一角色的用户在管理端可见，Agent 侧不下发（fail-closed）。</div>
         </el-form-item>
         <el-form-item label="排序">
           <el-input-number v-model="form.sortOrder" :min="0" :max="10000" />
@@ -153,6 +167,38 @@
         <pre>{{ previewResult.text }}</pre>
       </div>
     </el-dialog>
+
+    <!-- 版本历史 -->
+    <el-dialog v-model="historyOpen" :title="`版本历史：${historyName}`" width="860px" top="6vh">
+      <el-table :data="versions" v-loading="historyLoading" size="small" border>
+        <el-table-column label="版本" width="80" align="center">
+          <template #default="{ row }">v{{ row.version }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="110">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.action === 'rollback' ? 'warning' : (row.action === 'initial' ? 'info' : 'success')">
+              {{ row.action === 'rollback' ? '回滚' : row.action === 'initial' ? '初始' : '更新' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="summary" label="变更摘要" min-width="180" />
+        <el-table-column label="标题" min-width="140">
+          <template #default="{ row }">{{ row.title }}</template>
+        </el-table-column>
+        <el-table-column label="时间" width="170">
+          <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="90" fixed="right">
+          <template #default="{ row }">
+            <el-button link size="small" type="primary" :disabled="!canManage || row.version === currentHistVersion"
+                       @click="doRollback(row)">回滚</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div class="hint" style="margin-top: 10px">
+        回滚会把该版本内容作为一次新更新写回（版本继续递增），不会删除任何历史记录。
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -171,7 +217,8 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
   apiDeletePrompt, apiListPrompts, apiPreviewPrompt, apiSavePrompt,
-  type AgentPrompt, type PromptArgument, type PromptPreview,
+  apiPromptVersions, apiPromptRollback,
+  type AgentPrompt, type PromptArgument, type PromptPreview, type PromptVersion,
 } from '@/api';
 import { useAuthStore } from '@/store/auth';
 
@@ -190,6 +237,8 @@ const filtered = computed(() => {
 });
 const countBy = (source: 'system' | 'custom') => rows.value.filter((r) => r.source === source).length;
 const formatTime = (t: any) => (t ? new Date(t).toLocaleString() : '—');
+// 常见内置角色码（可直接选，也允许手输自定义角色）
+const knownRoles = ['tenant_admin', 'manager', 'operator', 'warehouse_keeper', 'purchaser', 'viewer'];
 
 async function load() {
   loading.value = true;
@@ -213,6 +262,7 @@ const form = reactive({
   content: '',
   enabled: true,
   sortOrder: 100,
+  roles: [] as string[],
   arguments: [] as PromptArgument[],
 });
 
@@ -223,6 +273,7 @@ function resetForm(p?: AgentPrompt) {
   form.content = p?.content ?? '';
   form.enabled = p?.enabled ?? true;
   form.sortOrder = p?.sortOrder ?? 100;
+  form.roles = [...(p?.roles ?? [])];
   form.arguments = (p?.arguments ?? []).map((a) => ({ ...a }));
 }
 function openNew() {
@@ -246,6 +297,7 @@ function payloadFromForm() {
     content: form.content,
     enabled: form.enabled,
     sortOrder: form.sortOrder,
+    roles: form.roles.map((r) => String(r).trim()).filter(Boolean),
     // 空行（用户点了添加但没填名字）直接丢弃，避免后端报「参数名不合法」
     arguments: form.arguments
       .filter((a) => a.name.trim())
@@ -284,6 +336,7 @@ async function toggle(row: AgentPrompt, enabled: boolean) {
       content: row.content,
       arguments: row.arguments,
       sortOrder: row.sortOrder,
+      roles: row.roles || [],
       enabled,
     });
     row.enabled = enabled;
@@ -331,6 +384,40 @@ async function runPreview() {
     ElMessage.error(e?.message || '渲染失败');
   } finally {
     previewing.value = false;
+  }
+}
+
+// ---------------------------------------------------------------- 版本历史 / 回滚
+const historyOpen = ref(false);
+const historyName = ref('');
+const historyLoading = ref(false);
+const versions = ref<PromptVersion[]>([]);
+const currentHistVersion = ref(0);
+
+async function openHistory(row: AgentPrompt) {
+  historyName.value = row.name;
+  currentHistVersion.value = row.version || 1;
+  versions.value = [];
+  historyOpen.value = true;
+  historyLoading.value = true;
+  try {
+    versions.value = (await apiPromptVersions(row.name)) ?? [];
+  } catch (e: any) {
+    ElMessage.error(e?.message || '加载版本历史失败');
+  } finally {
+    historyLoading.value = false;
+  }
+}
+
+async function doRollback(row: PromptVersion) {
+  try {
+    const updated = await apiPromptRollback(historyName.value, row.version);
+    ElMessage.success(`已回滚到 v${row.version}，当前版本 v${updated.version}`);
+    currentHistVersion.value = updated.version;
+    versions.value = (await apiPromptVersions(historyName.value)) ?? [];
+    await load();
+  } catch (e: any) {
+    ElMessage.error(e?.message || '回滚失败');
   }
 }
 
