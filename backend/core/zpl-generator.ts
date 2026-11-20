@@ -12,6 +12,8 @@ import {
   canonSym, describeUnsupported, resolveBarcodeGeometry,
   encodeGs1, gs1ToProtocol,
 } from './symbology.capabilities';
+// 第三层：MaxiCode 原生 ^BD 构造器（显式 opt-in，默认仍走位图警告）
+import { buildMaxicodeZpl, type StructuredMaxicode } from './maxicode';
 
 /** mm → dots（按 dpi）。核心换算公式，全指令生成统一使用 */
 export function mmToDots(mm: number, dpi: number): number {
@@ -31,6 +33,8 @@ export interface ZplElement {
   barcode?: BarcodeSpec;
   // qrcode
   qrcode?: QrcodeSpec;
+  /** 第三层：MaxiCode 原生 ^BD 结构化参数（仅 sym=MAXICODE 且显式提供时生效） */
+  maxicode?: StructuredMaxicode | { mode?: 2 | 3 | 4 | 5 | 6; n?: number; t?: number };
   // image
   imageData?: string;   // base64 的 ^GF 数据（行压缩或 ASCII hex）
   imgWmm?: number; imgHmm?: number;
@@ -122,6 +126,21 @@ export function generateZpl(els: ZplElement[], dpi: number): { text: string; war
       case 'qrcode': {
         const q = e.qrcode!;
         const key = canonSym(q.sym ?? 'QRCODE');
+        // 第三层：MaxiCode 显式 opt-in 原生 ^BD。默认（无 e.maxicode）仍走下方
+        // describeUnsupported → warning + 跳过（保留"预览仅"安全默认）；
+        // 只有模板元素显式带 maxicode 结构/参数时才输出 ^BD 原生指令。
+        if (key === 'MAXICODE' && (e as any).maxicode) {
+          const mi = (e as any).maxicode as StructuredMaxicode | { mode?: 2 | 3 | 4 | 5 | 6; n?: number; t?: number };
+          // 结构化对象走结构化构造；仅 {mode} 时用元素文本作自由数据
+          const input = ('serviceClass' in mi) ? mi : (q.content ?? '');
+          const r = buildMaxicodeZpl(input as any, { n: (mi as any).n, t: (mi as any).t, mode: (mi as any).mode });
+          warnings.push(...r.warnings);
+          if (r.ok) {
+            const qx = x + mmToDots(2, dpi); // 固定符号约 1 英寸，静区按 2mm 经验偏移
+            out.push(`^FO${qx},${y}${r.zpl}`);
+          }
+          break;
+        }
         // P7：二维码能力同样委托单一真源
         const support = describeUnsupported('zpl', key);
         warnings.push(...support.warnings);

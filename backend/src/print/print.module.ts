@@ -7,6 +7,8 @@ import { Template } from '../entities/template.entity';
 import { PrintService } from './print.service';
 import { PrintController, PrintPreviewController, PrintCommandsController, PrintEventsController, SymbologyController } from './print.controller';
 import { PrintExportController } from './export.controller';
+import { PrintVerifyController } from './verify.controller';
+import { MaxicodeController } from './maxicode.controller';
 import { PrintProcessor } from './print.processor';
 import { RenderService } from './render.service';
 import { PrintEvents } from './events.event';
@@ -29,7 +31,7 @@ import { GovernanceModule } from '../governance/governance.module';
     GovernanceModule,
   ],
   providers: [PrintService, PrintProcessor, RenderService, PrintEvents],
-  controllers: [PrintController, PrintPreviewController, PrintCommandsController, PrintEventsController, SymbologyController, PrintExportController],
+  controllers: [PrintController, PrintPreviewController, PrintCommandsController, PrintEventsController, SymbologyController, PrintExportController, PrintVerifyController, MaxicodeController],
   exports: [PrintService, RenderService, PrintEvents],
 })
 export class PrintModule {}

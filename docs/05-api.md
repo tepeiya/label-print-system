@@ -348,3 +348,18 @@ node tools/labelctl.mjs audit --limit 10
 - 代理主鉴权用租户 JWT；HMAC 签名默认关闭，`HARDWARE_AGENT_SIGNATURE_REQUIRED=1` 开启后需带 `X-LabelFlow-Timestamp` / `X-LabelFlow-Signature: sha256=<hmac>`（签名串为 `JSON.stringify(payload)`，算法与 §5.14.1 Webhook 同源）。
 - **信封脱敏硬约束**：`connection` 只允许 `driverName` 出域，host/port/user/password/dsn/token 一律剔除并记入 `redactedFields`。冒烟已验证 `NO_SECRETS:true`。
 - **真机未验收**：本地代理客户端、Windows 驱动打印、USB/串口、RFID 读写器指令、喷码机品牌协议均未实现。逐项验收清单见 `docs/10 §10.30.3`，未全绿前不得对外承诺可用。
+
+## 5.16 第三层 · 码制专业性端点（2026-11-20，验收边界见 `docs/10 §10.32`）
+
+> 与 `/print/export` 同口径：自带数据、纯内存计算、不读业务库、无 DB 副作用，不挂 TenantGuard。
+
+| 方法 | 路径 | 入参 | 说明 |
+| --- | --- | --- | --- |
+| POST | `/print/verify/image` | `{imageBase64, expected, sym, formats?}` | 解码上传的条码图（PNG/JPEG，可带 data: 前缀）并与期望文本比对；返回 `{verdict:{match,grade,score,reason,...},candidates[]}`。grade=exact/normalized/none |
+| POST | `/print/verify/roundtrip` | `{expected, sym, dpi?}` | 三方一致性自检：服务端 bwip 渲染→zxing 解码→判定；返回 `verdict` + `candidates` + `pngBase64`（留档）+ `zxingFormats` + `boundary` 声明 |
+| POST | `/print/maxicode/zpl` | `{text?, structured?, mode?, n?, t?}` | 构造 UPS MaxiCode 原生 ZPL `^BD` 片段。text 用于 Mode 4/5/6 自由数据；structured 用于 Mode 2/3（`{mode,serviceClass,countryCode,postalCode,postalExtension?,lowPriority?}`）。返回 `{zpl,escapedData,warnings,boundary}`；参数非法返回 400 |
+
+- GS1 AI 字典扩到官方 541 项：`lookupAi` 优先级 = 中文精调 65 项 → 模式族 → 官方全量 → null；`gs1Catalog().totalFull` 反映合并总数。既有 GS1 校验端点/公式 `encodeGs1` 行为不变（精调层优先）。
+- `checksum()` 公式新增两方案：`CHECKSUM('HIBC', data)` → Mod43 校验字符；`CHECKSUM('PZN', base7)` → Mod11 校验位（余数 10 抛错）。
+- **解码性能**：zxing-wasm 首次初始化约 20s（进程内一次），之后单次解码 5–15ms。验证端点在生产常驻进程无此开销；单测用同一进程预热，全量测试约 +22s。
+- **诚实边界**：解码闭环只覆盖 bwip 位图通道；指令通道与真机/扫描枪未验。MaxiCode 默认仍走位图「预览仅」，`^BD` 为显式 opt-in；Mode 2/3 结构化数据错误会被 UPS 拒收。详见 `docs/10 §10.32`。

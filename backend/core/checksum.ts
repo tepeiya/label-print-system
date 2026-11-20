@@ -2,7 +2,10 @@
 // checksum.ts —— 条码校验位算法
 // 这些算法同时被【公式引擎 CHECKSUM 函数】与【条码渲染/校验】复用。
 // 所有函数纯函数、无副作用，便于单测。
+// 第三层：HIBC Mod43 / PZN Mod11 委托 industrial-checksum.ts（单一真源）。
 // =============================================================================
+
+import { hibcCheck, pznCheckDigit } from './industrial-checksum';
 
 /**
  * GTIN / EAN / UPC / ITF-14 系列模 10 校验位（权重 1,3 交替，从右向左）。
@@ -95,6 +98,18 @@ export function checksum(scheme: string, data: string): string {
     case 'CODE128':
     case 'MOD103':
       return String(code128CheckValue(data));
+    case 'HIBC':
+    case 'MOD43_HIBC': {
+      const r = hibcCheck(data);
+      if (!r.ok) throw new Error(r.error);
+      return r.checkChar;
+    }
+    case 'PZN':
+    case 'MOD11_PZN': {
+      const r = pznCheckDigit(data);
+      if (!r.ok) throw new Error(r.error);
+      return r.checkDigit;
+    }
     default:
       throw new Error(`未知校验方案: ${scheme}`);
   }

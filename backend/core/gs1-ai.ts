@@ -15,6 +15,7 @@
 // =============================================================================
 
 import { gtinCheckDigit } from './checksum';
+import { GS1_AI_FULL } from './gs1-ai.full';
 
 export type AiValueKind = 'numeric' | 'alphanumeric' | 'date' | 'gtin' | 'sscc' | 'gln' | 'amount' | 'percent';
 
@@ -123,17 +124,31 @@ const AI_PATTERNS: Array<{ re: RegExp; make: (ai: string) => Gs1Ai }> = [
 
 export const GS1_AI: Record<string, Gs1Ai> = Object.fromEntries(AI_LIST.map((a) => [a.ai, a]));
 
-/** 查 AI：先精确命中，再走模式族；未登记返回 null（调用方按宽松处理） */
+/**
+ * 查 AI（第三层扩全量）：命中优先级 = 中文精调层 → 模式族 → GS1 官方全量层 → null。
+ * - 精调层（AI_LIST）覆盖常用 65 项，带中文标题/行业分组/示例，行为与 P8.4 完全一致；
+ * - 模式族（31xx–36xx/39xx/41x/703x/9x）给出比官方英文更贴切的中文语义与正确定长，
+ *   故优先于全量层命中，避免 3902 等被英文标题覆盖丢失"金额"语义；
+ * - 全量层（gs1-ai.full.ts）来自 GS1 官方 JSON-LD 541 项，补齐长尾（医药/物流/度量），
+ *   长度/字符集由 formatString 派生，标题为官方英文 description；
+ * - 重叠时以精调层/模式族为准，故老单测（中文标题/示例/校验位）不受影响。
+ */
 export function lookupAi(ai: string): Gs1Ai | null {
   const key = String(ai ?? '').trim();
   if (GS1_AI[key]) return GS1_AI[key];
   for (const p of AI_PATTERNS) if (p.re.test(key)) return p.make(key);
+  if (GS1_AI_FULL[key]) return GS1_AI_FULL[key];
   return null;
+}
+
+/** 全量字典项数（精调 + 官方全量去重后的实际可查 AI 总数），供目录/文档展示 */
+export function gs1TotalKnown(): number {
+  return Object.keys({ ...GS1_AI_FULL, ...GS1_AI }).length;
 }
 
 /** 前端向导目录（含精确 AI 与模式族样例） */
 export interface CatalogGroup { group: string; items: Array<{ ai: string; title: string; fixedLen?: number; maxLen?: number; kind: AiValueKind; example?: string }> }
-export function gs1Catalog(): { groups: CatalogGroup[]; totalExact: number; patterns: string[]; disclaimer: string } {
+export function gs1Catalog(): { groups: CatalogGroup[]; totalExact: number; totalFull: number; patterns: string[]; disclaimer: string } {
   const byGroup = new Map<string, CatalogGroup>();
   for (const a of AI_LIST) {
     const g = byGroup.get(a.group) ?? { group: a.group, items: [] };
@@ -143,8 +158,9 @@ export function gs1Catalog(): { groups: CatalogGroup[]; totalExact: number; patt
   return {
     groups: [...byGroup.values()],
     totalExact: AI_LIST.length,
+    totalFull: gs1TotalKnown(),
     patterns: ['31xx–36xx 度量（6 位值）', '390x–393x 金额（含 3 位货币码）', '410–417 GLN（13 位）', '703x–709x 加工批次', '91–99 内部信息'],
-    disclaimer: '本字典覆盖常用 AI，非 GS1 General Specifications 全量；未登记 AI 按变长宽松处理并提示核对手册',
+    disclaimer: '精调目录覆盖常用 AI，非 GS1 General Specifications 全量中文译本；全量索引取自 GS1 官方 Application Identifiers 数据集（541 项）。中文精调字段优先，长尾 AI 以官方英文标题 + formatString 派生长度为准；复合格式取首段，行业专用码请核对 GS1 General Specifications 官方手册。非精调字段仍按宽松处理',
   };
 }
 

@@ -111,6 +111,7 @@ dots → mm  : mm   = dots * 25.4 / dpi
 | 元素类型 | ✅ 文本 / 图 / 线 / 形 / 表 / 条码 / 二维码 / 公式 / 流水号 / 日期 / 系统变量 / DB 字段 | 12 类 |
 | 变量 / 公式 / 流水号 | ✅ 含 CHECKSUM、循环依赖检测、号段预分配并发安全 | 见 `core/` |
 | 码制 | ✅ 主流一维 / 二维；GS1 FNC1、MaxiCode / HIBC / PZN 等专业码制 | `symbology.capabilities.ts` 单一真源 |
+| 码制专业性（第三层） | ✅ GS1 AI 官方全量字典（541 项）、打印后解码验证闭环（bwip→zxing）、HIBC Mod43 / PZN Mod11 校验、MaxiCode 原生 `^BD` 构造器（opt-in） | `core/{gs1-ai.full,industrial-checksum,maxicode}.ts`、`src/print/verify.*`；指令/真机通道仍待硬件验收，见下方边界 |
 | 打印通道 | ✅ 浏览器打印 / 9100 Raw TCP / 本地代理 / 服务端出图 | 4 类 Provider |
 | 输出 | ✅ ZPL / TSPL / EPL 指令 + 位图 PNG + 整标签矢量 SVG / PDF | golden 快照测试 |
 | 印刷级输出（第二层） | ✅ 真矢量 PDF（条码/图形/拉丁文本）、出血/裁切线/套准线/CMYK 色标、collate 交叉/堆叠、PDF 拆分、弧形文字/条码、缩略图 DPI 自适应 | `src/print/{vector-pdf,print-marks,impose}.ts`；二维码与中文文本块为高-DPI 位图，专色为 CMYK 近似（非真分色），见下方边界 |
@@ -135,6 +136,15 @@ dots → mm  : mm   = dots * 25.4 / dpi
 | 专色（Spot/Pantone） | 名称 + CMYK 近似色标 | **非真 Separation 分色**，需印前软件 |
 | 弧形文字 / 条码 | SVG `<textPath>` / 旋转线段近似 | 指令通道（ZPL/TSPL/EPL）退化为直线；弧形条码解码需真机验证 |
 | 印前标记 | 出血 / 裁切线 / 套准线 / CMYK 色标 | 底部标记区自动扩展；颜色为 CMYK 近似 |
+
+**码制专业性的诚实边界**（`POST /print/verify/{image,roundtrip}`、`POST /print/maxicode/zpl`）：
+
+| 能力 | 实现 | 边界 |
+|---|---|---|
+| GS1 AI 字典 | 官方 JSON-LD 派生 541 项全量索引，精调 65 项（中文/示例）优先 | 长尾仅英文标题；复合格式取首段；行业专用码以官方手册复核 |
+| 打印后解码验证 | bwip 渲染→zxing 解码→文本比对，覆盖 CODE128/QR/DataMatrix/EAN13/GS1-128 | 只闭环**位图通道**；ZPL/TSPL/EPL 指令通道与真机/扫描枪实测未验 |
+| HIBC / PZN 校验 | Mod43 / Mod11 纯函数，对照官方样例 | 未接真机扫描与医药监管系统验收 |
+| MaxiCode `^BD` | 显式 opt-in 原生指令 + Mode 2/3 结构化构造器 | 默认仍走位图「预览仅」；Mode 2/3 格式错误会被 UPS 拒收；固定尺寸、无旋转、`^BY` 无效；真机/承运商未验 |
 
 ---
 
@@ -237,7 +247,7 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 
 按 `docs/10-dev-handover.md`，下一阶段优先级：
 
-1. **最高优先：条码设计 / 打印核心能力打磨**（产品命根子）——已完成旋转/对齐/双面、拼版、真矢量 PDF、出血/裁切线/套准线/CMYK 近似色标、collate/拆分、弧形文字/条码、缩略图 DPI；仍待：富文本 runs、表格合并单元格、DB 字段元素、打印机偏移校准真机验收。
+1. **最高优先：条码设计 / 打印核心能力打磨**（产品命根子）——已完成旋转/对齐/双面、拼版、真矢量 PDF、出血/裁切线/套准线/CMYK 近似色标、collate/拆分、弧形文字/条码、缩略图 DPI（第二层）；GS1 官方全量 AI 字典、打印后解码验证闭环、HIBC/PZN 校验、MaxiCode `^BD` 构造器（第三层）；仍待：指令/真机解码验证、富文本 runs、表格合并单元格、DB 字段元素、打印机偏移校准真机验收（第四层）。
 2. **上线前技术债**：RLS 切到 `labelflow_app`（无 BYPASSRLS）角色、独立库真连库验收、白标真实 DNS / 证书、通知通道（代码已就绪，待配网关）、独立库物理备份策略。
 3. **按需功能缺口**：MySQL / SQL Server 数据源方言、更多 MCP 工具、高级计费（发票 / 退款 / 多币种）、Prompt 调用统计深化、Nest 容器级 E2E、前端测试、硬件层真机验收（Windows 打印代理 / RFID / 喷码机）。
 

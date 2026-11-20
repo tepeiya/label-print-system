@@ -2338,6 +2338,7 @@ env 入口：`DB_DEDICATED_DSNS='{"acme":"postgres://..."}'`，单条失败只�
 | B3-4 | MySQL/SQLServer 驱动、SQL 分页与自动刷新、GS1 完整 AI 字典、MaxiCode/HIBC/PZN | P8.4 | **代码已落地**（方言层 14 条 + GS1 16 条 + 工业码制 6 条 + 刷新调度 9 条单测；真实 BullMQ repeatable 接入），待第二套数据库与真机译码验收，见 §10.29.2 |
 | B3-5 | Windows 本地打印代理 / USB / RFID / 喷码机 | P8.5 | **协议层与服务端接入已落地**（Provider 注册闭环 + 脱敏信封冒烟 + 26 条单测）；**真机未验收，禁止对外承诺可用**，见 §10.30 |
 | B3-6 | CMYK 专色、出血/裁切线、PDF 拆分与交叉合并、批量图片变量、弧形条码 | 第二层 | **代码已落地 + 纯函数单测全绿**（见 §10.31）：真矢量 PDF、出血/裁切线/套准线/CMYK 近似色标、collate/拆分、弧形文字/条码、缩略图 DPI；专色非真分色、二维码/中文位图、弧形解码与印前链路待真机验收 |
+| B3-7 | GS1 AI 全量字典、打印后解码验证闭环、MaxiCode/HIBC/PZN 专业能力 | 第三层 | **代码已落地 + 单测全绿**（见 §10.32）：GS1 官方 541 条全量字典（精调层优先兼容）、bwip→zxing 解码验证闭环 + HTTP 端点、HIBC Mod43/PZN Mod11 校验、MaxiCode 原生 ^BD 构造器（显式 opt-in）；真机打印/UPS 承运商受理/扫描枪通道未验收 |
 
 > 本表与 §10.1.5 的 B3 段并存：那里是历史缺口，这里是按收费清单重新归并后的 P8 增量，勿重复计工时。
 
@@ -2545,3 +2546,49 @@ env 入口：`DB_DEDICATED_DSNS='{"acme":"postgres://..."}'`，单条失败只�
 | 印前链路 | 出血/套准/色标语义已落地，真实印刷机套准、专色版、裁切未验 |
 | 富文本 runs / 表格合并 / DB 字段元素 | 仍未做（属设计器交互第四层，非本层） |
 
+
+### 10.32 码制专业性 · 第三层落地清单（B3-7，2026-11-20）
+
+> 承接「命根子第三层」= 码制专业性。沿用单一真源 + 纯函数可测 + 诚实标注边界的工程口径。
+> 分层定义见 §10.7.3 之后的五层盘点：第一层（真 bug/空壳）、第二层（印刷级输出，§10.31）、
+> **第三层（码制专业性，本层）**、第四层（设计器交互精度）、第五层（数据绑定/工具）。
+
+**核查先行（避免重复 P8 已做项）**：分层盘点时第三层列的 3 项，经代码核查发现 P8.4 已落地一部分——
+MaxiCode/HIBC/PZN 已有 bwip 位图通道 + 能力表登记（§10.29.2），GS1 AI 已有 65 项精调字典。
+本层只补**真实缺口**，不重做位图通道，按收费/价值密度重新界定为三件事：
+
+| 缺口 | 分层时描述 | 本层实际交付 |
+| --- | --- | --- |
+| GS1 AI 字典非全量 | ~60 项，自述非全量 | 扩到 **GS1 官方 541 项全量索引**，精调层优先兼容 |
+| MaxiCode/HIBC/PZN 仅预览 | 无原生指令/校验 | HIBC Mod43 + PZN Mod11 校验位；MaxiCode 原生 `^BD` 构造器（显式 opt-in） |
+| 无打印后解码验证 | zxing 只识别上传图 | 新增 **渲染→解码→比对闭环** + HTTP 端点 |
+
+**新增/修改文件**：
+
+| 工作包 | 文件 | 职责 |
+| --- | --- | --- |
+| GS1 全量字典 | `core/gs1-ai.full.ts`（新，脚本生成）、`scripts/gen_gs1_full.py`（新，重生脚本） | 从 GS1 官方 JSON-LD（`ref.gs1.org/ai/GS1_Application_Identifiers.jsonld`）派生 541 项 AI，`formatString`/`components` 推导定长/变长/字符集/校验位；精调层（中文/示例）优先、模式族次之、全量层兜底，`lookupAi` 单一入口不变。重生：`cd backend && python3 scripts/gen_gs1_full.py [本地jsonld路径]`（已验证可复现且 typecheck/单测通过） |
+| GS1 接入 | `core/gs1-ai.ts` | `lookupAi` 优先级改为精调→模式族→全量→null；新增 `gs1TotalKnown()`、`gs1Catalog().totalFull`；老断言（中文标题/示例/校验位）全部保持 |
+| 解码验证判定层 | `src/print/verify.calc.ts`（新） | 纯函数：`normalizeDecoded`（剥离 GS1 `]d2/]C1` 前缀与 FNC1 控制字符）、`compareDecoded`（exact/normalized/none 三级 + 编辑距离评分）、`verdictOf`（多候选取最匹配 + 格式族校验）、码制↔zxing 格式族映射 |
+| 解码执行层 | `src/print/verify.service.ts`（新） | `decodeBarcodeImage`（PNG→sharp 白底合成→zxing，按 sym 精确指定 formats 避免 All 慢扫描）、`renderAndDecode`（bwip 渲染→解码，不传 height 防方阵被扭成非正方）、`zxingFormatsFor` |
+| 端点 | `src/print/verify.controller.ts`（新） | `POST /print/verify/image`（上传图解码比对）、`POST /print/verify/roundtrip`（bwip 渲染→解码→判定，返回 PNG 留档）；`verify.calc`/`verify.service` 无 DB 副作用 |
+| 医药/工业校验 | `core/industrial-checksum.ts`（新） | `hibcCheck`/`verifyHibc`（HIBC LIC Mod43，含前导 `+`，官方样例 `+A123BJC5D6E71`→`G`）；`pznCheckDigit`/`buildPzn`/`verifyPzn`（PZN Mod11 权重 1–7，余数 10 不发放）；`checksum.ts` 分发注册 `HIBC`/`PZN` |
+| MaxiCode ^BD | `core/maxicode.ts`（新） | `zplHexEscape`（GS/RS/EOT/`[`/`]`/`_`→`_XX`）、`buildHighPriorityMessage`（Mode 2/3 结构化 hpm）、`buildMaxicodeZpl`（`^BDm,n,t^FH^FD…^FS`，n/t 夹取 1–8）；默认不改能力表"预览仅"安全语义，仅 opt-in |
+| MaxiCode 接线 | `core/zpl-generator.ts` | qrcode 分支：仅当 `sym=MAXICODE` 且元素显式带 `maxicode` 参数时出原生 `^BD`；否则维持 describeUnsupported warning + 跳过（golden 未受影响） |
+| 端点 | `src/print/maxicode.controller.ts`（新） | `POST /print/maxicode/zpl`：text（Mode 4/5/6）或 structured（Mode 2/3）二选一，返回 `^BD` 片段 + warnings + 边界声明 |
+| 模块注册 | `src/print/print.module.ts` | 注册 `PrintVerifyController` / `MaxicodeController` |
+| 单测 | `core/__tests__/{gs1-ai(+5),industrial-checksum,maxicode}.test.ts`、`src/print/__tests__/{verify.calc,verify.service}.test.ts`（新/改） | GS1 全量自洽 + 长尾可查 + 精调优先；HIBC/PZN 对照官方样例；MaxiCode 对照 Zebra 样例 + ZPL opt-in 集成；解码闭环真实 bwip→zxing（CODE128/QR/DataMatrix/EAN13/GS1-128 + 篡改负向） |
+
+**实跑基线（2026-11-20）**：`npm run typecheck` 0 error；`npm test` **609 例，602 pass / 0 fail / 7 skip**（较第二层 568 +41）；前端 `vue-tsc -b` 通过。
+真实冒烟：`renderAndDecode` 对 CODE128（`LF-C128-0042`）、QRCode（URL）、DataMatrix（`DM-12345`）、EAN13（`6901234567892`）、GS1-128（`(01)…(17)…`）均解出正确文本并判 exact；篡改内容判失败。
+性能注：zxing-wasm 首次初始化约 20s（进程内一次），之后单次解码 5–15ms；验证端点在生产进程常驻下无此开销。
+
+**仍待验收 / 明确边界**（不许按「已交付」表述）：
+
+| 项 | 状态 |
+| --- | --- |
+| GS1 全量字典长度 | 从官方 `formatString` 派生：定长取精确值、变长取 maxLen、复合格式（如 `N13[+X..17]`）取首段；行业专用码以最新 GS1 General Specifications 手册复核。中文精调仅覆盖 65 项，长尾为官方英文标题 |
+| 解码验证的载体 | 闭环只覆盖 **bwip 位图通道**的渲染→解码一致性；ZPL/TSPL/EPL 指令通道、真机打印、扫描枪实测未验（B6 三方一致性里位图这一环已闭环，指令/硬件两环仍待） |
+| MaxiCode 默认通道 | 默认仍走位图 + warning（"预览仅"安全默认），`^BD` 为显式 opt-in；Mode 2/3 结构化数据格式错误会被 UPS 拒收，需承运商系统验收；固定约 1 英寸、无旋转、`^BY` 无效；真机未验 |
+| HIBC/PZN 校验 | 校验位算法对照官方规范样例验证，但未接真机扫描与医药监管系统验收 |
+| 第四层（设计器交互精度） | 富文本 runs / 表格合并 / DB 字段元素仍未做，属下一层，非本层 |

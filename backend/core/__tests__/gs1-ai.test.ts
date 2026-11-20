@@ -144,3 +144,52 @@ test('encodeGs1 委托契约：invalid 只含 errors（P7 兼容）', () => {
   assert.ok(encodeGs1('(01)123(17)251231').invalid.some((m) => /AI\(01\)/.test(m)));
   assert.equal(encodeGs1('').invalid[0], 'GS1 内容为空');
 });
+
+// ------------------------------ 第三层：GS1 官方全量字典 ------------------------------
+import { GS1_AI_FULL } from '../gs1-ai.full';
+
+test('L3 全量字典：GS1 官方数据集 541 项，字段自洽', () => {
+  const list = Object.values(GS1_AI_FULL);
+  assert.ok(list.length >= 500, `官方全量应 >= 500，实际 ${list.length}`);
+  const seen = new Set<string>();
+  for (const a of list) {
+    assert.match(a.ai, /^\d{2,4}$/);
+    assert.ok(!seen.has(a.ai), `AI ${a.ai} 重复`);
+    seen.add(a.ai);
+    assert.ok(a.title.length > 0, `AI(${a.ai}) 缺标题`);
+    assert.ok(!!a.fixedLen !== !!a.maxLen, `AI(${a.ai}) 长度约束需唯一`);
+  }
+});
+
+test('L3 长尾 AI 可查：医药/物流/度量族走官方全量层', () => {
+  // 精调层没有的老长尾 AI
+  assert.equal(lookupAi('8112')?.kind, 'alphanumeric', '北美优惠文件码（官方英文标题）；此处精调层无 8112');
+  assert.ok(lookupAi('3624'), '物流容积夸脱（4 位 AI）应可查');
+  assert.equal(lookupAi('3624')?.fixedLen, 6, 'N4+N6 度量值为 6 位');
+  assert.equal(lookupAi('415')?.checkDigit, true, 'GLN 家族带校验位');
+  assert.equal(GS1_AI_FULL['255']?.checkDigit, true, 'GCN(255) 官方全量层带校验位派生');
+});
+
+test('L3 精调层优先于全量层：中文标题/示例不被官方英文覆盖', () => {
+  // 01 在两层都有；精调层是中文「GTIN 全球贸易项目代码」+ 示例
+  assert.equal(lookupAi('01')?.title, 'GTIN 全球贸易项目代码');
+  assert.equal(lookupAi('01')?.example, '12345678901231');
+  assert.notEqual(GS1_AI_FULL['01'].title, lookupAi('01')?.title, '全量层为英文，精调层为中文');
+});
+
+test('L3 gs1Catalog.totalFull 反映全量合并数，disclaimer 标注官方来源', () => {
+  const c = gs1Catalog();
+  assert.ok(c.totalFull >= 500, `totalFull 应 >= 500，实际 ${c.totalFull}`);
+  assert.ok(c.totalFull > c.totalExact, '全量数应大于精调数');
+  assert.match(c.disclaimer, /GS1 官方/);
+});
+
+test('L3 全量长尾 AI 参与字符/长度校验', () => {
+  // 8112 变长 alphanumeric 最长 70
+  assert.equal(validateAiValue('8112', 'OFFER123').errors.length, 0);
+  assert.match(validateAiValue('8112', 'A'.repeat(71)).errors.join(' '), /最长 70 位/);
+  // 3624 定长 6 位数字
+  assert.equal(validateAiValue('3624', '123456').errors.length, 0);
+  assert.match(validateAiValue('3624', '123').errors.join(' '), /应为 6 位/);
+  assert.match(validateAiValue('3624', '12AB56').errors.join(' '), /仅允许数字/);
+});
