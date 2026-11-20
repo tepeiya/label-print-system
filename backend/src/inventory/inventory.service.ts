@@ -82,6 +82,30 @@ export interface QueryMovesArgs {
   offset?: number;
 }
 
+/** BOM 维护入参（纯结构，Controller 的 DTO 结构兼容；避免服务层依赖 class-validator） */
+export interface SaveBomLineInput {
+  /** 物料编码或名称 */
+  material: string;
+  qtyPer: number;
+  lossRate?: number;
+}
+export interface SaveBomInput {
+  id?: number;
+  product: string;
+  version?: string;
+  status?: 'draft' | 'active' | 'inactive';
+  items: SaveBomLineInput[];
+}
+export type BomStatus = 'draft' | 'active' | 'inactive';
+export interface BomLineView {
+  id: number; materialId: number; code: string; name: string; unit: string;
+  qtyPer: number; lossRate: number;
+}
+export interface BomView {
+  id: number; productMaterialId: number; productCode: string; productName: string;
+  version: string; status: BomStatus; createdAt: string; lines: BomLineView[];
+}
+
 @Injectable()
 export class InventoryService {
   constructor(
@@ -968,6 +992,153 @@ export class InventoryService {
       }];
     });
     return { product, bom, kit: computeKit(lines, demand) };
+  }
+
+  // ------------------------------------------------------------------ BOM 维护（P6 齐套率模块）
+  // BOM 实体只有编码/版本/状态，没有独立 name；明细行 material_id 指向物料。
+  // 约束：同一产品最多一个 active BOM（启用新的会把旧的降为 inactive）。
+
+  /** 把 BOM 实体 + 明细行装配成前端视图；物料被删时跳过对应行（防御） */
+  private async bomViews(tenantId: number, bomRows: Bom[]): Promise<BomView[]> {
+    if (!bomRows.length) return [];
+    const bomIds = bomRows.map((b) => Number(b.id));
+    const items = await this.bomItems.createQueryBuilder('bi')
+      .where('bi.bom_id IN (:...ids)', { ids: bomIds })
+      .getMany();
+    const matIds = Array.from(new Set([
+      ...bomRows.map((b) => Number(b.productMaterialId)),
+      ...items.map((i) => Number(i.materialId)),
+    ]));
+    const mats = matIds.length
+      ? await this.materials.createQueryBuilder('m')
+          .where('m.tenant_id = :tid', { tid: tenantId })
+          .andWhere('m.id IN (:...ids)', { ids: matIds })
+          .getMany()
+      : [];
+    const matById = new Map(mats.map((m) => [Number(m.id), m]));
+    const linesByBom = new Map<number, BomLineView[]>();
+    for (const it of items) {
+      const m = matById.get(Number(it.materialId));
+      if (!m) continue;
+      const arr = linesByBom.get(Number(it.bomId)) ?? [];
+      arr.push({
+        id: Number(it.id), materialId: Number(it.materialId),
+        code: m.code, name: m.name, unit: m.unit,
+        qtyPer: Number(it.qtyPer), lossRate: Number(it.lossRate),
+      });
+      linesByBom.set(Number(it.bomId), arr);
+    }
+    return bomRows.map((b) => {
+      const pm = matById.get(Number(b.productMaterialId));
+      return {
+        id: Number(b.id), productMaterialId: Number(b.productMaterialId),
+        productCode: pm?.code ?? '', productName: pm?.name ?? '',
+        version: b.version, status: b.status as BomStatus,
+        createdAt: b.createdAt instanceof Date ? b.createdAt.toISOString() : String(b.createdAt),
+        lines: linesByBom.get(Number(b.id)) ?? [],
+      };
+    });
+  }
+
+  /** BOM 列表（可按产品过滤），最多 100 条 */
+  async listBoms(tenantId: number, product?: string): Promise<BomView[]> {
+    const qb = this.boms.createQueryBuilder('b')
+      .where('b.tenant_id = :tid', { tid: tenantId });
+    if (product?.trim()) {
+      const m = await this.findMaterial(tenantId, product);
+      qb.andWhere('b.product_material_id = :pid', { pid: m.id });
+    }
+    const rows = await qb.orderBy('b.id', 'DESC').limit(100).getMany();
+    return this.bomViews(tenantId, rows);
+  }
+
+  /** BOM 详情（含明细行） */
+  async getBom(tenantId: number, bomId: number): Promise<BomView> {
+    const row = await this.boms.findOne({ where: { id: bomId, tenantId } });
+    if (!row) throw new NotFoundException(`BOM #${bomId} 不存在`);
+    return (await this.bomViews(tenantId, [row]))[0];
+  }
+
+  /** 新建/更新 BOM，明细行全量替换。启用时同产品其它 BOM 自动降为 inactive。 */
+  async saveBom(tenantId: number, input: SaveBomInput): Promise<BomView> {
+    const product = await this.findMaterial(tenantId, input.product);
+    const lines = await Promise.all((input.items ?? []).map(async (it) => {
+      const m = await this.findMaterial(tenantId, String(it.material));
+      return {
+        materialId: Number(m.id),
+        qtyPer: Number(it.qtyPer),
+        lossRate: Number(it.lossRate ?? 0),
+      };
+    }));
+    if (new Set(lines.map((l) => l.materialId)).size !== lines.length) {
+      throw new BadRequestException('BOM 明细存在重复物料');
+    }
+    const status: BomStatus = input.status === 'active' ? 'active'
+      : input.status === 'inactive' ? 'inactive' : 'draft';
+
+    let bom: Bom;
+    if (input.id) {
+      const existing = await this.boms.findOne({ where: { id: input.id, tenantId } });
+      if (!existing) throw new NotFoundException(`BOM #${input.id} 不存在`);
+      existing.productMaterialId = product.id;
+      existing.version = input.version?.trim() || existing.version;
+      existing.status = status;
+      bom = await this.boms.save(existing);
+    } else {
+      bom = await this.boms.save(this.boms.create({
+        tenantId, productMaterialId: product.id,
+        version: input.version?.trim() || 'v1', status,
+      }));
+    }
+    if (status === 'active') {
+      await this.boms.createQueryBuilder()
+        .update()
+        .set({ status: 'inactive' })
+        .where('tenant_id = :tid', { tid: tenantId })
+        .andWhere('product_material_id = :pid', { pid: product.id })
+        .andWhere('id <> :id', { id: bom.id })
+        .execute();
+    }
+    // 明细全量替换：先删后插（BOM 已校验属本租户）
+    await this.bomItems.delete({ bomId: bom.id });
+    if (lines.length) {
+      await this.bomItems.save(lines.map((l) => this.bomItems.create({
+        bomId: bom.id, materialId: l.materialId,
+        qtyPer: String(l.qtyPer), lossRate: String(l.lossRate),
+      })));
+    }
+    return this.getBom(tenantId, Number(bom.id));
+  }
+
+  /** 启停 BOM：启用时同产品其它 BOM 降为 inactive */
+  async setBomStatus(tenantId: number, bomId: number, status: BomStatus): Promise<BomView> {
+    const bom = await this.boms.findOne({ where: { id: bomId, tenantId } });
+    if (!bom) throw new NotFoundException(`BOM #${bomId} 不存在`);
+    const next: BomStatus = status === 'active' || status === 'draft' ? status : 'inactive';
+    if (next === 'active') {
+      await this.boms.createQueryBuilder()
+        .update()
+        .set({ status: 'inactive' })
+        .where('tenant_id = :tid', { tid: tenantId })
+        .andWhere('product_material_id = :pid', { pid: bom.productMaterialId })
+        .andWhere('id <> :id', { id: bomId })
+        .execute();
+    }
+    bom.status = next;
+    await this.boms.save(bom);
+    return this.getBom(tenantId, bomId);
+  }
+
+  /** 删除 BOM：启用中的不允许删，需先停用；明细一并删除 */
+  async deleteBom(tenantId: number, bomId: number): Promise<{ id: number }> {
+    const bom = await this.boms.findOne({ where: { id: bomId, tenantId } });
+    if (!bom) throw new NotFoundException(`BOM #${bomId} 不存在`);
+    if (bom.status === 'active') {
+      throw new BadRequestException('启用中的 BOM 不能删除，请先停用');
+    }
+    await this.bomItems.delete({ bomId });
+    await this.boms.delete({ id: bomId, tenantId });
+    return { id: bomId };
   }
 
   // ------------------------------------------------------------------ P5 写路径

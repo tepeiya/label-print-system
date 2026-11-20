@@ -210,6 +210,23 @@ export const apiMdCreateLocation = (data: any) => http.post(`${MD}/locations`, d
 export const apiMdUpdateLocation = (id: number, data: any) => http.put(`${MD}/locations/${id}`, data);
 export const apiMdLocationActive = (id: number, active: boolean) => http.post(`${MD}/locations/${id}/active`, { active });
 
+// ========== BOM 齐套率（bom 模块）==========
+// 后端 BomController（backend/src/inventory/bom.controller.ts）：
+// 齐套：GET /inventory/bom/check-kit · GET /inventory/bom/shortages
+// 维护：GET /inventory/bom/list · GET /:id · POST · PUT /:id · POST /:id/status · DELETE /:id
+const BOM = '/inventory/bom';
+export const apiBomCheckKit = (params: { product: string; demand: number; warehouse?: string }) =>
+  http.get(`${BOM}/check-kit`, { params });
+export const apiBomShortages = (params: { product: string; demand: number; warehouse?: string }) =>
+  http.get(`${BOM}/shortages`, { params });
+export const apiBomList = (product?: string) => http.get(`${BOM}/list`, { params: { product } });
+export const apiBomGet = (id: number) => http.get(`${BOM}/${id}`);
+export const apiBomCreate = (data: any) => http.post(BOM, data);
+export const apiBomUpdate = (id: number, data: any) => http.put(`${BOM}/${id}`, data);
+export const apiBomStatus = (id: number, status: 'draft' | 'active' | 'inactive') =>
+  http.post(`${BOM}/${id}/status`, { status });
+export const apiBomDelete = (id: number) => http.delete(`${BOM}/${id}`);
+
 // ========== 呆滞/效期预警（alert 模块）==========
 // 后端 AlertController（backend/src/inventory/alert.controller.ts）：
 // 规则：GET/POST /inventory/alerts/rules · PUT /rules/:id · POST /rules/:id/active · DELETE /rules/:id

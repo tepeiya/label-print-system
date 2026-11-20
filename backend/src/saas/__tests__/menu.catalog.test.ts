@@ -89,6 +89,17 @@ test('呆滞预警入口：订阅 alert 且有 alert:event:read 才出现在库�
   assert.ok(!inv2?.children?.some((c) => c.key === 'alerts'));
 });
 
+test('BOM 齐套率入口：订阅 bom 且有 bom:kit:read 才出现在库存分组，路径 /bom', () => {
+  const withBom = buildMenus(['inventory', 'bom'], ['inventory:stock:read', 'bom:kit:read']);
+  const inv = withBom.find((n) => n.key === 'inventory');
+  assert.ok(inv?.children?.some((c) => c.key === 'bom' && c.path === '/bom' && c.module === 'bom'));
+
+  // 只订 inventory、没有 bom 模块：即便有权限点也不出现（加购模块是门）
+  const noModule = buildMenus(['inventory'], ['inventory:stock:read', 'bom:kit:read']);
+  const inv2 = noModule.find((n) => n.key === 'inventory');
+  assert.ok(!inv2?.children?.some((c) => c.key === 'bom'));
+});
+
 test('裁剪不修改目录常量（前端可安全复用 MENU_CATALOG）', () => {
   const before = JSON.stringify(MENU_CATALOG);
   buildMenus(['print'], ['*']);

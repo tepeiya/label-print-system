@@ -15,6 +15,7 @@ import { AlertService } from './alert.service';
 import { InventoryController } from './inventory.controller';
 import { MasterdataController } from './masterdata.controller';
 import { AlertController } from './alert.controller';
+import { BomController } from './bom.controller';
 
 @Module({
   imports: [
@@ -24,7 +25,7 @@ import { AlertController } from './alert.controller';
     ]),
     PrintModule,
   ],
-  controllers: [InventoryController, MasterdataController, AlertController],
+  controllers: [InventoryController, MasterdataController, AlertController, BomController],
   providers: [InventoryService, AlertService],
   exports: [InventoryService, AlertService],
 })

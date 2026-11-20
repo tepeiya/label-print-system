@@ -115,7 +115,7 @@ export const AGENT_TOOLS: ToolDef[] = [
 
   // ---------------- BOM 齐套（7/8） ----------------
   {
-    name: 'bom.check_kit_rate', title: '齐套率', risk: 'read', permission: 'bom:kit:read', modules: ['inventory', 'bom'], implemented: true,
+    name: 'bom.check_kit_rate', title: '齐套率', risk: 'read', permission: 'bom:kit:read', modules: ['bom'], implemented: true,
     description: '给定产品与需求量，按启用 BOM 与当前库存算可配套数/齐套率/缺料行',
     inputSchema: S({
       product: { type: 'string', description: '产品编码或名称' },
@@ -124,7 +124,7 @@ export const AGENT_TOOLS: ToolDef[] = [
     }, ['product', 'demand']),
   },
   {
-    name: 'bom.explain_shortage', title: '缺料明细', risk: 'read', permission: 'bom:shortage:read', modules: ['inventory', 'bom'], implemented: true,
+    name: 'bom.explain_shortage', title: '缺料明细', risk: 'read', permission: 'bom:shortage:read', modules: ['bom'], implemented: true,
     description: '输出缺料行（应耗/可用/缺口），无缺料时为空数组 + 友好摘要',
     inputSchema: S({
       product: { type: 'string' },

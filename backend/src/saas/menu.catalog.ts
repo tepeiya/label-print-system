@@ -52,6 +52,8 @@ export const MENU_CATALOG: MenuNode[] = [
       // 呆滞/效期预警：alert 是独立模块（依赖 inventory 自动展开），入口用 alert:event:read。
       // 放在库存分组下，和「库存/基础资料」形成 库存域三件套。
       { key: 'alerts', name: '呆滞/效期预警', icon: 'Bell', path: '/alerts', module: 'alert', permission: 'alert:event:read' },
+      // BOM 齐套率：bom 是独立模块（依赖 inventory 自动展开），入口用 bom:kit:read。
+      { key: 'bom', name: 'BOM 齐套率', icon: 'Connection', path: '/bom', module: 'bom', permission: 'bom:kit:read' },
     ],
   },
   // AI 工作台：BASIC 也含 ai 模块（历史种子，见 docs/10 §10.15.5 第 1 条），入口权限点用 ai:generate

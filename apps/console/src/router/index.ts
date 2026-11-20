@@ -41,6 +41,9 @@ const routes: RouteRecordRaw[] = [
       // 呆滞/效期预警：alert 模块（依赖 inventory 自动展开），读权限用 alert:event:read。
       { path: 'alerts', component: () => import('@/views/Alerts.vue'),
         meta: { title: '呆滞/效期预警', icon: 'Bell', module: 'alert', permission: 'alert:event:read' } },
+      // BOM 齐套率：bom 模块（依赖 inventory 自动展开），读权限用 bom:kit:read。
+      { path: 'bom', component: () => import('@/views/BomKit.vue'),
+        meta: { title: 'BOM 齐套率', icon: 'Connection', module: 'bom', permission: 'bom:kit:read' } },
       {
         path: 'users',
         component: () => import('@/views/UserManagement.vue'),
