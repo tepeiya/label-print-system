@@ -30,11 +30,15 @@ function cssFont(family: unknown): string {
   return `'${safe}', sans-serif`;
 }
 
+/** 旋转样式：设计态 boxStyle / 打印态所有元素共用同一口径，避免条码二维码漏转 */
+function printRotateStyle(el: ElementData): string {
+  return el.rotation ? `transform:rotate(${el.rotation}deg);transform-origin:center center;` : '';
+}
+
 function printBoxStyle(el: ElementData): string {
-  const r = el.rotation ? `transform:rotate(${el.rotation}deg);transform-origin:center center;` : '';
   return `position:absolute;left:${el.x}mm;top:${el.y}mm;width:${el.w}mm;height:${el.h}mm;`
     + `z-index:${Math.round(el.zIndex ?? 1)};`
-    + (el.opacity !== undefined && el.opacity !== 1 ? `opacity:${el.opacity};` : '') + r;
+    + (el.opacity !== undefined && el.opacity !== 1 ? `opacity:${el.opacity};` : '') + printRotateStyle(el);
 }
 
 function barcodeTextHtml(spec: ElementData['barcode'], content: string): string {
@@ -104,7 +108,7 @@ function printElement(el: ElementData, ctx: RenderContext): string {
       const svg = r.svgStr.replace('<svg ', '<svg preserveAspectRatio="none" style="width:100%;height:100%;display:block" ');
       const dir = showTextIsTop(el.barcode) ? 'column-reverse' : 'column';
       return `<div style="position:absolute;left:${el.x}mm;top:${el.y}mm;width:${el.w}mm;height:${el.h}mm;
-        z-index:${Math.round(el.zIndex ?? 1)};display:flex;flex-direction:${dir};overflow:hidden;">
+        z-index:${Math.round(el.zIndex ?? 1)};display:flex;flex-direction:${dir};overflow:hidden;${printRotateStyle(el)}">
         <div style="flex:1 1 auto;min-height:0;">${svg}</div>${barcodeTextHtml(el.barcode, content)}</div>`;
     }
     case 'qrcode': {
@@ -115,8 +119,10 @@ function printElement(el: ElementData, ctx: RenderContext): string {
       const size = Math.max(4, Math.min(el.w, el.h) - quiet * 2);
       const off = { x: (el.w - size) / 2, y: (el.h - size) / 2 };
       const svg = r.svgStr.replace('<svg ', '<svg preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%;display:block" ');
-      return `<div style="position:absolute;left:${el.x + off.x}mm;top:${el.y + off.y}mm;width:${size}mm;height:${size}mm;
-        z-index:${Math.round(el.zIndex ?? 1)};">${svg}</div>`;
+      // 旋转必须围绕「元素盒中心」而非内层二维码方块中心：外层包一层与元素同尺寸的盒子承载 rotate，
+      // 内层按静区偏移定位，这样旋转轴心与 boxStyle / 后端渲染一致（否则 90° 后会偏位）。
+      return `<div style="${printBoxStyle(el)}overflow:visible;">
+        <div style="position:absolute;left:${off.x}mm;top:${off.y}mm;width:${size}mm;height:${size}mm;">${svg}</div></div>`;
     }
     default: {
       const align = el.font?.align || 'left';
@@ -149,7 +155,9 @@ export function buildPrintHtml(template: TemplateData, rows: Record<string, unkn
   const data = rows && rows.length ? rows : [{}];
   const copies = Math.max(1, opts.copies ?? 1);
   const labelCount = data.length * copies;
+  const duplex = page.duplex === true;
   const labels: string[] = [];
+  const backLabels: string[] = [];
   let serial = opts.serialStart ?? 1;
   // 主流水号元素配置，供 @serial 占位引用（与 serial 元素显示一致；无则回退默认 5 位补零）
   const mainSerial = (template.elements ?? []).find((e) => e.type === 'serial' && e.serial) as { serial?: any } | undefined;
@@ -171,7 +179,11 @@ export function buildPrintHtml(template: TemplateData, rows: Record<string, unkn
         }
         parts.push(printElement(el, ctx));
       }
-      labels.push(`<div class="label">${parts.join('')}</div>`);
+      const inner = parts.join('');
+      labels.push(`<div class="label">${inner}</div>`);
+      // 双面：背面页承载同样的内容，由 CSS 水平镜像。打印机按「短边翻转」把相邻两页
+      // 印到同一张纸的正反面，镜像保证从背面看文字/条码是正向可读的。
+      if (duplex) backLabels.push(`<div class="label label-back">${inner}</div>`);
       serial++;
     }
   }
@@ -187,16 +199,43 @@ export function buildPrintHtml(template: TemplateData, rows: Record<string, unkn
   const sheetH = rowsN > 1 ? margin * 2 + labelH * rowsN + gapY * (rowsN - 1) : labelH;
   const imposed = cols > 1 || rowsN > 1;
 
-  let body = labels.join('');
-  if (imposed) {
+  // 拼版分组：把标签序列按每页容量切成若干 sheet
+  const toSheets = (list: string[]): string[] => {
     const perSheet = cols * rowsN;
     const sheets: string[] = [];
-    for (let i = 0; i < labels.length; i += perSheet) {
-      const cells = labels.slice(i, i + perSheet)
+    for (let i = 0; i < list.length; i += perSheet) {
+      const cells = list.slice(i, i + perSheet)
         .map((l) => `<div class="slot">${l}</div>`).join('');
       sheets.push(`<div class="sheet">${cells}</div>`);
     }
-    body = sheets.join('');
+    return sheets;
+  };
+
+  let body: string;
+  if (duplex) {
+    // 正反面交替：正面页 → 对应背面页 → 下一张正面页……
+    // 浏览器「双面-短边翻转」会把相邻两页印到同一张纸两面；背面页由 .label-back 水平镜像。
+    if (imposed) {
+      const frontSheets = toSheets(labels);
+      const backSheets = toSheets(backLabels);
+      const paired: string[] = [];
+      for (let i = 0; i < frontSheets.length; i++) {
+        paired.push(frontSheets[i]);
+        if (backSheets[i]) paired.push(backSheets[i]);
+      }
+      body = paired.join('');
+    } else {
+      const paired: string[] = [];
+      for (let i = 0; i < labels.length; i++) {
+        paired.push(labels[i]);
+        if (backLabels[i]) paired.push(backLabels[i]);
+      }
+      body = paired.join('');
+    }
+  } else if (imposed) {
+    body = toSheets(labels).join('');
+  } else {
+    body = labels.join('');
   }
 
   const sheetCss = imposed ? `
@@ -204,6 +243,12 @@ export function buildPrintHtml(template: TemplateData, rows: Record<string, unkn
     gap: ${gapY}mm ${gapX}mm; padding: ${margin}mm; page-break-after: always; break-after: page; background: #fff; }
   .sheet:last-child { page-break-after: auto; break-after: auto; }
   .sheet .label { page-break-after: auto; break-after: auto; }
+` : '';
+  // 背面镜像规则仅在双面时输出，单面 HTML 不含任何背面标记
+  const duplexCss = duplex ? `
+  /* 双面背面：短边翻转后从纸背看需水平镜像才正向可读；容器只翻一次，内部元素照常布局 */
+  .label-back { transform: scaleX(-1); transform-origin: center center; }
+  @media screen { .label-back { box-shadow: 0 2px 8px rgba(0,0,0,.15), inset 0 0 0 2px #f0b429; } }
 ` : '';
 
   return `<!doctype html>
@@ -215,6 +260,7 @@ export function buildPrintHtml(template: TemplateData, rows: Record<string, unkn
   .label { position: relative; width: ${labelW}mm; height: ${labelH}mm; overflow: hidden; background: #fff;
     page-break-after: always; break-after: page; }
   .label:last-child { page-break-after: auto; break-after: auto; }
+  ${duplexCss}
   ${sheetCss}
   @media screen { body { padding: 12px; background: #e9edf3; } .label, .sheet { margin: 0 auto ${imposed ? 18 : 12}px; box-shadow: 0 2px 8px rgba(0,0,0,.15); } }
 </style></head>

@@ -1,39 +1,41 @@
-# 标签管理与打印系统（LabelFlow）设计方案
+# 标签管理与打印系统（LabelFlow）
 
-> 目标：从零实现一套可商用专业标签软件的 ~80% 核心能力。支持拖拽式可视化设计器、变量/公式/流水号/条码二维码、多打印机通道、多租户隔离、批量打印与任务队列、导入导出与版本管理。
+> 一套可商用的专业标签设计 / 打印 SaaS。覆盖拖拽式可视化设计器、变量 / 公式 / 流水号 / 条码二维码、多打印机通道、多租户隔离、批量打印与任务队列、SaaS 订阅计费、Agent / MCP 接入、AI 模板生成，以及库存 / 主数据 / 齐套 / 呆滞预警等企业治理能力。
 
 > **接手开发请先读 [`docs/10-dev-handover.md`](docs/10-dev-handover.md)** ——
-> 面向 AI / 开发者的一页式交接文档：运行环境与端口、模块地图、核心 schema 约定、
-> 已完成清单、已知技术债、路线图、踩坑记录、自测清单。
+> 面向 AI / 开发者的权威交接文档：运行环境与端口、模块地图、核心 schema 约定、
+> 已完成清单、已知技术债、路线图、踩坑记录、自测清单。本文档只做总览与快速上手。
 
 > **前端现状（重要）**
-> - ✅ 当前主前端：`apps/console`（Vue 3 + TypeScript + Vite + Element Plus + Pinia），租户后台 `:5173`；平台运营后台 `apps/platform` `:5181`
-> - ⚠️ `web/`（原生 HTML5）**已弃用（DEPRECATED）**，仅作行为对照，不再新增功能；待新前端功能全部完善后删除
+> - ✅ 主前端：`apps/console`（Vue 3 + TypeScript + Vite + Element Plus + Pinia）租户后台 `:5173`
+> - ✅ 平台运营后台：`apps/platform` `:5181`；Agent/MCP Server：`apps/mcp-server` `:3300`
+> - ⚠️ `web/`（原生 HTML5）**已弃用（DEPRECATED）**，仅作行为对照，不再新增功能，待新前端完善后删除。
 
 ---
 
 ## 0. 技术栈选型与取舍
 
-### 后端：Node.js (NestJS)  vs  Java (Spring Boot 3)
+### 后端：Node.js (NestJS) vs Java (Spring Boot 3)
 
-| 维度 | NestJS (推荐) | Spring Boot 3 |
+| 维度 | NestJS (选用) | Spring Boot 3 |
 | --- | --- | --- |
-| 渲染生态 | `node-canvas` / `sharp` / `pdf-lib` / `puppeteer` 与前端同语言，复用校验位/坐标换算逻辑 | 需 `ZXing` / `iText` / `Apache Batik`，图形渲染需 JVM 内 canvas，体积大 |
-| 打印指令生成（ZPL/TSPL/EPL/CPCL） | 纯字符串模板，TS 直接拼装 | 同样纯字符串，无优势 |
-| 团队一致性 | 前后端同 TS，设计器与渲染层可共享 schema/dpi 换算/pix-per-mm | 需两套语言维护 |
-| 性能/并发 | 单进程 I/O 密集足够；CPU 密集渲染用 Worker 线程池 | 线程模型更稳，长任务友好 |
-| 运维/容器 | 镜像小（~200MB alpine），启动快 | JDK17 镜像 ~400MB+ |
+| 渲染生态 | `sharp` / `pdf-lib` / `@bwip-js/node` 与前端同语言，复用校验位 / 坐标换算逻辑 | 需 `ZXing` / `iText` / `Batik`，图形渲染需 JVM 内 canvas，体积大 |
+| 打印指令生成（ZPL/TSPL/EPL） | 纯字符串模板，TS 直接拼装 | 同样纯字符串，无优势 |
+| 团队一致性 | 前后端同 TS，设计器与渲染层可共享 schema / dpi 换算 | 需两套语言维护 |
+| 性能 / 并发 | 单进程 I/O 密集足够；CPU 密集渲染用 BullMQ Worker 隔离 | 线程模型更稳，长任务友好 |
+| 运维 / 容器 | 镜像小、启动快 | JDK17 镜像 ~400MB+ |
 
-**结论**：选 **NestJS + TypeScript**。理由：① 渲染层（barcode/二维码/PDF/PNG）与前端设计器需共用「毫米↔点阵」「校验位」「公式」等逻辑，同语言可非零拷贝复用；② 指令生成本质是字符串模板，TS 表达力强；③ 启动快、镜像小，符合 Docker Compose 一键部署要求。CPU 密集的批量出图通过 **BullMQ + Worker 线程池** 隔离，避免阻塞事件循环。
+**结论**：选 **NestJS + TypeScript**。① 渲染层（条码 / 二维码 / PDF / PNG）与前端设计器共用「毫米↔点阵」「校验位」「公式」逻辑，同语言零成本复用；② 指令生成本质是字符串模板，TS 表达力强；③ 启动快、镜像小，符合 Docker Compose 一键部署。CPU 密集的批量出图通过 **BullMQ + Worker** 隔离，避免阻塞事件循环。
 
-### 其他选型
+### 其他选型（以实际代码为准）
 
-- **数据库**：PostgreSQL 16（模板存 `JSONB`，支持 GIN 索引全文检索）；**Redis** 7 用于号段缓存、任务队列（BullMQ）、租户配置缓存。
-- **渲染**：服务端 `node-canvas`（PNG 位图）、`pdf-lib`（PDF 矢量/精确分页）、`@bwip-js/node`（条码/二维码位图，支持 GS1/DataMatrix/PDF417）；前端预览 `jsbarcode` + `qrcode` + Konva 实时绘制。
-- **画布**：**Konva.js**（声明式、性能好、对 100 元素拖拽不掉帧；自带 Transformer 多选/成组/旋转）。对比 Fabric.js：Konva 在 React 下状态管理更清晰、性能更优；Fabric 序列化更全但 React 集成偏命令式。
-- **状态管理**：**Zustand**（轻量、可拔插 history 中间件做撤销/重做，对比 Redux 样板代码少）。
-- **队列**：**BullMQ**（基于 Redis，原生支持重试/延迟/进度，对比 RabbitMQ 部署更轻）。
-- **鉴权**：JWT（Access 15min）+ Refresh Token（7d，Rotation），密码 `bcrypt` 加盐哈希。
+- **包管理**：后端 `npm`（`package-lock.json`，同时保留 `pnpm-lock.yaml`）；前端各 `apps/*` 用 **pnpm**（`pnpm-lock.yaml`）。
+- **数据库**：PostgreSQL 16（`pgvector/pgvector:pg16`，模板 / 业务扩展存 `JSONB` + GIN 索引）；**Redis 7** 用于号段缓存、BullMQ 队列、租户配置缓存。
+- **ORM**：TypeORM（`synchronize: false`，全部建表 / 改列走 `backend/scripts/*.sql` 手工执行）。
+- **渲染 / 识别**：服务端 `sharp`（位图）、`pdf-lib`（矢量 PDF / 精确分页）、`@bwip-js/node`（条码二维码，含 GS1 / DataMatrix / PDF417 / Aztec）、`zxing-wasm` + `@zxing/library`（解码校验）、`tesseract.js`（OCR）、`xlsx`（数据导入）。
+- **设计器**：`apps/console/src/views/designer/` 下 **Vue 3 原生实现**（12 类元素、手势 / 标尺 / 吸附 / 撤销重做 / 检查器），非 iframe、非 Konva。前端预览用 `bwip-js` 出码。
+- **状态管理**：前端 **Pinia**（`apps/console/src/store/`）。
+- **鉴权**：JWT（Access + Refresh Rotation）、bcrypt 加盐哈希；多租户 `tenant_id` 隔离 + RBAC 权限点 + 模块订阅门。
 
 ---
 
@@ -41,49 +43,50 @@
 
 ```
 label-print-system/
-├── README.md                       # 本文档（总览 + 架构 + 技术取舍）
-├── docker-compose.yml              # 一键启动（pg + redis + api + worker + web）
+├── README.md                       # 本文档（总览 + 架构 + 快速上手）
+├── docker-compose.yml              # 一键启动（pg + redis + api + worker + 老 web）
 ├── docs/
 │   ├── 01-requirements.md          # 功能矩阵（P0/P1/P2）
 │   ├── 02-architecture.md          # 架构图（Mermaid）
-│   ├── 03-database.sql             # 完整 DDL（含索引/租户隔离/流水号表）
+│   ├── 03-database.sql             # 基础 DDL
 │   ├── 04-template-schema.md       # 模板 JSON Schema + 示例
 │   ├── 05-api.md                   # 后端 API 清单
 │   ├── 08-plan.md                  # 开发计划 + 测试要点
-│   ├── 09-ai-template-generation.md # AI 标签图片 → 模板自动生成（OCR/条码/分类/LLM）
-│   ├── 10-dev-handover.md          # 开发交接文档（面向接手的 AI / 开发者）
-│   └── 11-saas-and-agent-architecture.md # SaaS 化（订阅/权限分级）+ MCP 智能体接入
+│   ├── 09-ai-template-generation.md # AI 标签图片 → 模板自动生成
+│   ├── 10-dev-handover.md          # ★ 开发交接文档（权威，接手必读）
+│   ├── 11-saas-and-agent-architecture.md # SaaS 订阅/RBAC + Agent/MCP 架构
+│   └── 12-formula-guide.md         # 公式引擎使用指南
 ├── backend/
-│   ├── core/
+│   ├── core/                       # 纯计算内核（无 Nest 依赖，可单测）
 │   │   ├── serial-number.service.ts   # 流水号并发安全（行锁 + 号段预分配）
 │   │   ├── formula-engine.ts          # 公式引擎（解析/求值/循环依赖检测）
-│   │   ├── checksum.ts                # 条码校验位算法（Code128/EAN13/Code39…）
-│   │   ├── barcode-renderer.ts        # 条码/二维码 服务端出图 + 前端预览适配
-│   │   ├── zpl-generator.ts           # ZPL 指令生成（文本/条码/二维码/图片/流水号）
-│   │   └── tspl-generator.ts          # TSPL 指令生成
-│   └── printer/
-│       ├── printer-provider.interface.ts  # PrinterProvider 抽象接口
-│       ├── raw-tcp.provider.ts            # 网络打印机 9100 直连
-│       ├── image.provider.ts              # 服务端 PNG/PDF 出图（存档/第三方）
-│       └── tenant.guard.ts                # 多租户行级隔离守卫
-├── web/                            # ⚠️ 已弃用（DEPRECATED）：老版原生 HTML5 前端，仅作对照，待新前端完善后删除
-│   ├── index.html                  # 老版主界面（设计/打印/任务/模板/审计 页签）
-│   ├── serve.mjs                   # 静态服务器（dev 用，5180）
-│   ├── sw.js                       # PWA Service Worker
-│   ├── vendor/                     # 第三方库（bwipjs / XLSX / fflate / JsBarcode / QRCode）
-│   └── js/
-│       ├── app.js / store.js       # 顶层启动 + 状态
-│       ├── render.js               # 画布渲染（DOM + 打印共用）
-│       ├── interactions.js         # Pointer 拖拽/框选/旋转/快捷键
-│       ├── guides.js               # 标尺 / 参考线 / 智能吸附
-│       ├── print.js                # 打印页（数据导入 / 校验 / 预览 / 指令下载）
-│       ├── templates.js            # 模板库（分类/收藏/版本/.ziptpl）
-│       └── inspector.js            # 右侧属性检查器
-└── tools/
-    └── labelctl.mjs                # CLI：login/templates/printers/print/commands/jobs
+│   │   ├── checksum.ts                # 条码校验位算法
+│   │   ├── barcode-renderer.ts        # 服务端出图 + 前端预览适配
+│   │   ├── symbology.capabilities.ts  # 码制单一真源（预览/指令能力矩阵）
+│   │   ├── zpl-generator.ts / tspl-generator.ts / epl-generator.ts
+│   │   ├── vector-renderer.ts / pdf-export.ts  # 整标签矢量 SVG + PDF
+│   │   └── __tests__/golden/          # ZPL/TSPL/EPL golden 快照
+│   ├── src/                        # NestJS 应用模块
+│   │   ├── agent/                  # Agent/MCP 工具目录、Prompt 库、审批、限流
+│   │   ├── ai-template/            # AI 模板生成（OCR/透视矫正/LLM）
+│   │   ├── audit/ backup/ billing/ # 审计 / 备份 / 计费
+│   │   ├── barcode/ formula/ serial/ datasource/ printer/
+│   │   ├── inventory/              # 主数据 / 库存 / BOM 齐套 / 呆滞预警
+│   │   ├── jobs/                   # BullMQ 任务与定时维护（Webhook、HotFolder）
+│   │   ├── notify/                 # 站内信 + 飞书/邮件/短信外部通道
+│   │   ├── print/ saas/ governance/ hardware/ template/ user/ auth/
+│   │   └── app.module.ts / main.ts
+│   └── scripts/*.sql               # ★ 全部 DDL / 权限种子（需手工执行，见 §5）
+├── apps/
+│   ├── console/                    # 租户后台（Vue 3 + Vite + Element Plus + Pinia），:5173
+│   │   └── src/views/designer/     # 原生 Vue 设计器（元素/引擎/检查器）
+│   ├── platform/                   # 平台运营后台，:5181
+│   └── mcp-server/                 # Agent/MCP Server，:3300
+├── web/                            # ⚠️ 已弃用：老版原生 HTML5 前端，仅作对照
+└── tools/labelctl.mjs              # CLI：login/templates/printers/print/commands/jobs
 ```
 
-> 所有**对外坐标/尺寸以毫米(mm)为单位**，内部渲染按目标 `dpi` 转点阵：`dots = mm * dpi / 25.4`。例：203dpi → 8 dots/mm；300dpi → 11.81 dots/mm；600dpi → 23.62 dots/mm。
+> 所有**对外坐标 / 尺寸以毫米(mm)为单位**，内部渲染按目标 `dpi` 转点阵。
 
 ---
 
@@ -95,70 +98,116 @@ dots → mm  : mm   = dots * 25.4 / dpi
 ```
 
 - 设计器画布逻辑单位为 **mm**，按 `缩放比 * (screenDpi/25.4)` 像素/毫米渲染（屏幕按 96dpi 显示，导出时按打印机 dpi 重算）。
-- 模板 JSON 中所有 `x/y/w/h` 均为 mm；打印机指令生成时统一在 Provider 内按 `printer.dpi` 换算为 dots。
-- DPI 不一致时，出图层以打印机 DPI 为基准重采样，避免模糊/偏移。
+- 模板 JSON 中所有 `x/y/w/h` 均为 mm；打印指令生成时统一在 Provider 内按 `printer.dpi` 换算为 dots。
+- DPI 不一致时，出图层以打印机 DPI 为基准重采样，避免模糊 / 偏移。例：203dpi→8 dots/mm；300dpi→11.81；600dpi→23.62。
 
 ---
 
 ## 3. 核心能力覆盖度
 
-| 能力域 | 本方案覆盖 | 备注 |
+| 能力域 | 覆盖 | 备注 |
 | --- | --- | --- |
-| 可视化设计器 | ✅ 拖拽/缩放/标尺/网格/吸附/成组/层级/撤销重做 | Konva |
-| 元素类型 | ✅ 文本/图/线/形/表/条码/二维码/公式/流水号/日期/系统变量/DB字段 | 12 类 |
-| 变量/公式/流水号 | ✅ 含 CHECKSUM、循环依赖检测、号段预分配 | 见 core |
-| 条码/二维码 | ✅ Code128/EAN13/UPC/ITF14/GS1-128 + QR/DataMatrix/PDF417/Aztec | @bwip-js |
+| 可视化设计器 | ✅ 拖拽 / 缩放 / 标尺 / 网格 / 吸附 / 成组 / 层级 / 撤销重做 | Vue 3 原生实现 |
+| 元素类型 | ✅ 文本 / 图 / 线 / 形 / 表 / 条码 / 二维码 / 公式 / 流水号 / 日期 / 系统变量 / DB 字段 | 12 类 |
+| 变量 / 公式 / 流水号 | ✅ 含 CHECKSUM、循环依赖检测、号段预分配并发安全 | 见 `core/` |
+| 码制 | ✅ 主流一维 / 二维；GS1 FNC1、MaxiCode / HIBC / PZN 等专业码制 | `symbology.capabilities.ts` 单一真源 |
 | 打印通道 | ✅ 浏览器打印 / 9100 Raw TCP / 本地代理 / 服务端出图 | 4 类 Provider |
-| 多租户隔离 | ✅ tenant_id 行级 + 资源级权限 + 审计 | 见 tenant.guard |
-| 版本/导入导出 | ✅ 快照/回滚/对比 + .ziptpl + 整租户备份 | 见 API |
-| 批量/队列 | ✅ CSV/DB 数据源 + BullMQ 异步 + 重打补打 | 见 plan |
+| 输出 | ✅ ZPL / TSPL / EPL 指令 + 位图 PNG + 整标签矢量 SVG / PDF | golden 快照测试 |
+| 批量 / 队列 | ✅ CSV / DB 数据源 + BullMQ 异步 + 重打补打 + 防重代码 | 见 `src/jobs`、`src/print` |
+| 多租户 / RBAC | ✅ tenant_id 隔离 + 资源级权限点 + 模块订阅门 + 审计 | 见 `src/saas` / `src/auth` |
+| SaaS 化 | ✅ 订阅计费（V1）、平台运营后台、白标、独立库路由、RLS 代码 | 见 `src/billing` / `src/saas` |
+| Agent / MCP | ✅ 读写工具 + 审批流 + 限流 + 脱敏；Prompt 库版本历史 / 角色分发 | 见 `src/agent` |
+| AI 模板生成 | ✅ 透视矫正 / 单元素重算 / 文本生模板 / 多联切分 | 见 `src/ai-template` |
+| 自动化触发 | ✅ HotFolder + 事件 + Webhook | 见 `src/jobs` |
+| 企业数据 | ✅ 基础资料（含自定义字段）/ 库存 / BOM 齐套率 / 呆滞效期预警 | 见 `src/inventory` |
+| 通知 | ✅ 站内信 + 飞书 / 邮件 / 短信外部通道（配置驱动） | 见 `src/notify` |
+
+> ⚠️ 标注「代码已落地」不等于「已完成真机 / 真库 / DNS 验收」。RLS 角色切换、独立库真连库、白标 DNS、硬件代理（RFID / 喷码机）等仍需真实环境验收，**不得按已交付对外表述**。详见 `docs/10-dev-handover.md`。
 
 ---
 
 ## 4. 快速开始（开发态）
 
+### 环境约定（与 `docs/10-dev-handover.md` 一致）
+
+| 服务 | 宿主端口 | 容器 / 内部端口 | 说明 |
+| --- | --- | --- | --- |
+| 后端 API | **3200** | 3200 | `http://localhost:3200/api/v1` |
+| PostgreSQL | **5433** | 5432 | 容器网内 `postgres:5432` |
+| Redis | **6380** | 6379 | 容器网内 `redis:6379` |
+| console 租户后台 | 5173 | — | Vite dev，代理 `/api` → 3200 |
+| platform 平台后台 | 5181 | — | Vite dev |
+| MCP Server | 3300 | — | Agent/MCP HTTP |
+| 老 web（弃用） | 5180 | 80 | 仅对照 |
+
+> 端口 `3000` 属其他项目，禁止占用。
+
+### 启动
+
 ```bash
-# 后端
-cd backend && npm i && npm run start:dev
-# 前端（Vue 3 后台，Vite dev server，自动代理 /api → 3200）
-cd apps/console && npm i && npm run dev         # http://localhost:5173
-# 老版原生前端（⚠️ 已弃用，仅作对照）：node web/serve.mjs 5180
-# 一键全家桶
+# 一键全家桶（PG + Redis + API + Worker + 老 web）
 docker compose up -d
+
+# 或本地分进程
+cd backend && npm i && npm run start:dev          # API :3200
+cd apps/console && pnpm i && pnpm dev             # 租户后台 :5173（推荐）
+cd apps/platform && pnpm i && pnpm dev            # 平台后台 :5181
+# 老版原生前端（⚠️ 已弃用，仅作对照）：node web/serve.mjs 5180
 ```
 
-## 5. 当前进度（已实现并验证）
+> 数据库脚本 `synchronize: false`，建表 / 权限种子需手工执行 —— 见 §5。
 
-| 层 | 状态 | 验证 |
+---
+
+## 5. 数据库脚本（手工执行，幂等）
+
+项目关闭了 TypeORM 的自动同步，所有 DDL 与权限种子都在 `backend/scripts/`。首次部署 / 升级按依赖顺序执行：
+
+| 脚本 | 用途 |
+| --- | --- |
+| `docs/03-database.sql` | 基础表（模板 / 用户 / 打印任务等） |
+| `saas_p0.sql` / `saas_p0_roles.sql` | 租户 / 模块 / RBAC 权限点种子 |
+| `saas_p2_platform.sql` / `saas_p3_billing.sql` | 平台运营 / 计费 |
+| `saas_p4_agent.sql` / `saas_p5_agent_tools.sql` | Agent / 工具权限 |
+| `saas_p6_*.sql` | 白标 / 独立库 / RLS / Prompt 库 / Prompt 版本历史 / 租户数据 |
+| `saas_p7_notifications.sql` | 通知 |
+| `saas_p8_governance.sql` / `saas_p8_hardware.sql` / `saas_p8_triggers.sql` | 治理 / 硬件 / 自动化触发 |
+| `inventory_*.sql` | 主数据 / 库存 / 库位 / 产品组 / 产品打印 / 自定义字段 / BOM / 呆滞预警 |
+| `seed.sql` / `seed-inventory-demo.sql` | 演示数据 |
+
+> **加购模块**（`inventory` 基础模块之上）：`masterdata` / `bom` / `alert` 等需给目标租户开通 `tenant_modules` 后，模块门才放行、菜单才出现。示例：
+> ```sql
+> INSERT INTO tenant_modules (tenant_id, module_code, status, source)
+> VALUES (<租户ID>, 'alert', 'active', 'manual')
+> ON CONFLICT (tenant_id, module_code) DO NOTHING;
+> ```
+
+---
+
+## 6. 当前进度与验证
+
+| 层 | 状态 | 验证方式 |
 | --- | --- | --- |
-| 核心引擎（公式/校验位/流水号/条码/DPI/ZPL/TSPL） | ✅ 真实可运行 | **16 个单元测试全绿**（node:test + tsx） |
-| 条码出图（Code128/EAN13 自包含编码器 + PNG 写出） | ✅ 真实 | 测试产出有效 PNG 签名 |
-| 渲染管线（变量+公式+流水号 → 单行元素） | ✅ 真实 | 渲染测试覆盖占位/公式/流水号切片 |
-| 后端 NestJS 应用 | ✅ 完整骨架 | 模块/控制器/服务/实体/main/worker 齐备，需 `npm i` + PG/Redis 启动 |
-| 前端设计器 | ✅ Vue 3 重写（`apps/console`） | 设计器原生 Vue 实现（无 iframe）：12 类元素、手势/标尺/检查器/撤销重做；`web/` 老版已弃用（DEPRECATED），仅作行为对照 |
-| 多租户隔离 | ✅ 守卫+BaseRepository | 查询强制带 tenant_id |
+| 核心引擎（公式 / 校验位 / 流水号 / 条码 / DPI / ZPL / TSPL / EPL） | ✅ 真实可运行 | `core/__tests__` + golden 快照 |
+| 渲染管线（变量 + 公式 + 流水号 → 元素 / 矢量 SVG / PDF） | ✅ 真实 | 单测 + 快照 |
+| 后端 NestJS 全模块 | ✅ 完整实现 | `pnpm typecheck` + 全量单测 |
+| 前端三应用（console / platform / mcp-server） | ✅ 完整实现 | `vue-tsc -b` 类型检查 |
+| 多租户隔离 | ✅ 守卫 + BaseRepository + RLS 代码 | 查询强制带 tenant_id |
 
-### 如何运行测试（零外部依赖，立即可跑）
+### 运行测试
 
 ```bash
 cd backend
-node --import tsx --test core/__tests__/*.test.ts
-# 期望：# tests 16  # pass 16  # fail 0
+pnpm typecheck                 # tsc --noEmit
+pnpm test                      # node:test + tsx，覆盖 core/**/__tests__ 与 src/**/__tests__
+# 当前：约 532 例，525 通过 / 0 失败 / 7 跳过
+
+cd apps/console && pnpm vue-tsc -b   # 前端类型检查
 ```
 
-### 如何启动完整系统
+> 单测均为纯函数 / 接线级（不触网、不连库）；网关连通性、飞书业务码、版本表并发、真机打印需在真环境验收。
 
-```bash
-docker compose up -d        # 拉起 PG + Redis + api + worker + web
-# 或本地：先建库（docs/03-database.sql），再：
-cd backend && npm i && npm run start:dev      # API :3200
-cd apps/console && npm i && npm run dev       # Vue 3 租户后台 :5173（推荐）
-# 老版原生前端（⚠️ 已弃用，仅作对照）：node web/serve.mjs 5180
-```
-
-> 说明：核心引擎层已通过测试证明正确（最难验证的并发打号、校验位、DPI 换算、渲染管线均在测试中覆盖）。后端应用与前端为完整可运行骨架，需在 `npm i` + 基础设施就绪后联调。
-
-### 命令行（`tools/labelctl.mjs`，无依赖）
+### CLI（`tools/labelctl.mjs`，无依赖）
 
 ```bash
 node tools/labelctl.mjs login                                   # token 缓存在 ~/.labelflow-token.json
@@ -168,6 +217,16 @@ node tools/labelctl.mjs jobs --limit 5
 node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号补打
 ```
 
-环境变量 `LABELFLOW_API`（默认 `http://localhost:3200/api/v1`）、`LABELFLOW_USER`/`LABELFLOW_PASS`、`LABELFLOW_TOKEN`。
+环境变量 `LABELFLOW_API`（默认 `http://localhost:3200/api/v1`）、`LABELFLOW_USER` / `LABELFLOW_PASS` / `LABELFLOW_TOKEN`。
 
-详细设计见 `docs/` 各章节；核心实现见 `backend/` 与 `web/`。
+---
+
+## 7. 已知短板（路线图摘要）
+
+按 `docs/10-dev-handover.md`，下一阶段优先级：
+
+1. **最高优先：条码设计 / 打印核心能力打磨**（产品命根子）——多联 / 多页 / 双面布局、对齐分布、富文本、表格合并、印刷级质量（出血 / 裁切线 / CMYK 专色）、DPI 抗锯齿、打印机偏移校准。
+2. **上线前技术债**：RLS 切到 `labelflow_app`（无 BYPASSRLS）角色、独立库真连库验收、白标真实 DNS / 证书、通知通道（代码已就绪，待配网关）、独立库物理备份策略。
+3. **按需功能缺口**：MySQL / SQL Server 数据源方言、更多 MCP 工具、高级计费（发票 / 退款 / 多币种）、Prompt 调用统计深化、Nest 容器级 E2E、前端测试、硬件层真机验收（Windows 打印代理 / RFID / 喷码机）。
+
+详细设计与逐项状态见 [`docs/10-dev-handover.md`](docs/10-dev-handover.md) 与 [`docs/11-saas-and-agent-architecture.md`](docs/11-saas-and-agent-architecture.md)。

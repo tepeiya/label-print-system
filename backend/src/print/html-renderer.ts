@@ -28,7 +28,7 @@ function enc(s: any): string {
 export interface HtmlRenderInput {
   templateContent: {
     schemaVersion?: number;
-    page: { widthMm: number; heightMm: number; dpi: number; orientation?: number };
+    page: { widthMm: number; heightMm: number; dpi: number; orientation?: number; duplex?: boolean };
     elements: any[];
     variables?: ComputedVariable[];
   };
@@ -58,6 +58,8 @@ export function renderPrintHtml(input: HtmlRenderInput): HtmlRenderOutput {
 
   const render = new RenderService();
   const labels: string[] = [];
+  const backLabels: string[] = [];
+  const duplex = page.duplex === true;
 
   const totalLabels = rows.length * copies;
   for (let i = 0; i < totalLabels; i++) {
@@ -75,7 +77,10 @@ export function renderPrintHtml(input: HtmlRenderInput): HtmlRenderOutput {
     };
     const serials: Record<string, string[]> = {}; // 预览不预分配，留空
     const rendered = render.renderRow(templateContent.elements, row, serials, sysVars, copyIndex, templateContent.variables ?? []);
-    labels.push(renderedToLabel(rendered, mmToPx, watermarkHtml));
+    const inner = renderedToLabel(rendered, mmToPx, watermarkHtml);
+    labels.push(`<div class="lbl-wrap">${inner}</div>`);
+    // 双面：背面页同内容，交给 CSS .lbl-back 水平镜像（短边翻转后从背面正向可读）
+    if (duplex) backLabels.push(`<div class="lbl-wrap lbl-back">${inner}</div>`);
   }
 
   // --- 多联拼版：与前端 buildPrintHtml 保持一致 ---
@@ -90,28 +95,49 @@ export function renderPrintHtml(input: HtmlRenderInput): HtmlRenderOutput {
   const gapYPx = +(gapYMm * mmToPx).toFixed(2);
   const marginPx = +(marginMm * mmToPx).toFixed(2);
 
-  let htmlBody: string;
-  let imposeCss: string;
-  if (cols > 1 || rowsN > 1) {
+  const imposed = cols > 1 || rowsN > 1;
+  const toSheets = (list: string[]): string[] => {
     const perSheet = cols * rowsN;
     const sheets: string[] = [];
-    for (let i = 0; i < labels.length; i += perSheet) {
-      const cells = labels.slice(i, i + perSheet).join('');
+    for (let i = 0; i < list.length; i += perSheet) {
+      const cells = list.slice(i, i + perSheet).join('');
       sheets.push(`<div class="sheet">${cells}</div>`);
     }
-    htmlBody = sheets.join('');
-    imposeCss = `
+    return sheets;
+  };
+
+  let htmlBody: string;
+  if (duplex) {
+    // 正反面交替，配合打印机短边翻转；背面页由 .lbl-back 镜像
+    if (imposed) {
+      const front = toSheets(labels);
+      const back = toSheets(backLabels);
+      const paired: string[] = [];
+      for (let i = 0; i < front.length; i++) {
+        paired.push(front[i]);
+        if (back[i]) paired.push(back[i]);
+      }
+      htmlBody = paired.join('');
+    } else {
+      const paired: string[] = [];
+      for (let i = 0; i < labels.length; i++) {
+        paired.push(labels[i]);
+        if (backLabels[i]) paired.push(backLabels[i]);
+      }
+      htmlBody = paired.join('');
+    }
+  } else {
+    htmlBody = imposed ? toSheets(labels).join('') : labels.join('');
+  }
+
+  const imposeCss = imposed ? `
       .sheet { display: grid; grid-template-columns: repeat(${cols}, ${wPx}px); grid-auto-rows: ${hPx}px;
         gap: ${gapYPx}px ${gapXPx}px; padding: ${marginPx}px; page-break-after: always; break-after: page; background: #fff; }
       .sheet:last-child { page-break-after: auto; break-after: auto; }
-      .sheet .lbl { page-break-after: auto; break-after: auto; }
-    `;
-  } else {
-    htmlBody = labels.join('');
-    imposeCss = '';
-  }
+      .sheet .lbl-wrap { page-break-after: auto; break-after: auto; }
+    ` : '';
 
-  const html = assembleDocument({ wPx, hPx, wMm, hMm, dpi, labels: htmlBody, imposeCss, sheetWMm, sheetHMm });
+  const html = assembleDocument({ wPx, hPx, wMm, hMm, dpi, labels: htmlBody, imposeCss, sheetWMm, sheetHMm, duplex });
   return { html, mmToPx, widthMm: wMm, heightMm: hMm, dpi, labelCount: totalLabels };
 }
 
@@ -282,13 +308,18 @@ function renderElement(e: any, mmToPx: number): string {
 // -----------------------------------------------------------------------------
 function assembleDocument(opts: {
   wPx: number; hPx: number; wMm: number; hMm: number; dpi: number;
-  labels: string[] | string; imposeCss?: string; sheetWMm?: number; sheetHMm?: number;
+  labels: string[] | string; imposeCss?: string; sheetWMm?: number; sheetHMm?: number; duplex?: boolean;
 }): string {
   const { wPx, hPx, wMm, hMm, dpi } = opts;
   const labels = Array.isArray(opts.labels) ? opts.labels.join('') : opts.labels;
   const sheetWMm = opts.sheetWMm ?? wMm;
   const sheetHMm = opts.sheetHMm ?? hMm;
   const imposeCss = opts.imposeCss ?? '';
+  // 镜像规则仅在双面时输出：单面 HTML 不含任何背面相关标记，便于下游判定/测试
+  const duplexCss = opts.duplex
+    ? `/* 双面背面：短边翻转后水平镜像，纸背看为正向 */
+       .lbl-back { transform: scaleX(-1); transform-origin: center center; }`
+    : '';
   const pageCSS = `
     @page { size: ${sheetWMm}mm ${sheetHMm}mm; margin: 0; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -296,6 +327,9 @@ function assembleDocument(opts: {
     body {
       font-family: Arial, sans-serif;
     }
+    .lbl-wrap { page-break-after: always; break-after: page; }
+    .lbl-wrap:last-child { page-break-after: auto; break-after: auto; }
+    ${duplexCss}
     .lbl {
       position: relative;
       width: ${wPx}px;

@@ -16,10 +16,12 @@
       <FRow>
         <FBtn @click="store.alignSelected('left')">左对齐</FBtn>
         <FBtn @click="store.alignSelected('hcenter')">水平居中</FBtn>
+        <FBtn @click="store.alignSelected('right')">右对齐</FBtn>
       </FRow>
       <FRow>
         <FBtn @click="store.alignSelected('top')">顶对齐</FBtn>
         <FBtn @click="store.alignSelected('vcenter')">垂直居中</FBtn>
+        <FBtn @click="store.alignSelected('bottom')">底对齐</FBtn>
       </FRow>
       <FRow>
         <FBtn @click="store.distributeSelected('h')">水平等距</FBtn>

@@ -310,7 +310,7 @@ export const useDesignerStore = defineStore('designer', {
     },
 
     // ----------------------------- 对齐 / 分布 / 等尺寸 -----------------------------
-    alignSelected(mode: 'left' | 'hcenter' | 'top' | 'vcenter') {
+    alignSelected(mode: 'left' | 'hcenter' | 'right' | 'top' | 'vcenter' | 'bottom') {
       const sel = this.selectedElements;
       if (sel.length < 2) return;
       this.tx(() => {
@@ -321,8 +321,10 @@ export const useDesignerStore = defineStore('designer', {
         for (const e of sel) {
           if (mode === 'left') e.x = minX;
           if (mode === 'hcenter') e.x = r2((minX + maxR) / 2 - e.w / 2);
+          if (mode === 'right') e.x = r2(maxR - e.w);
           if (mode === 'top') e.y = minY;
           if (mode === 'vcenter') e.y = r2((minY + maxB) / 2 - e.h / 2);
+          if (mode === 'bottom') e.y = r2(maxB - e.h);
         }
       });
     },

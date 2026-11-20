@@ -110,3 +110,50 @@ test('text 元素：字体 + 颜色', () => {
   assert.ok(out.html.includes('font-family:Arial'));
   assert.ok(out.html.includes('color:#000'));
 });
+
+// ------------------------------ 双面打印 duplex ------------------------------
+test('duplex=false（默认）：无背面页、无镜像标记，行为不变', () => {
+  const out = renderPrintHtml({ templateContent: tplWith(), rows: [{}, {}] });
+  assert.equal(out.labelCount, 2);
+  assert.ok(!out.html.includes('lbl-back'), '单面不应出现背面镜像页');
+  assert.ok(!out.html.includes('scaleX(-1)'));
+  assert.equal((out.html.match(/class="lbl-wrap/g) || []).length, 2);
+});
+
+test('duplex=true：每标签出正面+背面两页，labelCount 不变', () => {
+  const tpl = { ...tplWith(), page: { ...PAGE_60x40, duplex: true } };
+  const out = renderPrintHtml({ templateContent: tpl, rows: [{}, {}] });
+  assert.equal(out.labelCount, 2, 'labelCount 仍按逻辑标签数，不含背面');
+  assert.equal((out.html.match(/class="lbl-wrap/g) || []).length, 4, '2 标签 → 4 个物理页');
+  assert.equal((out.html.match(/class="lbl-wrap lbl-back"/g) || []).length, 2, '2 个背面页');
+  assert.ok(out.html.includes('.lbl-back { transform: scaleX(-1)'));
+});
+
+test('duplex=true：正反面交替（正→背→正→背）', () => {
+  const tpl = { ...tplWith(), page: { ...PAGE_60x40, duplex: true } };
+  const out = renderPrintHtml({ templateContent: tpl, rows: [{}, {}] });
+  const kinds = [...out.html.matchAll(/class="lbl-wrap([^"]*)"/g)].map((m) => m[1].includes('lbl-back') ? 'B' : 'F');
+  assert.deepEqual(kinds, ['F', 'B', 'F', 'B']);
+});
+
+test('duplex=true + 2×2 拼版：按 sheet 交替，正面 sheet 与背面 sheet 各 1 张', () => {
+  const tpl = {
+    ...tplWith(),
+    page: { ...PAGE_60x40, duplex: true, columns: 2, rows: 2, gapXMm: 1, gapYMm: 1 },
+  };
+  const out = renderPrintHtml({ templateContent: tpl, rows: [{}, {}] });
+  assert.equal((out.html.match(/class="sheet"/g) || []).length, 2, '2 标签 → 正面1张+背面1张 sheet');
+  assert.equal((out.html.match(/class="lbl-wrap lbl-back"/g) || []).length, 2, '背面 sheet 内 2 个背面页');
+  // 交替顺序：按 class="sheet" 切分，第一张只有正面、第二张只有背面
+  const sheets = out.html.split('<div class="sheet">').slice(1);
+  assert.equal(sheets.length, 2);
+  assert.ok(!sheets[0].includes('lbl-back'), '第一张 sheet 应为正面');
+  assert.ok(sheets[1].includes('lbl-back'), '第二张 sheet 应为背面');
+});
+
+test('duplex=true：背面承载与正面相同的内容（占位符同样渲染）', () => {
+  const tpl = { ...tplWith(['name']), page: { ...PAGE_60x40, duplex: true } };
+  const out = renderPrintHtml({ templateContent: tpl, rows: [{ name: '甲' }] });
+  // 正面 + 背面各一次 "甲"
+  assert.equal((out.html.match(/甲/g) || []).length, 2);
+});
