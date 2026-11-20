@@ -2337,7 +2337,7 @@ env 入口：`DB_DEDICATED_DSNS='{"acme":"postgres://..."}'`，单条失败只�
 | B3-3 | 模板发布审批 / 防重打印 / 水印 / 发布锁定 / 数量策略 | P8.3 | **代码已落地**（22 条判定层单测 + 水印双通道冒烟），待真库验证并发防重，见 §10.29.1 |
 | B3-4 | MySQL/SQLServer 驱动、SQL 分页与自动刷新、GS1 完整 AI 字典、MaxiCode/HIBC/PZN | P8.4 | **代码已落地**（方言层 14 条 + GS1 16 条 + 工业码制 6 条 + 刷新调度 9 条单测；真实 BullMQ repeatable 接入），待第二套数据库与真机译码验收，见 §10.29.2 |
 | B3-5 | Windows 本地打印代理 / USB / RFID / 喷码机 | P8.5 | **协议层与服务端接入已落地**（Provider 注册闭环 + 脱敏信封冒烟 + 26 条单测）；**真机未验收，禁止对外承诺可用**，见 §10.30 |
-| B3-6 | CMYK 专色、出血/裁切线、PDF 拆分与交叉合并、批量图片变量、弧形条码 | 后置 | 未做（印刷级细项，P8.2 只交付矢量骨架） |
+| B3-6 | CMYK 专色、出血/裁切线、PDF 拆分与交叉合并、批量图片变量、弧形条码 | 第二层 | **代码已落地 + 纯函数单测全绿**（见 §10.31）：真矢量 PDF、出血/裁切线/套准线/CMYK 近似色标、collate/拆分、弧形文字/条码、缩略图 DPI；专色非真分色、二维码/中文位图、弧形解码与印前链路待真机验收 |
 
 > 本表与 §10.1.5 的 B3 段并存：那里是历史缺口，这里是按收费清单重新归并后的 P8 增量，勿重复计工时。
 
@@ -2510,7 +2510,38 @@ env 入口：`DB_DEDICATED_DSNS='{"acme":"postgres://..."}'`，单条失败只�
 | 11 | 喷码作业 | 具体品牌喷码机 + 代理适配器 | `inkjetPayload()` 被正确翻译为该品牌指令；`{{var}}` 已展开、无控制字符、行数/长度在设备缓冲区内 |
 | 12 | 自动刷新端到端 | Redis + 真 PG + 第二套 MySQL/SQLServer | 配置 `intervalSec` → repeatable 到期 → Worker 真执行 SQL → `data_rows` 更新；改配置后旧 key 被撤销，不出现双周期 |
 | 13 | 并发防重打印 | 真 PG，多 worker 同时提交同批次 | `uq_print_dedupe_tenant_key` 撞 `23505` 后回查判重复，不产生两张相同标签 |
-| 14 | 中文字体 / 印前 | 真实浏览器 + 印刷链路 | PDF 中文不退化方块；如需印前交付，CMYK/专色/出血仍属 B3-6 未做 |
+| 14 | 中文字体 / 印前 | 真实浏览器 + 印刷链路 | PDF 中文不退化方块；出血/裁切线/套准线/CMYK 近似已落地（§10.31），但真专色分色与印前软件二次编辑仍需真机验收 |
 
 > 第 4、10、11、12、13 项是**硬性真机门槛**。在此之前，P8.5 的准确表述是「协议与服务端接入已落地，待真机验收」。
+
+---
+
+### 10.31 印刷级输出 · 第二层落地清单（B3-6，2026-11-20）
+
+> 承接「命根子第二层」= 印刷级输出。沿用单一真源 + 纯函数可测 + 诚实标注边界的工程口径。
+> 全部新增为后端纯函数/绘图模块 + 前端属性，无新依赖（`pdf-lib`/`sharp`/`bwip` 均已在依赖树）。
+
+**新增/修改文件**：
+
+| 工作包 | 文件 | 职责 |
+| --- | --- | --- |
+| 真矢量 PDF | `src/print/vector-pdf.ts` | `buildVectorDoc`（复用 RenderService 求值 + buildLabelPlan 顺序 + 拼版）→ DrawOp[]；`renderVectorPdf` 用 pdf-lib 原生 API 绘制。一维条码逐线 `drawLine`（可扫码）、图形 `drawRectangle/drawSvgPath`、拉丁文本标准字体、CJK/二维码高-DPI 位图（hybrid）；`translateDocOps` 供出血平移 |
+| 印前标记 | `src/print/print-marks.ts` | 出血 / 裁切线 / 套准十字 / CMYK 色标 / 专色近似；输出叠加 SVG + 等价 PDF MarkOp[]；底部标记区自动扩展避免色标溢出；`hexToCmyk` 纯函数 |
+| 交叉合并 / 拆分 | `src/print/impose.ts` | `buildLabelPlan`（collate 逐份 ABCABC / 堆叠 AABBCC）；`splitPdfBytes` / `splitPdfEvery`（pdf-lib copyPages，页范围夹取） |
+| 弧形元素 | `vector-renderer.ts`（`arcTextSvg` textPath / `arcBarcodeSvg` 旋转线段）、前端 `types.ts`/`PropsPanel.vue`/`DesignerElement.vue`/`designer.css` | SVG 真曲线文字 + 条码弧线近似 + 画布预览 + 属性面板；二维码无弧形语义 |
+| 缩略图 DPI | `src/print/thumbnail-renderer.ts` | `renderThumbnail(..., {dpi, kernel})`：density 随 DPI、重采样核可选、`limitInputPixels:false` 防高-DPI 退化 |
+| 端点 | `src/print/export.controller.ts` | `/print/export/{svg,pdf}` 增 `vector`/`collate`/`marks` 参数；新增 `/print/export/pdf/split` |
+| 单测 | `src/print/__tests__/{vector-pdf,print-marks,impose,arc-elements,thumbnail-renderer}.test.ts` | 合计 +36 例 |
+
+**实跑基线（2026-11-20）**：`npm run typecheck` 0 error；`npm test` **568 例，561 pass / 0 fail / 7 skip**（较 532 +36）；前端 `vue-tsc -b` 通过；真实冒烟：60×40mm 标签（文字+CODE128+QR）矢量 PDF 4784 字节、QR 经 zxing 解码得 `HELLO-WORLD`；2×2 拼版 + 2mm 出血 + 裁切线 + CMYK 色标端到端 PDF 1441 字节，色标完整落在页面底部标记区。
+
+**仍待验收 / 明确边界**（不许按「已交付」表述）：
+
+| 项 | 状态 |
+| --- | --- |
+| 专色真分色 | 仅 CMYK 近似 + 名称标注，未生成 Separation/DeviceN 色彩空间；需印前软件 |
+| 二维码 / 中文文本矢量 | 为高-DPI 位图（默认 600dpi）；pdf-lib `drawSvgPath` 对 bwip 多子路径填充有坐标 bug，故二维码不矢量；纯矢量中文需嵌入 CJK 字体子集 |
+| 弧形条码解码 | 视觉近似、非标准弧形码；指令通道退化直线；真机解码未验 |
+| 印前链路 | 出血/套准/色标语义已落地，真实印刷机套准、专色版、裁切未验 |
+| 富文本 runs / 表格合并 / DB 字段元素 | 仍未做（属设计器交互第四层，非本层） |
 

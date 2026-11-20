@@ -113,6 +113,7 @@ dots → mm  : mm   = dots * 25.4 / dpi
 | 码制 | ✅ 主流一维 / 二维；GS1 FNC1、MaxiCode / HIBC / PZN 等专业码制 | `symbology.capabilities.ts` 单一真源 |
 | 打印通道 | ✅ 浏览器打印 / 9100 Raw TCP / 本地代理 / 服务端出图 | 4 类 Provider |
 | 输出 | ✅ ZPL / TSPL / EPL 指令 + 位图 PNG + 整标签矢量 SVG / PDF | golden 快照测试 |
+| 印刷级输出（第二层） | ✅ 真矢量 PDF（条码/图形/拉丁文本）、出血/裁切线/套准线/CMYK 色标、collate 交叉/堆叠、PDF 拆分、弧形文字/条码、缩略图 DPI 自适应 | `src/print/{vector-pdf,print-marks,impose}.ts`；二维码与中文文本块为高-DPI 位图，专色为 CMYK 近似（非真分色），见下方边界 |
 | 批量 / 队列 | ✅ CSV / DB 数据源 + BullMQ 异步 + 重打补打 + 防重代码 | 见 `src/jobs`、`src/print` |
 | 多租户 / RBAC | ✅ tenant_id 隔离 + 资源级权限点 + 模块订阅门 + 审计 | 见 `src/saas` / `src/auth` |
 | SaaS 化 | ✅ 订阅计费（V1）、平台运营后台、白标、独立库路由、RLS 代码 | 见 `src/billing` / `src/saas` |
@@ -123,6 +124,17 @@ dots → mm  : mm   = dots * 25.4 / dpi
 | 通知 | ✅ 站内信 + 飞书 / 邮件 / 短信外部通道（配置驱动） | 见 `src/notify` |
 
 > ⚠️ 标注「代码已落地」不等于「已完成真机 / 真库 / DNS 验收」。RLS 角色切换、独立库真连库、白标 DNS、硬件代理（RFID / 喷码机）等仍需真实环境验收，**不得按已交付对外表述**。详见 `docs/10-dev-handover.md`。
+
+**印刷级输出的诚实边界**（`POST /print/export/pdf?vector=true`、SVG 端点、`pdf/split`）：
+
+| 能力 | 实现 | 边界 |
+|---|---|---|
+| 一维条码 / 图形 / 拉丁文本 | pdf-lib 原生路径，**真矢量** | 可无限放大 |
+| 二维码 / 矩阵码 | bwip SVG 高-DPI（默认 600）栅格化嵌入 | 非矢量，但可扫码；因 pdf-lib 多子路径填充坐标 bug |
+| 中文文本 | 高-DPI 位图块嵌入（hybrid） | 非矢量；纯矢量中文需印前嵌入 CJK 字体子集 |
+| 专色（Spot/Pantone） | 名称 + CMYK 近似色标 | **非真 Separation 分色**，需印前软件 |
+| 弧形文字 / 条码 | SVG `<textPath>` / 旋转线段近似 | 指令通道（ZPL/TSPL/EPL）退化为直线；弧形条码解码需真机验证 |
+| 印前标记 | 出血 / 裁切线 / 套准线 / CMYK 色标 | 底部标记区自动扩展；颜色为 CMYK 近似 |
 
 ---
 
@@ -225,7 +237,7 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 
 按 `docs/10-dev-handover.md`，下一阶段优先级：
 
-1. **最高优先：条码设计 / 打印核心能力打磨**（产品命根子）——多联 / 多页 / 双面布局、对齐分布、富文本、表格合并、印刷级质量（出血 / 裁切线 / CMYK 专色）、DPI 抗锯齿、打印机偏移校准。
+1. **最高优先：条码设计 / 打印核心能力打磨**（产品命根子）——已完成旋转/对齐/双面、拼版、真矢量 PDF、出血/裁切线/套准线/CMYK 近似色标、collate/拆分、弧形文字/条码、缩略图 DPI；仍待：富文本 runs、表格合并单元格、DB 字段元素、打印机偏移校准真机验收。
 2. **上线前技术债**：RLS 切到 `labelflow_app`（无 BYPASSRLS）角色、独立库真连库验收、白标真实 DNS / 证书、通知通道（代码已就绪，待配网关）、独立库物理备份策略。
 3. **按需功能缺口**：MySQL / SQL Server 数据源方言、更多 MCP 工具、高级计费（发票 / 退款 / 多币种）、Prompt 调用统计深化、Nest 容器级 E2E、前端测试、硬件层真机验收（Windows 打印代理 / RFID / 喷码机）。
 

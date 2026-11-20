@@ -17,19 +17,34 @@ import { renderBarcodeSvg, renderQrcodeSvg } from '../../core/barcode-renderer';
 
 const THUMB_MAX_W = 200;
 const THUMB_MAX_H = 200;
+export const DEFAULT_THUMB_DPI = 300;
+
+/** sharp 重采样核：nearest 最快、mitchell 均衡（默认）、lanczos3 最锐 */
+export type ThumbKernel = 'nearest' | 'linear' | 'cubic' | 'mitchell' | 'lanczos3';
+
+export interface ThumbnailOptions {
+  /** SVG 栅格化密度（DPI），默认 300。值越高文字/条码边缘越细腻 */
+  dpi?: number;
+  /** 从密度图缩到目标像素的重采样核，默认 mitchell */
+  kernel?: ThumbKernel;
+}
 
 /**
  * 生成模板缩略图 PNG。
  * @param templateContent 模板 JSON
  * @param targetWidth  可选，缩略图最大宽（px）
  * @param targetHeight 可选，缩略图最大高（px）
+ * @param options      可选，第二层：dpi / 重采样核（默认 300dpi + mitchell，保持兼容）
  * @returns PNG Buffer
  */
 export async function renderThumbnail(
   templateContent: { page: { widthMm: number; heightMm: number }; elements: any[] },
   targetWidth = THUMB_MAX_W,
   targetHeight = THUMB_MAX_H,
+  options: ThumbnailOptions = {},
 ): Promise<Buffer> {
+  const dpi = Math.max(72, Math.min(1200, Math.round(Number(options.dpi ?? DEFAULT_THUMB_DPI) || DEFAULT_THUMB_DPI)));
+  const kernel = options.kernel ?? 'mitchell';
   const page = templateContent.page;
   const elements = templateContent.elements ?? [];
   if (!page?.widthMm || !page?.heightMm) {
@@ -60,8 +75,9 @@ export async function renderThumbnail(
 
   try {
     const buf = Buffer.from(svg);
-    return await sharp(buf, { density: 300 })
-      .resize(wPx, hPx, { fit: 'fill', kernel: 'mitchell' })
+    // 高 DPI 密度图可能超过 sharp 默认 268M 像素上限；解除限制由调用方的 dpi 夹取兜底
+    return await sharp(buf, { density: dpi, limitInputPixels: false })
+      .resize(wPx, hPx, { fit: 'fill', kernel })
       .png()
       .toBuffer();
   } catch (err) {

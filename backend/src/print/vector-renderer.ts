@@ -15,6 +15,7 @@
 // =============================================================================
 import { renderBarcodeSvg, renderQrcodeSvg } from '../../core/barcode-renderer';
 import { RenderService } from './render.service';
+import { buildLabelPlan } from './impose';
 import type { ComputedVariable } from '../../core/computed-vars';
 
 export const MAX_EXPORT_LABELS = 5000;
@@ -41,6 +42,12 @@ export interface ExportInput {
    * 渲染器只负责拼接到标签最上层，不重新计算几何 —— 预览/导出/打印同源。
    */
   watermarkLayer?: string;
+  /**
+   * 第二层：交叉合并顺序。
+   *   true （默认）= 逐份交叉 ABC/ABC（保持既有行为）
+   *   false        = 按行堆叠 AA/BB/CC
+   */
+  collate?: boolean;
 }
 
 export interface SheetLayout {
@@ -93,6 +100,42 @@ function embedBwip(raw: string, x: number, y: number, w: number, h: number, mode
   return `<svg x="${n(x)}" y="${n(y)}" width="${n(w)}" height="${n(h)}" viewBox="${vb}" preserveAspectRatio="${par}">${inner}</svg>`;
 }
 
+/**
+ * 第二层：弧形文字。沿一段圆弧排布文本（SVG <textPath> 真曲线）。
+ * curve: { enabled, radiusMm, sweepDeg, direction?: 'up'|'down' }
+ *   radiusMm  ≥ 元素宽/2；sweepDeg ≤ 180；direction=up 向上拱（圆心在下方），down 反之。
+ * 返回含 <defs><path>（唯一 id）+ <text><textPath> 的 SVG 片段。
+ */
+let arcSeq = 0;
+function arcTextSvg(
+  text: string, e: any, x: number, y: number, w: number, h: number, sizeMm: number, font: any, color: string,
+): string {
+  const c = e.curve ?? {};
+  const radius = Math.max(w / 2, Math.max(4, n(c.radiusMm ?? w, w)));
+  const sweep = Math.max(10, Math.min(180, n(c.sweepDeg ?? 60, 60)));
+  const up = (c.direction ?? 'up') !== 'down';
+  const cx = x + w / 2;
+  // 圆心：向上拱 → 在元素框下方 radius 处；向下拱 → 在上方 radius 处
+  const cy = up ? y + h + radius : y - radius;
+  const half = (sweep * Math.PI) / 360; // 半角弧度
+  // 圆弧左右端点（相对圆心，极坐标）；SVG y 向下
+  const sign = up ? -1 : 1;
+  const x1 = cx - radius * Math.sin(half), y1 = cy + sign * radius * Math.cos(half);
+  const x2 = cx + radius * Math.sin(half), y2 = y1;
+  const largeArc = sweep > 180 ? 1 : 0;
+  const sweepFlag = up ? 1 : 0; // 顺/逆时针
+  const d = `M ${n(x1)} ${n(y1)} A ${n(radius)} ${n(radius)} 0 ${largeArc} ${sweepFlag} ${n(x2)} ${n(y2)}`;
+  const id = `arc-${Date.now().toString(36)}-${arcSeq++}`;
+  const anchor = font?.align === 'right' ? 'end' : font?.align === 'left' ? 'start' : 'middle';
+  const offset = font?.align === 'right' ? '100%' : font?.align === 'left' ? '0%' : '50%';
+  const weight = font?.bold ? ' font-weight="bold"' : '';
+  const style = font?.italic ? ' font-style="italic"' : '';
+  const family = esc(font?.family ?? 'Arial, Helvetica, sans-serif');
+  return `<defs><path id="${id}" d="${d}" fill="none" /></defs>` +
+    `<text font-family="${family}" font-size="${n(sizeMm)}" fill="${esc(color ?? '#000')}"${weight}${style}>` +
+    `<textPath href="#${id}" startOffset="${offset}" text-anchor="${anchor}">${esc(text)}</textPath></text>`;
+}
+
 /** anchorX 由调用方按 align 算好（center → x+w/2，right → x+w，left → x），本函数只负责画 */
 function textLines(text: string, anchorX: number, y: number, sizeMm: number, font: any, color: string): string {
   const anchor = font?.align === 'center' ? 'middle' : font?.align === 'right' ? 'end' : 'start';
@@ -106,6 +149,45 @@ function textLines(text: string, anchorX: number, y: number, sizeMm: number, fon
     `<tspan x="${n(tx)}" ${i === 0 ? `y="${n(y + sizeMm * 0.85)}"` : `dy="${n(sizeMm * 1.1)}"`}>${esc(ln)}</tspan>`,
   ).join('');
   return `<text font-family="${family}" font-size="${n(sizeMm)}" fill="${esc(color ?? '#000')}" text-anchor="${anchor}"${weight}${style}${deco}>${tspans}</text>`;
+}
+
+/**
+ * 第二层：弧形条码（近似）。把 bwip 一维码的每根竖线沿弧线摆放：
+ * 第 i 根线按其横坐标相对条码中心的偏移换算成圆心角，绕圆心旋转到法线方向。
+ * 注意：这是视觉近似（条宽沿弧线非严格等距），不是标准 GS1 弧形码；
+ * 解码需真机验证，warnings 会明确标注。二维码不做弧形（无语义）。
+ */
+function arcBarcodeSvg(
+  raw: string, spec: any, content: string, x: number, y: number, w: number, h: number,
+): string {
+  const c = spec.curve ?? {};
+  const radius = Math.max(w, Math.max(10, n(c.radiusMm ?? w * 1.2, w * 1.2)));
+  const cx = x + w / 2;
+  const cy = y + h + radius; // 圆心在条码下方
+  const d = /<path[^>]*d="([^"]+)"/i.exec(raw)?.[1] ?? '';
+  const segRe = /M\s*(-?[\d.]+)[ ,]+(-?[\d.]+)\s*L\s*(-?[\d.]+)[ ,]+(-?[\d.]+)/g;
+  const vb = /viewBox="0 0 ([\d.]+) ([\d.]+)"/i.exec(raw);
+  const vbW = vb ? +vb[1] : 1;
+  const xs: number[] = [];
+  let m: RegExpExecArray | null;
+  const segXs: number[] = [];
+  while ((m = segRe.exec(d))) { segXs.push(+m[1]); xs.push(+m[1], +m[3]); }
+  if (!segXs.length || vbW <= 0) return '';
+  const minX = Math.min(...xs), maxX = Math.max(...xs), span = maxX - minX || 1;
+  // 从 <path stroke-width> 取条宽（取中位，bwip 同码用多档宽度近似）
+  const widths = [...raw.matchAll(/stroke-width="([\d.]+)"/gi)].map((mm) => +mm[1]).sort((a, b) => a - b);
+  const midWidth = widths.length ? widths[Math.floor(widths.length / 2)] : 3;
+  // 逐根线：横坐标按 viewBox 比例映射到元素宽，旋转角 = 相对中心偏移 / radius（弧度→度）
+  const out: string[] = [];
+  for (const x1 of segXs) {
+    const lx = x + ((x1 - minX) / span) * w; // 线在元素框内的横坐标
+    const angle = ((lx - cx) / radius) * (180 / Math.PI);
+    out.push(`<line x1="${n(lx)}" y1="${n(y)}" x2="${n(lx)}" y2="${n(y + h)}" stroke="#000" stroke-width="${n((midWidth / vbW) * w)}" transform="rotate(${n(angle)} ${n(cx)} ${n(cy)})" />`);
+  }
+  if (spec.showText) {
+    out.push(textLines(content, cx, y + h, ptToMm(spec.textFont?.size ?? 8), { align: 'center' }, '#000000'));
+  }
+  return out.join('');
 }
 
 function renderElement(e: any, warnings: Set<string>): string {
@@ -128,7 +210,13 @@ function renderElement(e: any, warnings: Set<string>): string {
       const sizeMm = ptToMm(font.size ?? 10);
       const color = font.color ?? (e.type === 'formula' ? '#531dab' : '#000000');
       const anchorX = font?.align === 'center' ? x + w / 2 : font?.align === 'right' ? x + w : x;
-      body = textLines(String(e.rendered ?? e.text ?? ''), anchorX, y, sizeMm, font, color);
+      const label = String(e.rendered ?? e.text ?? '');
+      if (e.curve?.enabled && label && !label.includes('\n')) {
+        body = arcTextSvg(label, e, x, y, w, h, sizeMm, font, color);
+        warnings.add(`弧形文字元素 ${esc(String(e.id ?? ''))}：SVG textPath 真曲线；PDF/指令通道不支持弧形，将退化为直线`);
+      } else {
+        body = textLines(label, anchorX, y, sizeMm, font, color);
+      }
       break;
     }
     case 'rect': {
@@ -179,10 +267,18 @@ function renderElement(e: any, warnings: Set<string>): string {
         // showText 时给明文留 3mm 高度，避免把条码压变形（与 html-renderer 同口径）
         const showText = !!spec.showText;
         const codeH = showText ? Math.max(1, h - 3) : h;
-        body = embedBwip(raw, x, y, w, codeH, 'fill');
-        if (showText) {
-          body += textLines(content, x + w / 2, y + codeH, ptToMm(spec.textFont?.size ?? 8),
-            { align: 'center', family: spec.textFont?.family ?? 'Arial' }, '#000000');
+        if (e.curve?.enabled) {
+          // 弧形条码：视觉近似，需真机解码验证
+          const arcSpec = { ...spec, showText, curve: e.curve };
+          body = arcBarcodeSvg(raw, arcSpec, content, x, y, w, codeH);
+          if (!body) throw new Error('弧线路径解析失败');
+          warnings.add(`弧形条码元素 ${esc(String(e.id ?? ''))}：视觉近似、非标准弧形码；解码兼容性需真机验证，指令通道退化为直线`);
+        } else {
+          body = embedBwip(raw, x, y, w, codeH, 'fill');
+          if (showText) {
+            body += textLines(content, x + w / 2, y + codeH, ptToMm(spec.textFont?.size ?? 8),
+              { align: 'center', family: spec.textFont?.family ?? 'Arial' }, '#000000');
+          }
         }
       } catch (err: any) {
         warnings.add(`条码编码失败（${esc(String(spec.sym ?? ''))}）：${String(err?.message ?? err).slice(0, 120)}`);
@@ -249,7 +345,9 @@ export function buildExportSvgs(input: ExportInput): SheetLayout {
   const rows: any[] = Array.isArray(input.rows) && input.rows.length ? input.rows : [{}];
   // 导出不像打印任务那样把 copies 夹到 500：这里只按「总标签数」限流，让超限显式报错
   const copies = Math.max(1, Math.floor(Number(input.copies ?? 1) || 1));
-  const count = rows.length * copies;
+  // 第二层：用统一的顺序计划展开。默认 collate=true 时与旧逻辑 rows[i % rows.length] 完全等价
+  const plan = buildLabelPlan(rows.length, copies, input.collate !== false);
+  const count = plan.length;
   if (count > MAX_EXPORT_LABELS) {
     throw new Error(`导出标签数 ${count} 超过上限 ${MAX_EXPORT_LABELS}，请分批导出`);
   }
@@ -257,13 +355,13 @@ export function buildExportSvgs(input: ExportInput): SheetLayout {
   const render = new RenderService();
   const warnings = new Set<string>();
   const labels: string[] = [];
-  for (let i = 0; i < count; i++) {
-    const row = rows[i % rows.length];
+  for (const { index: i, rowIndex, copyIndex } of plan) {
+    const row = rows[rowIndex];
     const sysVars = {
       printDate: new Date().toISOString().slice(0, 10),
       printTime: new Date().toISOString().slice(11, 19),
       pageNo: i + 1, pageTotal: count,
-      copyIndex: Math.floor(i / rows.length),
+      copyIndex,
       uuid: `export-${i + 1}`,
       _now: new Date(),
     };
@@ -277,6 +375,7 @@ export function buildExportSvgs(input: ExportInput): SheetLayout {
   // 文本字形依赖渲染端字体，中文缺字会在栅格化时退化为方块，必须显式告知
   const hasCjk = (tpl.elements ?? []).some((e) => /[\u3400-\u9fff]/.test(String(e.text ?? e.rendered ?? '')));
   if (hasCjk) warnings.add('模板含中文文本：SVG 字形依赖渲染端系统字体，PDF 栅格化时缺中文字体会退化为方块，请安装中文字体或改用图像通道');
-  warnings.add('SVG 为真矢量；PDF 由 SVG 按 600dpi 栅格化嵌入（非矢量 PDF），CMYK/专色/出血未支持');
+  warnings.add('SVG 为真矢量；PDF 默认由 SVG 按 600dpi 栅格化嵌入（非矢量 PDF）；矢量 PDF / CMYK / 出血请用 pdf 端点相应选项');
+  if (input.collate === false) warnings.add('标签顺序：按行堆叠（AABBCC）；默认逐份交叉（ABCABC）');
   return { ...layout, warnings: [...warnings] };
 }

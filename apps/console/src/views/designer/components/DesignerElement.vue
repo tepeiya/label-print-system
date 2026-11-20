@@ -49,12 +49,34 @@
     <template v-else-if="el.type === 'barcode'">
       <div class="bc-svg" v-html="barcodeHtml" />
       <div v-if="el.barcode?.showText" class="bc-text" :style="bcTextStyle">{{ barcodeContent }}</div>
+      <!-- 弧形条码画布无法真实弯曲，给角标说明；SVG 导出走弧线近似 -->
+      <span v-if="el.curve?.enabled" class="el-arc-placeholder" title="弧形条码：导出 SVG 走弧线近似，画布为直线预览">弧形</span>
     </template>
 
     <!-- 二维码 / 矩阵码：等比居中 + 静区 -->
     <template v-else-if="el.type === 'qrcode'">
       <div class="qr-holder" :style="qrHolderStyle" v-html="qrHtml" />
     </template>
+
+    <!-- 弧形文字（第二层）：SVG textPath 真曲线预览，与矢量导出同口径 -->
+    <svg
+      v-else-if="isArcText"
+      class="el-arc-text"
+      :width="arcBox.w"
+      :height="arcBox.h"
+      :viewBox="`0 0 ${el.w} ${el.h}`"
+    >
+      <defs><path :id="arcPathId" :d="arcPathD" fill="none" /></defs>
+      <text
+        :font-family="el.font?.family || 'Arial'"
+        :font-size="arcFontSize"
+        :fill="arcColor"
+        :font-weight="el.font?.bold ? 700 : 400"
+        :font-style="el.font?.italic ? 'italic' : 'normal'"
+      >
+        <textPath :href="`#${arcPathId}`" :start-offset="arcOffset" :text-anchor="arcAnchor">{{ arcText }}</textPath>
+      </text>
+    </svg>
 
     <!-- 文本 / 公式 / 流水号 / 日期 / 系统变量 -->
     <div v-else class="el-text-inner" :style="textInnerStyle">
@@ -197,4 +219,35 @@ const bcTextStyle = computed<CSSProperties>(() => ({
 const qrContent = computed(() => interpolate(props.el.qrcode?.content ?? '', props.ctx));
 const qrHtml = computed(() => containSvg(makeQrSvg(props.el.qrcode, qrContent.value).svgStr));
 const qrHolderStyle = computed(() => qrcodeStyle(props.el, props.zoom));
+
+// ---- 第二层：弧形文字预览（与后端 vector-renderer.arcTextSvg 同口径）----
+const isArcText = computed(() =>
+  !!props.el.curve?.enabled &&
+  ['text', 'formula', 'serial', 'datetime', 'sysvar'].includes(props.el.type) &&
+  !String(props.el.text ?? '').includes('\n'),
+);
+const arcBox = computed(() => ({
+  w: props.el.w * MM2PX * props.zoom,
+  h: props.el.h * MM2PX * props.zoom,
+}));
+const arcPathId = computed(() => `arc-prev-${props.el.id.replace(/[^\w-]/g, '')}`);
+const arcPathD = computed(() => {
+  const el = props.el;
+  const w = el.w, h = el.h;
+  const radius = Math.max(w / 2, el.curve?.radiusMm ?? w);
+  const sweep = Math.max(10, Math.min(180, el.curve?.sweepDeg ?? 60));
+  const up = (el.curve?.direction ?? 'up') !== 'down';
+  const cx = w / 2, cy = up ? h + radius : -radius;
+  const half = (sweep * Math.PI) / 360;
+  const sign = up ? -1 : 1;
+  const x1 = cx - radius * Math.sin(half), y1 = cy + sign * radius * Math.cos(half);
+  const x2 = cx + radius * Math.sin(half);
+  const flag = up ? 1 : 0;
+  return `M ${x1.toFixed(3)} ${y1.toFixed(3)} A ${radius} ${radius} 0 0 ${flag} ${x2.toFixed(3)} ${y1.toFixed(3)}`;
+});
+const arcFontSize = computed(() => (props.el.font?.size ?? 10) * (96 / 72) * props.zoom);
+const arcColor = computed(() => props.el.font?.color || '#000');
+const arcAnchor = computed(() => props.el.font?.align === 'right' ? 'end' : props.el.font?.align === 'left' ? 'start' : 'middle');
+const arcOffset = computed(() => props.el.font?.align === 'right' ? '100%' : props.el.font?.align === 'left' ? '0%' : '50%');
+const arcText = computed(() => elementText(props.el, props.ctx));
 </script>

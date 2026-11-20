@@ -71,6 +71,32 @@
         </FRow>
       </FGroup>
 
+      <!-- 第二层：弧形排布（文本/一维码）—— SVG 导出走真曲线，指令通道退化为直线 -->
+      <FGroup v-if="isCurvable" title="弧形排布">
+        <FRow>
+          <FCheck
+            text="沿弧线排布"
+            :model-value="!!el!.curve?.enabled"
+            @update:model-value="setCurve({ enabled: $event, radiusMm: el!.curve?.radiusMm ?? Math.max(el!.w, 20), sweepDeg: el!.curve?.sweepDeg ?? 60, direction: el!.curve?.direction ?? 'up' })"
+          />
+        </FRow>
+        <template v-if="el!.curve?.enabled">
+          <FRow>
+            <FField label="半径 (mm)"><FNum :model-value="el!.curve?.radiusMm ?? 20" :step="1" :min="1" @update:model-value="setCurve({ radiusMm: Math.max(1, r2v($event)) })" /></FField>
+            <FField label="弧度 (°)"><FNum :model-value="el!.curve?.sweepDeg ?? 60" :step="5" :min="10" :max="180" @update:model-value="setCurve({ sweepDeg: Math.max(10, Math.min(180, r2v($event))) })" /></FField>
+          </FRow>
+          <FRow>
+            <FLabel text="拱向" />
+            <FSelect
+              :model-value="el!.curve?.direction ?? 'up'"
+              :options="[['up', '向上拱'], ['down', '向下拱']]"
+              @update:model-value="setCurve({ direction: $event as 'up' | 'down' })"
+            />
+          </FRow>
+          <div class="f-hint">弧形为 SVG 矢量曲线；ZPL/TSPL/EPL 指令通道不支持，将退化为直线打印</div>
+        </template>
+      </FGroup>
+
       <FGroup title="外观与输出">
         <FRow>
           <FLabel text="透明度" />
@@ -379,6 +405,11 @@ const el = computed(() => (sel.value.length === 1 ? sel.value[0] : undefined));
 
 const bc = computed<BarcodeSpec | undefined>(() => el.value?.barcode);
 const qr = computed<QrcodeSpec | undefined>(() => el.value?.qrcode);
+/** 第二层：弧形排布仅对文本类与一维码有意义 */
+const isCurvable = computed(() => {
+  const t = el.value?.type;
+  return t === 'text' || t === 'barcode' || t === 'formula' || t === 'serial' || t === 'datetime' || t === 'sysvar';
+});
 const se = computed(() => el.value?.serial);
 const dt = computed(() => el.value?.datetime);
 const sv = computed(() => el.value?.sysvar);
@@ -392,6 +423,11 @@ function set(patch: Partial<ElementData>) {
 
 function setFont(patch: Record<string, unknown>) {
   set({ font: { ...(el.value?.font ?? {}), ...patch } } as Partial<ElementData>);
+}
+
+/** 第二层：合并写入弧形排布配置（不覆盖未传入的字段） */
+function setCurve(patch: Partial<NonNullable<ElementData['curve']>>) {
+  set({ curve: { ...(el.value?.curve ?? {}), ...patch } } as Partial<ElementData>);
 }
 
 function setBarcode(patch: Partial<BarcodeSpec>) {

@@ -29,6 +29,14 @@ export interface StrokeSpec {
   style?: 'solid' | 'dashed' | 'dotted';
 }
 
+/** 第二层：弧形排布。radiusMm 建议 ≥ 元素宽/2；sweepDeg 10–180。 */
+export interface CurveSpec {
+  enabled?: boolean;
+  radiusMm?: number;
+  sweepDeg?: number;
+  direction?: 'up' | 'down';
+}
+
 export interface BarcodeSpec {
   sym?: string;
   content?: string;
@@ -102,6 +110,8 @@ export interface ElementData {
   w: number;
   h: number;
   rotation?: number;
+  /** 第二层：弧形排布（text/barcode 有效；SVG 导出真曲线，指令通道退化为直线） */
+  curve?: CurveSpec;
   zIndex?: number;
   locked?: boolean;
   visible?: boolean;

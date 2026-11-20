@@ -244,6 +244,24 @@
 .lf-el.hidden-el { outline: 1px dashed #94a3b8; }
 
 .el-text-inner { min-width: 0; }
+/* 第二层：弧形文字预览——SVG 用 overflow:visible 让弧线/文字超出元素框也可见 */
+.el-arc-text {
+  display: block;
+  overflow: visible;
+  width: 100%;
+  height: 100%;
+}
+.el-arc-placeholder {
+  position: absolute;
+  right: 2px;
+  top: 2px;
+  font-size: 9px;
+  color: #7c3aed;
+  background: rgba(255, 255, 255, 0.75);
+  border-radius: 2px;
+  padding: 0 2px;
+  pointer-events: none;
+}
 .el-img { width: 100%; height: 100%; object-fit: contain; display: block; }
 
 /* 一维码的 SVG 容器：明文另占一行，剩下的高度归条码 */
