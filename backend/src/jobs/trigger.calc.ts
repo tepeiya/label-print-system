@@ -32,8 +32,17 @@ export const TRIGGER_SOURCES = [
   'template.updated',
   'hotfolder.file',
   'subscription.expiring',
+  // 外部业务事件（扫码即打）：MES/ERP 经签名入站端点推入，语义化触发自动打印
+  'stock.in',          // 扫码入库
+  'qc.passed',         // 质检合格
+  'workorder.done',    // 工单完工
+  'external.event',    // 通用外部事件（业务自定义）
 ] as const;
 export type TriggerSource = typeof TRIGGER_SOURCES[number];
+
+/** 允许外部经签名入站端点推入的事件源子集（内部事件 print、template、hotfolder 类不接受外部伪造） */
+export const INGEST_SOURCES = ['stock.in', 'qc.passed', 'workorder.done', 'external.event'] as const;
+export type IngestSource = typeof INGEST_SOURCES[number];
 
 export const TRIGGER_ACTIONS = ['webhook', 'notification', 'print'] as const;
 export type TriggerAction = typeof TRIGGER_ACTIONS[number];

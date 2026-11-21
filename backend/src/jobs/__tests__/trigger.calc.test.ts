@@ -57,7 +57,10 @@ test('normalizeRule：未知事件源/动作、缺字段一律拒绝并给出可
 });
 
 test('白名单是单一真源：常量与归一化判定一致', () => {
-  assert.equal(TRIGGER_SOURCES.length, 5);
+  // 5 内部事件 + 4 外部业务事件（扫码即打，§10.38）
+  assert.equal(TRIGGER_SOURCES.length, 9);
+  assert.ok(TRIGGER_SOURCES.includes('stock.in' as any));
+  assert.ok(TRIGGER_SOURCES.includes('external.event' as any));
   assert.equal(TRIGGER_ACTIONS.length, 3);
   for (const s of TRIGGER_SOURCES) {
     const r = normalizeRule({ name: 'n', source: s, action: 'notification', config: { title: 't', body: 'b' } }, { tenantId: 1 });

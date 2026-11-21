@@ -28,6 +28,8 @@ import { TemplateModule } from '../template/template.module';
 import { PrintModule } from '../print/print.module';
 import { PrinterModule } from '../printer/printer.module';
 import { DataSourceModule } from '../datasource/datasource.module';
+// 扫码即打：外部业务事件入站端点复用 TriggerService.enqueue（指纹去重入触发队列）
+import { JobsModule } from '../jobs/jobs.module';
 
 @Module({
   imports: [
@@ -35,7 +37,7 @@ import { DataSourceModule } from '../datasource/datasource.module';
       AgentClient, AgentToken, AgentApproval, ToolIdempotency, AgentPrompt, AgentPromptVersion, Tenant, Template,
     ]),
     InventoryModule, SaasModule, BillingModule, AuditModule, TemplateModule, PrintModule,
-    PrinterModule, DataSourceModule,
+    PrinterModule, DataSourceModule, JobsModule,
   ],
   providers: [
     AgentService, AgentTokenGuard, ToolsService,

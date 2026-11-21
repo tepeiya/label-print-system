@@ -2834,3 +2834,46 @@ MaxiCode/HIBC/PZN 已有 bwip 位图通道 + 能力表登记（§10.29.2），GS
 | `datasource.refresh` | 仅 SQL 数据源；写工具带幂等键但不需审批（非高危）；重复 key 在 `data_rows` 已落库后重放只返回缓存结果 |
 | Prompt version | 取的是版本表快照正文；系统默认从未被覆盖过时回落当前版本并标记 `fromHistory=false`；`prompts/get` 带 version 会多一次后端 GET |
 | 刻意不做 | `ai.*`、反向 MCP 见 §10.37.1，非本层缺口；触发器自动化 P1–P4 仍是未实施建议（§10.36.3） |
+
+---
+
+### 10.38 扫码即打 · 外部业务事件入站（2026-11-21，已实施）
+
+> 承接 §10.36.2/§10.36.3 的「MES 扫码即打」分析与 §8.3 P2 缺口。本节为**已交付代码**，非建议。
+> 核查纠正两处过时结论：① `print.job.completed/failed` 生产者**已补齐**（`print.processor.ts` 任务完成时投递），
+> 故 §10.36.3 P1「生产者缺失」部分已不成立；② 真正剩余缺口是**外部业务事件无入站端点**。
+> 工程口径不变：纯函数判定层 + 复用既有护栏 + 诚实标注边界。
+
+#### 10.38.1 缺口与交付
+
+| 缺口 | 分层时描述 | 本轮交付 |
+| --- | --- | --- |
+| 外部扫码事件无法触发打印 | 触发器事件源固定 5 类，MES 只能落文件（HotFolder）或直调 print API，无法推语义化业务事件 | 事件源扩至 9 类（+`stock.in`/`qc.passed`/`workorder.done`/`external.event`）；新增 `POST /agent/v1/events/ingest` 签名入站 + 规则判定 + 自动打印 |
+| 打印完成事件无生产者（P1） | `print.job.completed/failed` 写白名单却无投递 | 核查发现 `print.processor.ts:168` 已投递到 `trigger` 队列（失败只记日志不影响打印结果），无需再补 |
+
+#### 10.38.2 新增/修改文件
+
+| 工作包 | 文件 | 职责 |
+| --- | --- | --- |
+| 事件源扩展 | `jobs/trigger.calc.ts`（改） | `TRIGGER_SOURCES` 5→9（+4 外部业务事件）；新增 `INGEST_SOURCES` 子集（仅这 4 类允许外部推入，内部事件不接受外部伪造） |
+| 入站判定层 | `jobs/ingest.calc.ts`（新） | `normalizeIngest(body, ctx)` 纯函数：HMAC 验签（复用 `verifySignature`）、事件源白名单、租户隔离（请求体 tenantId 忽略+告警）、payload 边界（`rows`≤`MAX_DROP_ROWS`、字段数≤200、体积≤200k）、幂等 `eventId`（缺省用 `fingerprint` 兜底）。零依赖可测 |
+| 入站端点 | `agent/agent-v1.controller.ts`（改） | `POST events/ingest`：`AgentTokenGuard` 鉴权 + `print:job:write` scope → `normalizeIngest` → `TriggerService.enqueue` → 202；入站审计 `agent.event.ingest`（client/onBehalfOf/source/eventId/enqueued 留痕）；统一信封 |
+| 模块接线 | `agent/agent.module.ts`（改） | `imports` 加 `JobsModule`（复用其导出的 `TriggerService`）；JobsModule 只依赖 agent.entity/approval.calc 纯定义，无 Nest DI 循环 |
+| 配置 | `backend/.env.example`（改） | 新增可选 `INGEST_HMAC_SECRET`（配则强制入站 HMAC 验签；不配仅 Agent Token 鉴权） |
+| 单测 | `jobs/__tests__/ingest.calc.test.ts`（新）、`trigger.calc.test.ts`（改） | 验签（合法/缺失/错误/超时重放）、事件源白名单、租户隔离、payload 边界、幂等键、超大 body；白名单断言 5→9 |
+
+#### 10.38.3 验证（实跑基线 2026-11-21）
+
+- 后端 `npm test` **661 例，654 pass / 0 fail / 7 skip**（较 §10.37 的 652 +9，为新增 8 个 ingest.calc 测试 + 白名单断言扩展）；`npm run typecheck` 0 error。
+- 端到端探针（纯函数层）：`stock.in` 签名事件 → `normalizeIngest` ok → `planDeliveries` 命中 `action=print` 规则 → 去重键 `trig:1:SCAN-1`，`skipped=[]`（未被 `guardLoop` 拦截），证明第三条路径打通。
+
+#### 10.38.4 诚实边界（不许按「已验收」表述）
+
+| 项 | 状态 |
+| --- | --- |
+| HMAC 验签 | 默认关闭（未配 `INGEST_HMAC_SECRET` 时仅 Agent Token 鉴权，响应 warnings 显式标注）；生产建议开启。签名口径为 `JSON.stringify(body)`，客户端须一致 |
+| 租户隔离 | 租户只从 Agent Token 解析，请求体 `tenantId`/`tenant_id` 一律忽略并告警；与 `planDeliveries` 跨租户硬拦截双保险 |
+| 事件源 | 仅 `INGEST_SOURCES` 4 类可从外部推入；`print.*`/`template.*`/`hotfolder.*` 等内部事件不接受外部伪造 |
+| 自动打印范围 | 入站只负责「事件入队 + 规则判定」，真正打印由 `TriggerProcessor` 异步消费；需租户预先配置 `source → print` 规则（含 templateId/copies）才会打印 |
+| 真机验收 | 沙盒无 PostgreSQL/Redis，签名事件驱动真机打印的端到端未实跑；探针仅验证到规则命中层 |
+| 剩余建议 | §8.3 P3（扩动作/编排）、P4（可靠性/运维）仍为未实施建议；非本轮缺口 |

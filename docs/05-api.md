@@ -418,3 +418,24 @@ node tools/labelctl.mjs audit --limit 10
 
 - 写工具（risk≠read）强制 `idempotency_key`；高危（risk=high）需 `approval_id` 或 `dry_run`；全部经 `ToolsService.call()` 统一护栏链与统一信封 `{summary, data, warnings, next_actions}`。
 - **诚实边界**：真库/真机 IO 未端到端验收（沙盒无 PG/Redis）；`print.preview` 返回 HTML 非图片；`ai.*` 与反向 MCP 维持刻意不注册。
+
+## 5.20 扫码即打 · 外部业务事件入站（2026-11-21，**新增 1 个 HTTP 端点**）
+
+> `POST /api/v1/agent/v1/events/ingest`（Agent Token 鉴权，需 `print:job:write` scope）。外部业务事件入队到 `trigger` 队列，由规则引擎判定命中 `action=print` 后自动打印。详见 `docs/10 §10.38`。
+
+**请求体**：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `source` | string | 必填，外部事件源：`stock.in` / `qc.passed` / `workorder.done` / `external.event` |
+| `eventId` | string | 业务流水号（幂等键，≤160 字符）；不传用内容指纹兜底 |
+| `payload` | object | 业务数据；`payload.rows` 为打印行数组（≤5000 项，每项对象），字段数≤200 |
+
+**请求头（可选 HMAC）**：`X-LabelFlow-Timestamp`（Unix 秒）、`X-LabelFlow-Signature`（`sha256=<hex>`）。配置环境变量 `INGEST_HMAC_SECRET` 后强制校验，签名口径 `HMAC-SHA256(secret, ts + "." + JSON.stringify(body))`，容忍窗 300s；未配置时跳过验签并在响应 warnings 标注「仅 Agent Token 鉴权」。
+
+**响应**：统一信封 `{ summary, data, warnings, next_actions }`；成功入队返回 **202**，`data = { source, eventId, enqueued, jobId }`。
+
+**链路**：验签/归一化（`jobs/ingest.calc.ts`）→ `TriggerService.enqueue`（事件指纹去重）→ `TriggerProcessor` 异步消费 → `planDeliveries` 判定 → `action=print` 直调 `print.createJob`。租户只从 Agent Token 解析，请求体 `tenantId` 被忽略并告警；内部事件源（`print.*` 等）不接受外部伪造。
+
+- **前置条件**：租户须先在 `POST /triggers` 配置一条 `source → print` 规则（含 `templateId`/`copies`），否则事件入队后无规则命中，不会打印。
+- **诚实边界**：HMAC 验签默认关闭；沙盒无 PostgreSQL/Redis，真实签名事件驱动真机打印未端到端验收，探针仅验证到规则命中层；后续动作支持见 §8.3 P3/P4（未实施）。

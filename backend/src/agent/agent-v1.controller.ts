@@ -5,14 +5,18 @@
 // P5：/approvals 由 400 占位改为正式实现（§11.7.6），高危工具无审批返回 **202 need_approval**。
 // =============================================================================
 import {
-  BadRequestException, Body, Controller, Get, NotFoundException, Param, Post, Query, Request, Res, UseGuards,
+  BadRequestException, Body, Controller, Get, Headers, NotFoundException, Param, Post, Query, Request, Res, UseGuards,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { Public } from '../common/public.decorator';
 import { AgentTokenGuard } from './agent-token.guard';
-import { AgentCtx } from './agent.service';
+import { AgentCtx, AgentService } from './agent.service';
+import { PermissionDeniedException } from '../common/business.errors';
 import { ToolsService } from './tools.service';
 import { PromptsService } from './prompts.service';
+import { AuditService } from '../audit/audit.module';
+import { TriggerService } from '../jobs/trigger.service';
+import { normalizeIngest } from '../jobs/ingest.calc';
 // B3：限流响应头（成功响应从请求级上下文取最紧维度的 outcome 生成）
 import { rateHeaders } from './rate.calc';
 import { currentRateOutcome } from './rate.context';
@@ -21,7 +25,13 @@ import { currentRateOutcome } from './rate.context';
 @Public()
 @UseGuards(AgentTokenGuard)
 export class AgentV1Controller {
-  constructor(private tools: ToolsService, private prompts: PromptsService) {}
+  constructor(
+    private tools: ToolsService,
+    private prompts: PromptsService,
+    private agent: AgentService,
+    private triggers: TriggerService,
+    private audit: AuditService,
+  ) {}
 
   /** Agent 身份 + scope + 可访问模块（§11.11.2 验收项） */
   @Get('whoami')
@@ -56,6 +66,61 @@ export class AgentV1Controller {
     }
     if (result?.data?.need_approval === true) res.status(202);
     return result;
+  }
+
+  /**
+   * 外部业务事件入站（扫码即打，§10.38）：MES/ERP 扫码入库后推语义化事件
+   * （source=stock.in + payload.rows），经触发器规则引擎判定命中 action=print → 自动打印。
+   * - 身份/租户只从 Agent Token 解析，禁止请求体传租户；
+   * - 触发打印属写操作，需 print:job:write scope；
+   * - 可选 HMAC 验签（环境变量 INGEST_HMAC_SECRET，签名口径 JSON.stringify(body)）；
+   * - 入队走 TriggerService.enqueue（事件指纹去重），异步由 TriggerProcessor 消费。
+   */
+  @Post('events/ingest')
+  async ingest(
+    @Request() req: { agentCtx: AgentCtx },
+    @Body() body: Record<string, any>,
+    @Headers('x-labelflow-timestamp') ts?: string,
+    @Headers('x-labelflow-signature') sig?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ) {
+    const ctx = req.agentCtx;
+    if (!this.agent.hasScope(ctx.scopes, 'print:job:write')) {
+      throw new PermissionDeniedException(['print:job:write']);
+    }
+    const secret = process.env.INGEST_HMAC_SECRET || '';
+    const normalized = normalizeIngest(body, {
+      tenantId: ctx.tenantId,
+      secret,
+      tsHeader: String(ts ?? ''),
+      sigHeader: String(sig ?? ''),
+      rawBodyJson: JSON.stringify(body ?? {}),
+    });
+    if (!normalized.ok || !normalized.value) {
+      throw new BadRequestException(`外部事件非法：${normalized.errors.join('；')}`);
+    }
+    const queued = await this.triggers.enqueue(normalized.value.event);
+    // 入站审计：记录谁(client/onBehalfOf)在何时推了哪类事件，enqueue 结果一并留痕
+    void this.audit.write(ctx.tenantId, 'agent.event.ingest', {
+      clientId: ctx.clientId, clientName: ctx.clientName, actorType: 'agent',
+      onBehalfOf: ctx.onBehalfOf, source: normalized.value.event.source,
+      eventId: normalized.value.event.eventId, enqueued: queued.enqueued, jobId: queued.jobId,
+      warnings: normalized.value.warnings,
+    }, ctx.onBehalfOf ?? 0, 'agent_client', ctx.clientId, 'agent').catch(() => undefined);
+    if (res && queued.enqueued) res.status(202);
+    return {
+      summary: queued.enqueued
+        ? `事件 ${normalized.value.event.source} 已入站，等待规则判定后自动执行`
+        : `事件已受理但入队失败（不影响主链路）：${queued.reason ?? ''}`,
+      data: {
+        source: normalized.value.event.source,
+        eventId: normalized.value.event.eventId,
+        enqueued: queued.enqueued,
+        jobId: queued.jobId,
+      },
+      warnings: normalized.value.warnings,
+      next_actions: ['print.list_jobs', 'GET /triggers/:id/deliveries'],
+    };
   }
 
   /**

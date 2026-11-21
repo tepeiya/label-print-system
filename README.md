@@ -240,7 +240,7 @@ cd apps/platform && pnpm i && pnpm dev            # 平台后台 :5181
 cd backend
 pnpm typecheck                 # tsc --noEmit
 pnpm test                      # node:test + tsx，覆盖 core/**/__tests__ 与 src/**/__tests__
-# 当前：约 648 例，641 通过 / 0 失败 / 7 跳过
+# 当前：约 661 例，654 通过 / 0 失败 / 7 跳过
 
 cd apps/console && pnpm vue-tsc -b   # 前端类型检查
 ```
@@ -302,32 +302,33 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 
 ### 8.2 「MES 扫码入库即自动打印」选型
 
-场景关键：**扫码即触发、无需人工点按钮**。三种候选通道里只有两条能真正做到全自动：
+场景关键：**扫码即触发、无需人工点按钮**。四条候选通道里三条能真正做到全自动：
 
 | 方式 | 链路 | 实时性 | MES 侧改造 |
 | --- | --- | --- | --- |
-| **① HotFolder + 触发器 print（推荐）** | MES 写入库记录到共享目录 → `fs.watch` 检测稳定（500ms）→ 解析 → 入 `trigger` 队列 → 命中规则 → `action=print` 直接调 `print.createJob` → 自动打印 | 秒级 | 只写文件，不改代码、不开库 |
-| **② REST API `POST /print/jobs`** | MES 扫码后直接提交任务，返回 202 + 任务号，异步进 BullMQ 打印 | 最快（实时 push） | 调一个 HTTP 接口，需 JWT 凭证 |
-| ③ SQL 直连 —— **做不到「扫码即打」** | 拉模式 + 定时刷新（最小间隔 60s），只是把数据同步进来，非事件驱动 | 分钟级 | —— |
+| **① 事件入站 `POST /agent/v1/events/ingest`（推荐）** | MES 扫码后推语义化业务事件（`source=stock.in` + `payload.rows` + 可选 HMAC 签名）→ 归一化/验签 → 入 `trigger` 队列 → 命中 `action=print` 规则 → 自动打印 | 秒级 | 调一个 HTTP 接口 + Agent Token，打印模板/条件/份数全在规则里配（§8.5） |
+| **② HotFolder + 触发器 print** | MES 写入库记录到共享目录 → `fs.watch` 检测稳定（500ms）→ 解析 → 入 `trigger` 队列 → 命中规则 → `action=print` 自动打印 | 秒级 | 只写文件，不改代码、不开库 |
+| **③ REST API `POST /print/jobs`** | MES 扫码后直接提交任务，返回 202 + 任务号，异步进 BullMQ 打印 | 最快（实时 push） | 调一个 HTTP 接口，需 JWT 凭证；MES 需知道模板/printer 细节 |
+| ④ SQL 直连 —— **做不到「扫码即打」** | 拉模式 + 定时刷新（最小间隔 60s），只是把数据同步进来，非事件驱动 | 分钟级 | —— |
 
-**代码证据**：`trigger.service.ts` 的 `runAction` 在 `action === 'print'` 时取 `payload.rows` 直调 `print.createJob({templateId, printerId, rows, copies})`，中间无人工环节；`enqueue` 用事件指纹做 jobId、`claim` 用 dedupeKey 去重，同一扫码事件不重复打印。
+**代码证据**：`trigger.service.ts` 的 `runAction` 在 `action === 'print'` 时取 `payload.rows` 直调 `print.createJob({templateId, printerId, rows, copies})`，中间无人工环节；`enqueue` 用事件指纹做 jobId、`claim` 用 dedupeKey 去重，同一扫码事件不重复打印。打印完成事件的生产者也已补齐（`print.processor.ts` 完成时投递 `print.job.completed/failed`）。
 
-**必须说清的限制**：触发器事件源是固定白名单 5 类（`print.job.completed`、`print.job.failed`、`template.updated`、`hotfolder.file`、`subscription.expiring`），**没有「通用 Webhook 入站 / 扫码事件」**——MES 不能 POST 自定义扫码事件来触发打印。要走自动触发，要么落文件（①），要么直接提交打印任务（②）。
+**外部事件入站**（§8.5 已实施）：触发器事件源从固定 5 类扩展到 9 类，新增 `stock.in`/`qc.passed`/`workorder.done`/`external.event` 四类外部业务事件；`POST /agent/v1/events/ingest` 让 MES 直接推签名事件触发规则判定，无需落文件、无需知道模板细节。探针验证：`stock.in` 签名事件 → 命中 `action=print` 规则 → 生成去重键 `trig:1:SCAN-1`，未被 `guardLoop` 拦截。
 
-**选型建议**：MES 能写共享目录、不想改造接口 → 选 ①，配一条 `hotfolder.file → print` 规则绑模板，整链路全自动；MES 已服务化、要实时回执和任务号 → 选 ②，扫码回调直接 `POST /print/jobs` + Webhook 回写状态构成闭环。两条都支持多租户隔离与 JWT；HotFolder 为单进程 `fs.watch`，多实例部署要共享存储 + 队列去重。
+**选型建议**：MES 已是服务化架构、希望业务与打印解耦 → 选 ①，推 `stock.in` 事件 + 在后台配 `stock.in → print` 规则绑模板；MES 只能写文件、不想改接口 → 选 ②；要最直接的实时回执和任务号 → 选 ③。三条都支持多租户隔离 + JWT；HotFolder 为单进程 `fs.watch`，多实例部署要共享存储 + 队列去重。
 
-### 8.3 自动化优化方向（**以下均为建议，尚未实施**）
+### 8.3 自动化优化方向（P1/P2 已实施，P3/P4 仍为建议）
 
-现状是**「判定层扎实、生产者残缺」**：触发器规则归一化、条件求值（fail-closed）、去重（fingerprint + HMAC）、循环防护（`MAX_TRIGGER_DEPTH=3`）都是纯函数 + 单测，但白名单 5 类事件源**只有 `hotfolder.file` 有真实投递入口**（全仓仅 `hotfolder.service.ts` 调 `triggers.enqueue()`）。优化按此缺口排序：
+现状**「判定层扎实、生产者与事件源已补齐」**：触发器规则归一化、条件求值（fail-closed）、去重（fingerprint + HMAC）、循环防护（`MAX_TRIGGER_DEPTH=3`）都是纯函数 + 单测。按缺口排序的优化项进展：
 
-| 优先级 | 方向 | 具体建议 |
+| 优先级 | 方向 | 状态与说明 |
 | --- | --- | --- |
-| P1 补齐事件生产者 | 结构性缺口 | `print.job.completed/failed`、`template.updated`、`subscription.expiring` 写在白名单却无生产者：`PrintEvents.publish` 只发进程内 EventEmitter（供 SSE）不入触发队列。建议完成/失败、模板保存、续费提醒时投递触发队列；注意 `guardLoop` 已禁止「打印事件→再打印」，这类只配 webhook/notification |
-| P2 扩事件源 | 解锁新场景 | 新增带验签的 `POST /triggers/ingest`，把扫码入库/质检合格/工单完工接进来（这是「扫码即打」目前做不到的根因）；`inventory`、`datasource.refresh` 各自发布 `stock.in`、`datasource.refreshed`，做「数据到位→批量打印、低库存→补打库位签」 |
-| P3 扩动作与编排 | 增强表达力 | 动作当前仅 `webhook`/`notification`/`print`，可加 `datasource.refresh`（刷新后再打）、延迟/定时触发；一条事件触发「打印+回传+通知」现靠多条规则，无顺序与失败补偿，可引入有序动作序列 + 每步重试 |
-| P4 可靠性与运维 | 生产可用 | HotFolder 单进程 `fs.watch` 多副本会重复监听，改共享存储 + 队列去重或对象存储事件通知；`trigger_deliveries` 已有 status/errorMsg/durationMs 但无失败率告警与前端投递历史页；补「重放某事件」管理端点 |
+| P1 补齐事件生产者 | 结构性缺口 | ✅ **已实施**：`print.processor.ts` 任务完成时投递 `print.job.completed/failed` 到触发队列（失败只记日志不影响打印结果）；`guardLoop` 禁止「打印事件→再打印」，这类只配 webhook/notification |
+| P2 扩事件源 | 解锁新场景 | ✅ **本轮已实施**：新增 `POST /agent/v1/events/ingest` 接收扫码入库/质检合格/工单完工/通用外部事件（§8.5）；`inventory`、`datasource.refresh` 发布 `stock.in`/`datasource.refreshed` 仍属建议 |
+| P3 扩动作与编排 | 增强表达力 | ⚠️ **未实施建议**：动作当前仅 `webhook`/`notification`/`print`，可加 `datasource.refresh`（刷新后再打）、延迟/定时触发；一条事件触发「打印+回传+通知」现靠多条规则，无顺序与失败补偿，可引入有序动作序列 + 每步重试 |
+| P4 可靠性与运维 | 生产可用 | ⚠️ **未实施建议**：HotFolder 单进程 `fs.watch` 多副本会重复监听，改共享存储 + 队列去重；`trigger_deliveries` 已有 status/errorMsg/durationMs 但无失败率告警与前端投递历史页；补「重放某事件」管理端点 |
 
-> **诚实边界**：以上 8.1/8.2 基于已实现代码；8.3 全部为**未实施建议**。SQL 直连只读（不写回 MES/ERP），真实连库回归需第二套数据库实例，沙盒无 PostgreSQL/Redis 未实跑；MySQL/MSSQL 驱动未安装时明确报错（不静默假装成功）；无 ESB/MQ 直连（Kafka/RabbitMQ/SAP RFC/IDoc 需自行桥接到文件或 REST）；Webhook 仅出站，接收方需自行验签；所有通道经 `tenant_id` 行隔离 + JWT 鉴权。
+> **诚实边界**：8.1/8.2/8.5 基于已实现代码；8.3 中 P3/P4 为**未实施建议**。SQL 直连只读（不写回 MES/ERP），真实连库回归需第二套数据库实例，沙盒无 PostgreSQL/Redis 未实跑；MySQL/MSSQL 驱动未安装时明确报错（不静默假装成功）；无 ESB/MQ 直连（Kafka/RabbitMQ/SAP RFC/IDoc 需自行桥接到文件或 REST）；Webhook 仅出站，接收方需自行验签；所有通道经 `tenant_id` 行隔离 + JWT 鉴权。入站事件端点需 `print:job:write` scope，HMAC 验签可选（配 `INGEST_HMAC_SECRET` 后强制）。
 
 ### 8.4 MCP 工具补齐（2026-11-21，已实施）
 
@@ -346,3 +347,22 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 - **Prompt 版本**：MCP `prompts/get` 支持 `arguments.version` 取历史版本正文（后端 `GET /agent/v1/prompts/:name?version=N`）。Prompt 的调用计数 `usageCount` 与版本回滚 `rollback()` 为 P6.5 既有能力，本轮只补 MCP 侧版本透传。
 - **护栏不变**：全部新工具走 `ToolsService.call()` 统一链（scope → 模块 → 限流 → 配额 → 幂等 → 审批 → 执行 → 脱敏 → 审计）；写工具强制 `idempotency_key`，高危需 `approval_id`；统一信封 `{summary, data, warnings, next_actions}`。
 - **刻意不做**：`ai.*`（图片入参 + 计费联动未就绪）、反向 MCP（`external_mcp_servers` 表已有、实现未做，等明确客户需求）——维持既有产品决策，避免半残工具。
+
+### 8.5 扫码即打 · 外部业务事件入站（2026-11-21，已实施）
+
+> 补齐 §8.2 中「MES 不能推自定义扫码事件触发打印」的缺口。逐项见交接文档 §10.38。
+
+**新增端点**：`POST /api/v1/agent/v1/events/ingest`（Agent Token 鉴权，需 `print:job:write` scope）
+
+| 入参 | 说明 |
+| --- | --- |
+| `source` | 外部事件源：`stock.in` / `qc.passed` / `workorder.done` / `external.event`（内部 `print.*`/`template.*`/`hotfolder.*` 不接受外部伪造） |
+| `eventId` | 业务流水号，作幂等键；不传则用内容指纹兜底 |
+| `payload` | 业务数据；`payload.rows` 为打印行数组（≤5000 行，每项须为对象） |
+| Header `X-LabelFlow-Timestamp` / `X-LabelFlow-Signature` | 可选 HMAC 签名（配 `INGEST_HMAC_SECRET` 后强制，签名口径 `JSON.stringify(body)`） |
+
+**链路**：签名/归一化 → `trigger` 队列（事件指纹去重）→ 规则引擎判定 → 命中 `action=print` → `print.createJob` 自动打印 → 返回 202 + 入队结果。MES 只发「发生了什么」，模板/条件/份数全在后台 `source → print` 规则里配，业务与打印解耦。
+
+- **纯函数判定层**：`jobs/ingest.calc.ts` 的 `normalizeIngest`（验签/事件源白名单/租户隔离/payload 边界/幂等键），零依赖可测；复用 `trigger.calc.ts` 的 HMAC 真源与指纹。
+- **安全护栏**：租户只从 Agent Token 解析（请求体 `tenantId` 一律忽略并告警）；触发打印需 `print:job:write` scope；`guardLoop` 不拦外部事件源（避免误判为「打印事件→再打印」）；入站写审计 `agent.event.ingest`。
+- **诚实边界**：HMAC 验签默认关闭（未配 `INGEST_HMAC_SECRET` 时仅 Agent Token 鉴权，响应 warnings 显式标注）；真实签名事件驱动真机打印的端到端验收需真库/真机，沙盒仅以纯函数探针验证到规则命中层。
