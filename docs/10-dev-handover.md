@@ -2722,3 +2722,55 @@ MaxiCode/HIBC/PZN 已有 bwip 位图通道 + 能力表登记（§10.29.2），GS
 命根子五层（设计/打印核心能力）至此全部完工，代码均已落地 + 单测全绿 + 前后端 parity 已锁。
 **剩余均为真机 / 硬件验收与上线技术债**（指令通道解码验证、专色真分色、富文本指令/矢量通道样式还原、打印机偏移校准、硬件代理 RFID/喷码机），
 见 §7 路线图与 §10.30.3 真机验收清单；未全绿前不得对外按「已交付」表述。
+
+---
+
+### 10.36 外部系统集成（MES / ERP）与自动化评估（分析结论，2026-11-21）
+
+> **本节性质**：三轮对接/自动化咨询的**盘点 + 选型 + 优化建议归档**，基于代码事实核查，不是一次开发落地。
+> **严格区分**：§10.36.1/§10.36.2 为**已实现能力 / 选型结论**（代码可查）；§10.36.3 为**未实施建议**，未写码、未测试，**不得当作已交付**。
+> 与 README §8 对应，本节补充代码落点与证据细节。
+
+#### 10.36.1 对接能力盘点（已实现，代码事实）
+
+系统**无 SAP / 用友 / 金蝶专用连接器**，靠 4 类通用入站 + 2 类出站配置化对接：
+
+| 方向 | 通道 | 代码落点 | 能力 | 状态 |
+| --- | --- | --- | --- | --- |
+| 入站 | SQL 直连 | `src/datasource/datasource.service.ts`（`saveSql`/`execSql`/`refresh`）、`src/datasource/sql-driver.calc.ts` | 填只读库连接串 + 查询模板直连拉取；postgres/mysql/mssql 三方言（`$1`/`?`/`@p1`、`LIMIT OFFSET`/`OFFSET FETCH`），AES 加密连接串、强制只读、参数化；可配 cron/interval 自动刷新（`refresh-scheduler.*`） | ✅ 已实现（P8.4，见 §10.29.2；驱动 mysql2/mssql 按需安装，未装明确报错） |
+| 入站 | 文件 / HotFolder | `src/jobs/hotfolder.service.ts`、`src/jobs/file-parse.ts` | CSV/Excel/JSON/TSV 落盘 → `fs.watch` 文件稳定窗口 500ms → 解析（引号内逗号/换行、自动分隔符）→ 入队打印；等价 BarTender Hot Folder | ✅ 已实现 |
+| 入站 | REST API | `src/print/print.controller.ts` | `POST /print/jobs`、`/preview`、`/commands`；JWT 鉴权，202 + 任务号，BullMQ 异步 | ✅ 已实现 |
+| 入站 | Agent / MCP | `src/agent/tool.catalog.ts`、`tools.service.ts` | `print.submit_job`、`templates.*`、`inventory.*`、`bom.*`、`alerts.*`；`GET /agent/v1/tools` 供 MCP 注册，审批流/限流/脱敏 | ✅ 已实现（P4/P5，见 §10.20/§10.21） |
+| 出站 | Webhook | `src/jobs/webhook.sender.ts` | 投递 `labelflow.trigger` 信封，HMAC-SHA256 + 时间戳防重放、投递前二次 SSRF 校验、5s 超时、失败不外抛 | ✅ 已实现 |
+| 出站 | SSE 实时进度 | `print-stream/events`（handler 内手验 token） | 推打印任务实时进度 | ✅ 已实现 |
+
+> **勘误 note**：§10.9 第 11 条「SQL 数据源仅支持 postgresql://，MySQL/SQLServer 未实现」为 P8.4 之前的历史表述，以本节与 §10.29.2 为准（三方言已落地）。
+
+#### 10.36.2 「MES 扫码入库即自动打印」选型结论（基于已实现能力）
+
+场景关键：**扫码即触发、无需人工点按钮**。三候选中只有两条能全自动：
+
+| 方式 | 链路 | 实时性 | 状态 |
+| --- | --- | --- | --- |
+| ① HotFolder + 触发器 print（**推荐**） | MES 写库记录到共享目录 → `fs.watch` 稳定检测 → 解析 → 入 `trigger` 队列 → 命中规则 → `action=print` 直调 `print.createJob` | 秒级 | ✅ 可行 |
+| ② REST API `POST /print/jobs` | MES 扫码后直接提交任务，202 + 任务号异步进 BullMQ | 最快（实时 push） | ✅ 可行 |
+| ③ SQL 直连 | 拉模式 + 定时刷新（最小 60s），只同步数据，非事件驱动 | 分钟级 | ❌ 做不到「扫码即打」 |
+
+**代码证据**：`trigger.service.ts` `runAction` 在 `action === 'print'` 时取 `payload.rows` 直调 `this.print.createJob({templateId, printerId, rows, copies})`，中间无人工环节；`enqueue` 用事件指纹做 jobId、`claim` 用 dedupeKey 去重，同一扫码事件不重复打印。
+
+**白名单限制**：触发器事件源固定 5 类（`print.job.completed`、`print.job.failed`、`template.updated`、`hotfolder.file`、`subscription.expiring`），**无「通用 Webhook 入站 / 扫码事件」**——MES 不能 POST 自定义扫码事件触发打印。要自动触发只能落文件（①）或直接提交任务（②）。动作白名单 3 类（`webhook`/`notification`/`print`），`MAX_TRIGGER_DEPTH=3` 防级联。
+
+**选型**：MES 能写共享目录、不想改接口 → ①，配 `hotfolder.file → print` 规则绑模板；MES 已服务化、要实时回执 → ②，`POST /print/jobs` + Webhook 回写闭环。均支持多租户 `tenant_id` 隔离 + JWT；HotFolder 单进程 `fs.watch`，多实例需共享存储 + 队列去重。
+
+#### 10.36.3 自动化优化建议（**全部未实施**，分析结论非交付）
+
+现状判定：**判定层扎实、生产者残缺**。触发器的规则归一化、条件求值（fail-closed）、去重（fingerprint + HMAC）、循环防护（`MAX_TRIGGER_DEPTH=3`）均为纯函数 + 单测；但白名单 5 类事件源**只有 `hotfolder.file` 有真实投递入口**——全仓仅 `hotfolder.service.ts` 调 `triggers.enqueue()`，消费端 `trigger.processor.ts` 在队列等事件，其余 4 类事件源**无生产者投递**。
+
+| 优先级 | 缺口/方向 | 建议 | 证据/落点 |
+| --- | --- | --- | --- |
+| P1 补事件生产者（结构性缺口） | `print.job.completed/failed`、`template.updated`、`subscription.expiring` 写在白名单却无生产者 | 完成/失败、模板保存、续费提醒时投递触发队列，做失败告警/结果回传/审核通知；注意 `guardLoop` 已禁止「打印事件→再打印」，这类只配 webhook/notification | `print/events.event.ts` 的 `PrintEvents.publish` 只发进程内 EventEmitter（供 SSE）不入触发队列；续费提醒在 `maintenance` 直调 `NotificationService.publish` 绕过触发器 |
+| P2 扩事件源 | 无通用 Webhook 入站；库存/数据源刷新不产事件 | 新增带验签的 `POST /triggers/ingest` 接扫码入库/质检合格/工单完工（「扫码即打」做不到的根因）；`inventory`、`datasource.refresh` 发布 `stock.in`、`datasource.refreshed` | `TRIGGER_SOURCES` 白名单无入站 webhook/扫码项 |
+| P3 扩动作与编排 | 动作仅 `webhook`/`notification`/`print`；多动作无顺序与失败补偿 | 加 `datasource.refresh`（刷新后再打）、延迟/定时触发；引入有序动作序列 + 每步重试策略 | `TRIGGER_ACTIONS` 常量；多规则靠并行无顺序保证 |
+| P4 可靠性与运维 | HotFolder 单进程；无可观测告警/事件重放 | 共享存储 + 队列去重或对象存储事件通知；`trigger_deliveries` 已有 status/errorMsg/durationMs，补失败率告警 + 前端投递历史页；补「重放某事件」管理端点 | `hotfolder.service.ts` 用 `fs.watch`；后端有 `GET /triggers/:id/deliveries` 无前端页 |
+
+**验收边界**：以上均为**未实施建议**。真落地需配真库/真机回归——沙盒无 PostgreSQL/Redis，事件投递链路未实跑；SQL 直连只读不写回 MES/ERP；无 ESB/MQ 直连（Kafka/RabbitMQ/SAP RFC/IDoc 需自行桥接到文件或 REST）；Webhook 仅出站、接收方需自行验签。

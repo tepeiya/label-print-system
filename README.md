@@ -277,6 +277,54 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 
    **仍待验收**（不计入「已完工」）：指令/真机解码验证、富文本指令/矢量通道样式还原、专色真分色、打印机偏移校准真机验收。
 2. **上线前技术债**：RLS 切到 `labelflow_app`（无 BYPASSRLS）角色、独立库真连库验收、白标真实 DNS / 证书、通知通道（代码已就绪，待配网关）、独立库物理备份策略。
-3. **按需功能缺口**：MySQL / SQL Server 数据源方言、更多 MCP 工具、高级计费（发票 / 退款 / 多币种）、Prompt 调用统计深化、Nest 容器级 E2E、前端测试、硬件层真机验收（Windows 打印代理 / RFID / 喷码机）。
+3. **按需功能缺口**：更多 MCP 工具、高级计费（发票 / 退款 / 多币种）、Prompt 调用统计深化、Nest 容器级 E2E、前端测试、硬件层真机验收（Windows 打印代理 / RFID / 喷码机）。（MySQL / SQL Server 数据源方言已在 P8.4 落地，见 §8 与 handover §10.29.2；驱动 `mysql2` / `mssql` 需按需安装。）
 
 详细设计与逐项状态见 [`docs/10-dev-handover.md`](docs/10-dev-handover.md) 与 [`docs/11-saas-and-agent-architecture.md`](docs/11-saas-and-agent-architecture.md)。
+
+---
+
+## 8. 外部系统集成（对接 MES / ERP）
+
+> 本节为对接能力与自动化现状的**盘点 + 选型结论**，基于代码事实核查（2026-11-21）。
+> 系统**没有** SAP / 用友 / 金蝶等专用连接器，而是提供通用入站/出站通道，靠配置化对接。
+> ⚠️ 标注「已实现」的是代码中确有的能力；标注「建议 / 未实施」的是分析结论，**尚未落地，不得当作已交付**。
+
+### 8.1 对接通道总览
+
+| 方向 | 通道 | 代码落点 | 对接方式 | 状态 |
+| --- | --- | --- | --- | --- |
+| 入站 | ① SQL 直连 | `datasource.service.ts`、`sql-driver.calc.ts` | 填 MES/ERP 只读库连接串 + 查询模板，直连拉取；postgres / mysql / mssql 三方言，连接串加密、强制只读、参数化，可配 cron/interval 自动刷新 | ✅ 已实现 |
+| 入站 | ② 文件 / HotFolder | `hotfolder.service.ts`、`file-parse.ts` | MES/ERP 把 CSV/Excel/JSON/TSV 落到监听目录，文件稳定后自动解析入队打印（BarTender Hot Folder 等价） | ✅ 已实现 |
+| 入站 | ③ REST API | `print.controller.ts` | `POST /print/jobs` 提交、`/preview` 预览、`/commands` 出指令；JWT 鉴权，返回 202 + 任务号异步执行 | ✅ 已实现 |
+| 入站 | ④ Agent / MCP | `tool.catalog.ts`、`tools.service.ts` | `print.submit_job`、`templates.*`、`inventory.*`、`bom.*`、`alerts.*` 等工具；`GET /agent/v1/tools` 供 MCP 注册，带审批/限流/脱敏 | ✅ 已实现 |
+| 出站 | ⑤ Webhook | `webhook.sender.ts` | 投递 `labelflow.trigger` 信封，HMAC-SHA256 签名 + 时间戳防重放、5s 超时，把结果/状态回写客户系统 | ✅ 已实现 |
+| 出站 | SSE 实时进度 | `print-stream/events` | 推打印任务实时进度（handler 内手验 token） | ✅ 已实现 |
+
+### 8.2 「MES 扫码入库即自动打印」选型
+
+场景关键：**扫码即触发、无需人工点按钮**。三种候选通道里只有两条能真正做到全自动：
+
+| 方式 | 链路 | 实时性 | MES 侧改造 |
+| --- | --- | --- | --- |
+| **① HotFolder + 触发器 print（推荐）** | MES 写入库记录到共享目录 → `fs.watch` 检测稳定（500ms）→ 解析 → 入 `trigger` 队列 → 命中规则 → `action=print` 直接调 `print.createJob` → 自动打印 | 秒级 | 只写文件，不改代码、不开库 |
+| **② REST API `POST /print/jobs`** | MES 扫码后直接提交任务，返回 202 + 任务号，异步进 BullMQ 打印 | 最快（实时 push） | 调一个 HTTP 接口，需 JWT 凭证 |
+| ③ SQL 直连 —— **做不到「扫码即打」** | 拉模式 + 定时刷新（最小间隔 60s），只是把数据同步进来，非事件驱动 | 分钟级 | —— |
+
+**代码证据**：`trigger.service.ts` 的 `runAction` 在 `action === 'print'` 时取 `payload.rows` 直调 `print.createJob({templateId, printerId, rows, copies})`，中间无人工环节；`enqueue` 用事件指纹做 jobId、`claim` 用 dedupeKey 去重，同一扫码事件不重复打印。
+
+**必须说清的限制**：触发器事件源是固定白名单 5 类（`print.job.completed`、`print.job.failed`、`template.updated`、`hotfolder.file`、`subscription.expiring`），**没有「通用 Webhook 入站 / 扫码事件」**——MES 不能 POST 自定义扫码事件来触发打印。要走自动触发，要么落文件（①），要么直接提交打印任务（②）。
+
+**选型建议**：MES 能写共享目录、不想改造接口 → 选 ①，配一条 `hotfolder.file → print` 规则绑模板，整链路全自动；MES 已服务化、要实时回执和任务号 → 选 ②，扫码回调直接 `POST /print/jobs` + Webhook 回写状态构成闭环。两条都支持多租户隔离与 JWT；HotFolder 为单进程 `fs.watch`，多实例部署要共享存储 + 队列去重。
+
+### 8.3 自动化优化方向（**以下均为建议，尚未实施**）
+
+现状是**「判定层扎实、生产者残缺」**：触发器规则归一化、条件求值（fail-closed）、去重（fingerprint + HMAC）、循环防护（`MAX_TRIGGER_DEPTH=3`）都是纯函数 + 单测，但白名单 5 类事件源**只有 `hotfolder.file` 有真实投递入口**（全仓仅 `hotfolder.service.ts` 调 `triggers.enqueue()`）。优化按此缺口排序：
+
+| 优先级 | 方向 | 具体建议 |
+| --- | --- | --- |
+| P1 补齐事件生产者 | 结构性缺口 | `print.job.completed/failed`、`template.updated`、`subscription.expiring` 写在白名单却无生产者：`PrintEvents.publish` 只发进程内 EventEmitter（供 SSE）不入触发队列。建议完成/失败、模板保存、续费提醒时投递触发队列；注意 `guardLoop` 已禁止「打印事件→再打印」，这类只配 webhook/notification |
+| P2 扩事件源 | 解锁新场景 | 新增带验签的 `POST /triggers/ingest`，把扫码入库/质检合格/工单完工接进来（这是「扫码即打」目前做不到的根因）；`inventory`、`datasource.refresh` 各自发布 `stock.in`、`datasource.refreshed`，做「数据到位→批量打印、低库存→补打库位签」 |
+| P3 扩动作与编排 | 增强表达力 | 动作当前仅 `webhook`/`notification`/`print`，可加 `datasource.refresh`（刷新后再打）、延迟/定时触发；一条事件触发「打印+回传+通知」现靠多条规则，无顺序与失败补偿，可引入有序动作序列 + 每步重试 |
+| P4 可靠性与运维 | 生产可用 | HotFolder 单进程 `fs.watch` 多副本会重复监听，改共享存储 + 队列去重或对象存储事件通知；`trigger_deliveries` 已有 status/errorMsg/durationMs 但无失败率告警与前端投递历史页；补「重放某事件」管理端点 |
+
+> **诚实边界**：以上 8.1/8.2 基于已实现代码；8.3 全部为**未实施建议**。SQL 直连只读（不写回 MES/ERP），真实连库回归需第二套数据库实例，沙盒无 PostgreSQL/Redis 未实跑；MySQL/MSSQL 驱动未安装时明确报错（不静默假装成功）；无 ESB/MQ 直连（Kafka/RabbitMQ/SAP RFC/IDoc 需自行桥接到文件或 REST）；Webhook 仅出站，接收方需自行验签；所有通道经 `tenant_id` 行隔离 + JWT 鉴权。
