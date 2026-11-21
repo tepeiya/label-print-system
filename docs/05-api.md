@@ -379,3 +379,21 @@ node tools/labelctl.mjs audit --limit 10
 - 渲染服务 `render.service.ts`：`richtext` 逐 run 插值保样式，`dbField` 按数据行取值 + 格式 + 空值 fallback；`toZplElements`/`toTsplElements`/`toEplElements` 对富文本取纯文本拼接。
 - 前端设计器 `types.ts`/`model.ts`/`engine/` 与后端 `core/{rich-text,table-layout}.ts` 为 parity 副本，保证设计态预览与出图语义一致。
 - **诚实边界**：富文本样式跨指令/矢量通道不保留；表格仅矩形合并、`datasetId` 跨数据集联查未实现、非 locale 完备格式。均在渲染结果 `warnings` 中标注。
+
+## 5.18 第五层 · 数据绑定/工具（2026-11-21，**无新增 HTTP 端点**）
+
+> 本层为公式函数扩展，不改变现有 API 契约。模板变量 / 公式字段新增两个白名单函数，详见 `docs/10 §10.34`。
+
+| 函数 | 签名 | 说明 |
+| --- | --- | --- |
+| `LOOKUP` | `LOOKUP(key, table, default?)` | 从表按 key 取首列值；未找到 / 空值取 `default`（缺省空串）。常用于变价表 `LOOKUP({{sku}}, {{prices}})` |
+| `VLOOKUP` | `VLOOKUP(key, table, col?, default?)` | 从表按 key 取第 col 个数据列（1-based，默认 1）；越界 / 未找到取 `default`。常用于物料映射 `VLOOKUP({{sku}}, {{mat}}, 2)` |
+
+**表数据格式**（`table` 参数为字符串，支持三种）：
+- JSON 对象：`'{"A100":12.5,"B200":9.9}'` → key → 单列值
+- JSON 行数组：`'[["A100","MAT1","E"],["B200","MAT2","W"]]'` → 首列 key，其余为数据列
+- 紧凑 KV 文本：`'A100=7.5;B200=9.9'`（分号/换行分行，`=`/`:` 分隔键值，值可用 `,`/`|` 分多列）
+
+- 表数据通过 `{{var}}` 从数据行 / 变量注入，或在公式内直接写 KV 文本字面量。
+- 后端 `core/lookup-table.ts` 与前端 `engine/lookup-table.ts` 为 parity 副本，`lookup-table.parity.test.ts` + `formula-parity.test.ts` 锁定两端一致。
+- **诚实边界**：表数据须为字符串；后端 tokenize 不支持字符串内转义，故公式内内联 JSON（含双引号）不可用，JSON 必须走 `{{var}}` 注入；key 精确匹配，无模糊/区间匹配；`ai.*` 工具属有意推迟的产品决策，非缺口。

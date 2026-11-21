@@ -8,6 +8,7 @@
 // =============================================================================
 
 import { checksum } from './checksum';
+import { parseTable, lookup, vlookup } from './lookup-table';
 
 // ----------------------------- 词法分析 -----------------------------
 type Tok =
@@ -184,6 +185,11 @@ const FUNCS: Record<string, (...a: any[]) => any> = {
   PADRIGHT: (s: string, n: number, ch = ' ') => String(s ?? '').padEnd(n, ch),
   // 条码校验位（接 checksum.ts）
   CHECKSUM: (scheme: string, data: string) => checksum(String(scheme), String(data)),
+  // 查表（第五层 · 变价表/物料映射）：参数缺失标记按空值处理，parseTable 对空值返回空表
+  LOOKUP: (key: any, table: any, fallback?: any) =>
+    lookup(parseTable(table), key === CtxEmpty ? '' : key, fallback === CtxEmpty ? '' : fallback),
+  VLOOKUP: (key: any, table: any, col?: any, fallback?: any) =>
+    vlookup(parseTable(table), key === CtxEmpty ? '' : key, col === CtxEmpty ? undefined : col, fallback === CtxEmpty ? '' : fallback),
 };
 
 /** 对外暴露函数名单，供前后端一致性测试核对 */

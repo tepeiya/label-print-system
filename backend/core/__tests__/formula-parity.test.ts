@@ -45,6 +45,10 @@ const ROW = {
   s: 'a-b-c',
   d1: '2026-06-01',
   d2: '2026-06-15',
+  // 第五层：查表数据（字符串形态，前后端同口径）
+  prices: '{"AB12345":12.5,"SKU9":9.9}',
+  mat: '[["AB12345","MAT1","E"],["SKU9","MAT2","W"]]',
+  kv: 'AB12345=7.5;SKU9=8.8',
 };
 
 // [表达式, 期望值] —— 期望值由后端语义确定，前端必须给出相同结果
@@ -91,11 +95,22 @@ const CASES: Array<[string, string]> = [
   // 校验位（2）
   ['CHECKSUM("EAN13", "690123456789")', '2'],
   ['CHECKSUM("CODE39", "ABC")', 'X'],
+  // 查表（第五层，10）
+  ['LOOKUP({{sku}}, {{prices}})', '12.5'],
+  ['LOOKUP({{sku}}, {{kv}})', '7.5'],
+  ['LOOKUP("SKU9", {{prices}})', '9.9'],
+  ['LOOKUP("NOPE", {{prices}}, "缺")', '缺'],
+  ['LOOKUP("NOPE", {{prices}})', ''],
+  ['VLOOKUP({{sku}}, {{mat}})', 'MAT1'],
+  ['VLOOKUP({{sku}}, {{mat}}, 2)', 'E'],
+  ['VLOOKUP("SKU9", {{mat}}, 2)', 'W'],
+  ['VLOOKUP("NOPE", {{mat}}, 1, "无")', '无'],
+  ['LOOKUP({{sku}}, {{prices}}) * 2', '25'],
 ];
 
 test('前后端公式函数名单完全一致', () => {
   assert.deepEqual([...BE_FUNCS].sort(), [...FE_FUNCS].sort());
-  assert.equal(BE_FUNCS.length, 30, '函数表应为 30 个');
+  assert.equal(BE_FUNCS.length, 32, '函数表应为 32 个（含 LOOKUP/VLOOKUP）');
 });
 
 test('前后端公式求值结果一致（逐表达式比对）', () => {

@@ -6,6 +6,7 @@
 
 import type { ElementData, TemplateData } from '../types';
 import { checksum } from './checksum';
+import { parseTable, lookup, vlookup } from './lookup-table';
 
 export interface RenderContext {
   row: Record<string, unknown>;
@@ -424,6 +425,9 @@ function makeFns(ctx: RenderContext): Record<string, Fn> {
     DATEFORMAT: (d, fmt) => formatDateStr(d, String(fmt ?? '')),
     // 条码校验位
     CHECKSUM: (scheme, data) => checksum(String(scheme ?? ''), String(data ?? '')),
+    // 查表（第五层 · 变价表/物料映射）：与后端 formula-engine.ts#FUNCS 同语义
+    LOOKUP: (key, table, fallback) => lookup(parseTable(table), key ?? '', fallback ?? ''),
+    VLOOKUP: (key, table, col, fallback) => vlookup(parseTable(table), key ?? '', col, fallback ?? ''),
   };
 }
 
