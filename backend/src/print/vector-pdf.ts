@@ -27,6 +27,8 @@ import { buildLabelPlan } from './impose';
 import type { ComputedVariable } from '../../core/computed-vars';
 import type { MarkOp } from './print-marks';
 import { mmToPt } from './pdf-export';
+import { runsToPlainText } from '../../core/rich-text';
+import { buildTableLayout } from '../../core/table-layout';
 
 export const MAX_VECTOR_PAGES = 200;
 export const DEFAULT_TEXT_RASTER_DPI = 600;
@@ -174,9 +176,14 @@ export function buildVectorDoc(
       const w = num(e.w ?? 3), h = num(e.h ?? 3), rot = num(e.rotation ?? 0);
       const font: any = e.font ?? {};
       switch (e.type) {
-        case 'text': case 'richtext': case 'formula': case 'serial': case 'sysvar': case 'datetime': {
-          const text = String(e.rendered ?? e.text ?? '');
+        case 'text': case 'richtext': case 'dbField': case 'formula': case 'serial': case 'sysvar': case 'datetime': {
+          const text = e.type === 'richtext' && Array.isArray(e.runs)
+            ? runsToPlainText(e.runs)
+            : String(e.rendered ?? e.text ?? '');
           if (!text) break;
+          if (e.type === 'richtext' && Array.isArray(e.runs) && e.runs.some((r: any) => r.bold || r.italic || r.underline || r.color || r.script)) {
+            warnings.add(`富文本元素 ${String(e.id ?? '')}：矢量 PDF 降级为纯文本（逐 run 样式在 HTML 打印预览保留；矢量 PDF 需印前字体嵌入方能还原混排）`);
+          }
           pageOps.push({
             kind: 'text', x, y, w, h, rot, text,
             sizeMm: (num(font.size ?? 10) * 25.4) / 72,
@@ -201,14 +208,24 @@ export function buildVectorDoc(
           const rowsT = Math.max(1, Math.round(num(e.rows ?? 3, 3)));
           const colsT = Math.max(1, Math.round(num(e.cols ?? 3, 3)));
           const cw = w / colsT, ch = h / rowsT;
-          if (e.showBorder !== false) {
-            for (let r2 = 0; r2 <= rowsT; r2++) pageOps.push({ kind: 'line', x1: x, y1: y + r2 * ch, x2: x + w, y2: y + r2 * ch, rot: 0, stroke: e.borderColor ?? '#333333', sw: num(e.borderWidth ?? 0.3), dash: '' });
-            for (let c2 = 0; c2 <= colsT; c2++) pageOps.push({ kind: 'line', x1: x + c2 * cw, y1: y, x2: x + c2 * cw, y2: y + h, rot: 0, stroke: e.borderColor ?? '#333333', sw: num(e.borderWidth ?? 0.3), dash: '' });
-          }
+          // 第四层：合并单元格——按主格 span 画外框，跳过被覆盖格文字（与 SVG/html 同口径）
+          const layout = buildTableLayout(rowsT, colsT, e.mergedCells);
+          const stroke = e.borderColor ?? '#333333';
+          const sw = num(e.borderWidth ?? 0.3);
           for (let r2 = 0; r2 < rowsT; r2++) for (let c2 = 0; c2 < colsT; c2++) {
+            if (layout.skipped.includes(`${r2},${c2}`)) continue;
+            const span = layout.spans[`${r2},${c2}`] ?? { rowSpan: 1, colSpan: 1 };
+            const cx = x + c2 * cw, cy = y + r2 * ch;
+            const bw = span.colSpan * cw, bh = span.rowSpan * ch;
+            if (e.showBorder !== false) {
+              pageOps.push({ kind: 'line', x1: cx, y1: cy, x2: cx + bw, y2: cy, rot: 0, stroke, sw, dash: '' });
+              pageOps.push({ kind: 'line', x1: cx, y1: cy + bh, x2: cx + bw, y2: cy + bh, rot: 0, stroke, sw, dash: '' });
+              pageOps.push({ kind: 'line', x1: cx, y1: cy, x2: cx, y2: cy + bh, rot: 0, stroke, sw, dash: '' });
+              pageOps.push({ kind: 'line', x1: cx + bw, y1: cy, x2: cx + bw, y2: cy + bh, rot: 0, stroke, sw, dash: '' });
+            }
             const txt = String(e.cells?.[r2 * colsT + c2] ?? '');
             if (!txt) continue;
-            pageOps.push({ kind: 'text', x: x + c2 * cw, y: y + r2 * ch, w: cw, h: ch, rot: 0, text: txt, sizeMm: (num(e.font?.size ?? 9) * 25.4) / 72, color: e.font?.color ?? '#000000', align: 'center', bold: false, italic: false, family: e.font?.family ?? 'Arial' });
+            pageOps.push({ kind: 'text', x: cx, y: cy, w: bw, h: bh, rot: 0, text: txt, sizeMm: (num(e.font?.size ?? 9) * 25.4) / 72, color: e.font?.color ?? '#000000', align: 'center', bold: r2 === 0 && e.headerRow, italic: false, family: e.font?.family ?? 'Arial' });
           }
           break;
         }

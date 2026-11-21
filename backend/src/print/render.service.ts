@@ -3,9 +3,21 @@
 // 元素类型在后端本地定义，避免跨 rootDir 引用前端代码。
 import { safeEval } from '../../core/formula-engine';
 import { resolveComputedVars, type ComputedVariable } from '../../core/computed-vars';
+import { runsToPlainText } from '../../core/rich-text';
+
+/** 第四层：指令通道的文本降级——富文本取 runs 拼接，DB 字段取 rendered，其余取原逻辑 */
+function commandTextOf(e: any): string {
+  if (e.type === 'richtext' && Array.isArray(e.runs)) return runsToPlainText(e.runs);
+  return String(e.rendered ?? e.text ?? '');
+}
+const TEXT_TYPES = new Set(['text', 'richtext', 'formula', 'serial', 'datetime', 'sysvar', 'dbField']);
 
 interface RenderElement {
   id: string; type: string; text?: string; font?: any;
+  /** 第四层：富文本片段（renderRow 内逐 run 插值） */
+  runs?: Array<{ text: string; [k: string]: any }>;
+  /** 第四层：DB 字段绑定 */
+  dbField?: { field?: string; datasetId?: string; format?: string; fallback?: string };
   barcode?: { content: string; [k: string]: any };
   qrcode?: { content: string; [k: string]: any };
   serial?: { sequenceRef: string };
@@ -36,6 +48,24 @@ export class RenderService {
       if (e.type === 'text' || e.type === 'richtext') {
         e.text = this.interp(e.text ?? '', ctx, serials, rowIndex);
         if (Array.isArray(e.cells)) e.cells = e.cells.map((c: any) => this.interp(String(c ?? ''), ctx, serials, rowIndex));
+        // 第四层：富文本逐 run 插值，保留样式字段；渲染器读 e.runs
+        if (e.type === 'richtext' && Array.isArray(e.runs)) {
+          e.runs = e.runs.map((r: any) => ({
+            ...r,
+            text: this.interp(String(r?.text ?? ''), ctx, serials, rowIndex),
+          }));
+        }
+      } else if (e.type === 'dbField') {
+        // 第四层：DB 字段元素——从数据行取值（字段名可能本身是 {{var}} 占位），套格式
+        const rawField = String(e.dbField?.field ?? '');
+        const key = /^\{\{[^}]+\}\}$/.test(rawField)
+          ? rawField.replace(/^\{\{|\}\}$/g, '').trim()
+          : rawField;
+        let value = key && key in ctx ? ctx[key] : (key in row ? row[key] : '');
+        value = this.formatDbField(value, e.dbField?.format ?? '');
+        e.rendered = value === '' || value == null
+          ? String(e.dbField?.fallback ?? '')
+          : String(value);
       } else if (e.type === 'barcode') {
         e.barcode = { ...e.barcode, content: this.interp(e.barcode.content ?? '', ctx, serials, rowIndex) };
       } else if (e.type === 'qrcode') {
@@ -72,6 +102,28 @@ export class RenderService {
       const offset = pi < 0 ? '' : rest.slice(pi + 1).trim();
       return this.systemPlaceholder(key, ctx, serials, rowIndex, pattern, offset);
     });
+  }
+
+  /** 第四层：DB 字段格式化（与前端 engine/print#formatDbDate 同口径） */
+  private formatDbField(value: unknown, format: string): string {
+    if (value == null) return '';
+    const fmt = String(format ?? '');
+    if (fmt.startsWith('date:')) {
+      const d = new Date(String(value));
+      if (isNaN(d.getTime())) return String(value);
+      const p = (n: number) => String(n).padStart(2, '0');
+      return (fmt.slice(5) || 'YYYY-MM-DD')
+        .replace(/YYYY/g, String(d.getFullYear())).replace(/MM/g, p(d.getMonth() + 1))
+        .replace(/DD/g, p(d.getDate())).replace(/HH/g, p(d.getHours()))
+        .replace(/mm/g, p(d.getMinutes())).replace(/ss/g, p(d.getSeconds()));
+    }
+    if (fmt === 'upper') return String(value).toUpperCase();
+    if (fmt === 'lower') return String(value).toLowerCase();
+    if (/^num:\d+$/.test(fmt)) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n.toFixed(Number(fmt.slice(4))) : String(value);
+    }
+    return String(value);
   }
 
   /**
@@ -177,8 +229,8 @@ export class RenderService {
       .sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0))
       .flatMap((e) => {
         const base = { xMm: Number(e.x ?? 0), yMm: Number(e.y ?? 0), rotation: (e.rotation ?? 0) as any };
-        if (e.type === 'text' || e.type === 'formula' || e.type === 'serial' || e.type === 'datetime' || e.type === 'sysvar') {
-          const text = String(e.rendered ?? e.text ?? '');
+        if (TEXT_TYPES.has(e.type)) {
+          const text = commandTextOf(e);
           if (!text) return [];
           return [{
             ...base,
@@ -236,8 +288,8 @@ export class RenderService {
       .sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0))
       .flatMap((e) => {
         const base = { xMm: Number(e.x ?? 0), yMm: Number(e.y ?? 0), rotation: (e.rotation ?? 0) as any };
-        if (e.type === 'text' || e.type === 'formula' || e.type === 'serial' || e.type === 'datetime' || e.type === 'sysvar') {
-          const text = String(e.rendered ?? e.text ?? '');
+        if (TEXT_TYPES.has(e.type)) {
+          const text = commandTextOf(e);
           if (!text) return [];
           return [{
             ...base,
@@ -295,8 +347,8 @@ export class RenderService {
       .sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0))
       .flatMap((e) => {
         const base = { xMm: Number(e.x ?? 0), yMm: Number(e.y ?? 0), rotation: (e.rotation ?? 0) as any };
-        if (e.type === 'text' || e.type === 'formula' || e.type === 'serial' || e.type === 'datetime' || e.type === 'sysvar') {
-          const text = String(e.rendered ?? e.text ?? '');
+        if (TEXT_TYPES.has(e.type)) {
+          const text = commandTextOf(e);
           if (!text) return [];
           return [{
             ...base,

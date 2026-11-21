@@ -123,6 +123,18 @@
         <FontFields :el="el!" />
       </template>
 
+      <!-- ------------------------------ 富文本（第四层） ------------------------------ -->
+      <template v-else-if="el!.type === 'richtext'">
+        <RichTextEditor :el="el!" />
+        <FontFields :el="el!" />
+      </template>
+
+      <!-- ------------------------------ DB 字段（第四层） ------------------------------ -->
+      <template v-else-if="el!.type === 'dbField'">
+        <DbFieldEditor :el="el!" />
+        <FontFields :el="el!" />
+      </template>
+
       <!-- ------------------------------ 矩形 ------------------------------ -->
       <template v-else-if="el!.type === 'rect'">
         <FGroup title="矩形样式">
@@ -395,6 +407,8 @@ import FText from './fields/FText.vue';
 import FontFields from './FontFields.vue';
 import StrokeFields from './StrokeFields.vue';
 import CellsEditor from './CellsEditor.vue';
+import RichTextEditor from './RichTextEditor.vue';
+import DbFieldEditor from './DbFieldEditor.vue';
 
 const store = useDesignerStore();
 

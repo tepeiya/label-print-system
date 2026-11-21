@@ -17,6 +17,8 @@ import { renderBarcodeSvg, renderQrcodeSvg } from '../../core/barcode-renderer';
 import { RenderService } from './render.service';
 import { buildLabelPlan } from './impose';
 import type { ComputedVariable } from '../../core/computed-vars';
+import { runsToPlainText } from '../../core/rich-text';
+import { buildTableLayout } from '../../core/table-layout';
 
 export const MAX_EXPORT_LABELS = 5000;
 
@@ -202,6 +204,7 @@ function renderElement(e: any, warnings: Set<string>): string {
   switch (e.type) {
     case 'text':
     case 'richtext':
+    case 'dbField':
     case 'formula':
     case 'serial':
     case 'sysvar':
@@ -210,7 +213,12 @@ function renderElement(e: any, warnings: Set<string>): string {
       const sizeMm = ptToMm(font.size ?? 10);
       const color = font.color ?? (e.type === 'formula' ? '#531dab' : '#000000');
       const anchorX = font?.align === 'center' ? x + w / 2 : font?.align === 'right' ? x + w : x;
-      const label = String(e.rendered ?? e.text ?? '');
+      const label = e.type === 'richtext' && Array.isArray(e.runs)
+        ? runsToPlainText(e.runs)
+        : String(e.rendered ?? e.text ?? '');
+      if (e.type === 'richtext' && Array.isArray(e.runs) && e.runs.some((r: any) => r.bold || r.italic || r.underline || r.color || r.script)) {
+        warnings.add(`富文本元素 ${esc(String(e.id ?? ''))}：SVG 矢量导出暂降级为纯文本（逐 run 样式保留在 HTML/打印预览与矢量 PDF），此处仅保留文字内容`);
+      }
       if (e.curve?.enabled && label && !label.includes('\n')) {
         body = arcTextSvg(label, e, x, y, w, h, sizeMm, font, color);
         warnings.add(`弧形文字元素 ${esc(String(e.id ?? ''))}：SVG textPath 真曲线；PDF/指令通道不支持弧形，将退化为直线`);
@@ -240,13 +248,18 @@ function renderElement(e: any, warnings: Set<string>): string {
       const cols = Math.max(1, Math.round(n(e.cols ?? 3, 3)));
       const cw = w / cols, ch = h / rowsN;
       const border = e.showBorder !== false;
+      // 第四层：合并单元格——跳过被覆盖格，主格按 span 画边框与居中文字
+      const layout = buildTableLayout(rowsN, cols, e.mergedCells);
       const parts: string[] = [];
       for (let r = 0; r < rowsN; r++) {
         for (let c = 0; c < cols; c++) {
+          if (layout.skipped.includes(`${r},${c}`)) continue;
+          const span = layout.spans[`${r},${c}`] ?? { rowSpan: 1, colSpan: 1 };
           const cx = x + c * cw, cy = y + r * ch;
-          if (border) parts.push(`<rect x="${n(cx)}" y="${n(cy)}" width="${n(cw)}" height="${n(ch)}" fill="none" stroke="${esc(e.borderColor ?? '#333333')}" stroke-width="${n(e.borderWidth ?? 0.3)}" />`);
+          const bw = span.colSpan * cw, bh = span.rowSpan * ch;
+          if (border) parts.push(`<rect x="${n(cx)}" y="${n(cy)}" width="${n(bw)}" height="${n(bh)}" fill="none" stroke="${esc(e.borderColor ?? '#333333')}" stroke-width="${n(e.borderWidth ?? 0.3)}" />`);
           const txt = String(e.cells?.[r * cols + c] ?? '');
-          if (txt) parts.push(textLines(txt, cx + cw / 2, cy + ch / 2 - ptToMm(9) / 2, ptToMm(e.font?.size ?? 9), { ...e.font, align: 'center' }, e.font?.color ?? '#000000'));
+          if (txt) parts.push(textLines(txt, cx + bw / 2, cy + bh / 2 - ptToMm(9) / 2, ptToMm(e.font?.size ?? 9), { ...e.font, align: 'center' }, e.font?.color ?? '#000000'));
         }
       }
       body = parts.join('');

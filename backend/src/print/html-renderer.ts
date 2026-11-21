@@ -5,6 +5,7 @@
 import { RenderService } from './render.service';
 import { renderBarcodeSvg, renderQrcodeSvg } from '../../core/barcode-renderer';
 import type { ComputedVariable } from '../../core/computed-vars';
+import { normalizeRuns, renderRunsHtml } from '../../core/rich-text';
 
 /** 让 bwip SVG 拉伸填满容器（一维码按元素宽高铺满） */
 function svgToFill(svg: string): string {
@@ -161,8 +162,8 @@ function renderElement(e: any, mmToPx: number): string {
 
   switch (e.type) {
     case 'text':
-    case 'richtext':
-    case 'serial': {
+    case 'serial':
+    case 'dbField': {
       const text = enc(e.rendered ?? e.text ?? '');
       const f = e.font ?? {};
       const sizePx = +((f.size ?? 10) * mmToPx / 2.45).toFixed(1); // pt → px 近似
@@ -174,6 +175,17 @@ function renderElement(e: any, mmToPx: number): string {
       const vAlign = f.vAlign ?? 'top';
       const wrap = f.wrap !== false ? 'white-space:pre-wrap;word-break:break-all;' : 'white-space:nowrap;';
       return `<div style="position:absolute;${common}font-family:${f.family ?? 'Arial'};font-size:${sizePx}px;color:${color};text-align:${align};vertical-align:${vAlign};${bold}${italic}${underline}${wrap}line-height:1.1;">${text}</div>`;
+    }
+    case 'richtext': {
+      // 第四层：逐 run 样式 span；e.runs 已在 render.service 内逐段插值
+      const f = e.font ?? {};
+      const runs = normalizeRuns(e.runs, e.text);
+      const inner = renderRunsHtml(runs, f, { esc: enc });
+      const sizePx = +((f.size ?? 10) * mmToPx / 2.45).toFixed(1);
+      const align = f.align ?? 'left';
+      const vAlign = f.vAlign ?? 'top';
+      const wrap = f.wrap !== false ? 'white-space:pre-wrap;word-break:break-all;' : 'white-space:nowrap;';
+      return `<div style="position:absolute;${common}font-family:${f.family ?? 'Arial'};font-size:${sizePx}px;color:${f.color ?? '#000'};text-align:${align};vertical-align:${vAlign};${wrap}line-height:1.1;">${inner}</div>`;
     }
     case 'formula': {
       const text = enc(e.rendered ?? '{{F_ERR}}');
@@ -261,6 +273,7 @@ function renderElement(e: any, mmToPx: number): string {
             `font-size:${sizePx}px`,
             `color:${f.color ?? '#000'}`,
             bold,
+            e.cellWrap === false ? 'white-space:nowrap' : 'white-space:pre-wrap;word-break:break-word',
             showBorder ? `border:${sw}px solid ${color}` : '',
           ].join(';');
           parts.push(`<div style="${style}">${txt || '&nbsp;'}</div>`);

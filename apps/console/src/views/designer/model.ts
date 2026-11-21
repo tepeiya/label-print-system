@@ -114,14 +114,14 @@ export const FONT_FAMILIES = [
 ];
 
 export const TYPE_LABELS: Record<ElementType, string> = {
-  text: '文本', rect: '矩形', ellipse: '椭圆', line: '直线', table: '表格', image: '图片',
+  text: '文本', richtext: '富文本', rect: '矩形', ellipse: '椭圆', line: '直线', table: '表格', image: '图片',
   barcode: '一维码', qrcode: '二维码', formula: '公式', serial: '流水号',
-  datetime: '日期', sysvar: '系统变量',
+  datetime: '日期', sysvar: '系统变量', dbField: 'DB字段',
 };
 
 export const TYPE_ICONS: Record<ElementType, string> = {
-  text: 'T', rect: '▭', ellipse: '◯', line: '／', table: '▦', image: '🖼',
-  barcode: '▮▮', qrcode: '▩', formula: 'ƒ', serial: '#', datetime: '📅', sysvar: '{}',
+  text: 'T', richtext: '𝐓', rect: '▭', ellipse: '◯', line: '／', table: '▦', image: '🖼',
+  barcode: '▮▮', qrcode: '▩', formula: 'ƒ', serial: '#', datetime: '📅', sysvar: '{}', dbField: '⛁',
 };
 
 export const TOOLS: Array<{ group: string; items: Array<{ type: ElementType; label: string; icon: string }> }> = [
@@ -129,6 +129,7 @@ export const TOOLS: Array<{ group: string; items: Array<{ type: ElementType; lab
     group: '基本图形',
     items: [
       { type: 'text', label: '文本', icon: 'T' },
+      { type: 'richtext', label: '富文本', icon: '𝐓' },
       { type: 'line', label: '直线', icon: '／' },
       { type: 'rect', label: '矩形', icon: '▭' },
       { type: 'ellipse', label: '椭圆', icon: '◯' },
@@ -150,6 +151,7 @@ export const TOOLS: Array<{ group: string; items: Array<{ type: ElementType; lab
       { type: 'serial', label: '流水号', icon: '#' },
       { type: 'datetime', label: '日期', icon: '📅' },
       { type: 'sysvar', label: '系统变量', icon: '{}' },
+      { type: 'dbField', label: 'DB字段', icon: '⛁' },
     ],
   },
 ];
@@ -186,6 +188,24 @@ export function createElement(type: ElementType, template?: TemplateData): Eleme
   switch (type) {
     case 'text':
       return { ...common(30, 6), type: 'text', text: '文本内容', font: baseFont() };
+
+    case 'richtext':
+      return {
+        ...common(36, 8), type: 'richtext',
+        runs: [
+          { text: '富', bold: true, color: '#c0392b' },
+          { text: '文本', italic: true },
+          { text: '示例', underline: true, size: 8 },
+        ],
+        font: baseFont(),
+      };
+
+    case 'dbField':
+      return {
+        ...common(30, 6), type: 'dbField',
+        dbField: { field: '{{sku}}', format: '', fallback: '—' },
+        font: baseFont(),
+      };
 
     case 'line':
       return {

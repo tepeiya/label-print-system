@@ -13,7 +13,20 @@ import {
   buildContext, elementText, evalFormula, interpolate,
   type RenderContext,
 } from './context';
+import { normalizeRuns, renderRunsHtml } from './rich-text';
 import { makeBarcodeSvg, makeQrSvg, showTextIsTop } from './barcode';
+import { buildTableLayout } from './table-layout';
+
+/** DB 字段 date:格式（与后端 render.service 同口径，简单 YYYY/MM/DD 占位替换） */
+function formatDbDate(val: string, pattern: string): string {
+  const d = new Date(val);
+  if (isNaN(d.getTime())) return val;
+  const p = (n: number) => String(n).padStart(2, '0');
+  return String(pattern || 'YYYY-MM-DD')
+    .replace(/YYYY/g, String(d.getFullYear())).replace(/MM/g, p(d.getMonth() + 1))
+    .replace(/DD/g, p(d.getDate())).replace(/HH/g, p(d.getHours()))
+    .replace(/mm/g, p(d.getMinutes())).replace(/ss/g, p(d.getSeconds()));
+}
 
 function printFontCss(font: ElementData['font']): string {
   const f = font || {};
@@ -78,25 +91,55 @@ function printElement(el: ElementData, ctx: RenderContext): string {
         </svg></div>`;
     }
     case 'table': {
-      const rows = Math.max(1, el.rows || 1);
       const cols = Math.max(1, el.cols || 1);
       const bw = el.showBorder === false ? 0 : (el.borderWidth ?? 0.2);
       const bc = el.borderColor || '#333';
+      // 第四层：用 grid 行列定位 + 合并跨度定位，被合并格跳过绘制
+      const layout = buildTableLayout(el.rows || 1, cols, el.mergedCells);
+      const wrap = el.cellWrap === false ? 'white-space:nowrap;' : 'white-space:pre-wrap;word-break:break-word;';
       let cells = '';
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
+      for (let r = 0; r < layout.rows; r++) {
+        for (let c = 0; c < layout.cols; c++) {
+          if (layout.skipped.includes(`${r},${c}`)) continue;
+          const span = layout.spans[`${r},${c}`] ?? { rowSpan: 1, colSpan: 1 };
           const idx = r * cols + c;
           const raw = el.cells?.[idx] ?? '';
           const isHeader = !!el.headerRow && r === 0;
-          cells += `<div style="display:flex;align-items:center;justify-content:${alignToJustify(el.font?.align)};
-            padding:0 0.4mm;overflow:hidden;${printFontCss(el.font)}${isHeader ? 'font-weight:700;' : ''}
+          cells += `<div style="grid-row:${r + 1}/span ${span.rowSpan};grid-column:${c + 1}/span ${span.colSpan};
+            display:flex;align-items:center;justify-content:${alignToJustify(el.font?.align)};
+            padding:0 0.4mm;overflow:hidden;${printFontCss(el.font)}${wrap}${isHeader ? 'font-weight:700;' : ''}
             ${isHeader ? `background:${el.headerBg || '#f2f2f2'};` : ''}
-            ${bw ? `border-right:${c < cols - 1 ? `${bw}mm solid ${bc}` : 'none'};border-bottom:${r < rows - 1 ? `${bw}mm solid ${bc}` : 'none'}` : ''};">
+            ${bw ? `border-right:${c + span.colSpan - 1 < layout.cols - 1 ? `${bw}mm solid ${bc}` : 'none'};border-bottom:${r + span.rowSpan - 1 < layout.rows - 1 ? `${bw}mm solid ${bc}` : 'none'}` : ''};">
             ${interpolateCellHtml(raw, ctx)}</div>`;
         }
       }
-      return `<div style="${st}display:grid;grid-template-columns:repeat(${cols},1fr);grid-template-rows:repeat(${rows},1fr);
+      return `<div style="${st}display:grid;grid-template-columns:repeat(${layout.cols},1fr);grid-template-rows:repeat(${layout.rows},1fr);
         background:#fff;${bw ? `border:${bw}mm solid ${bc};` : ''}overflow:hidden;">${cells}</div>`;
+    }
+    case 'richtext': {
+      const runs = normalizeRuns(el.runs, el.text);
+      const html = renderRunsHtml(runs, el.font ?? {}, {
+        interp: (s: string) => interpolate(s, ctx),
+        esc: escapeHtml,
+      });
+      const align = el.font?.align || 'left';
+      const vAlign = el.font?.vAlign || 'middle';
+      return `<div style="${st}display:flex;align-items:${valignToAlign(vAlign)};justify-content:${alignToJustify(align)};overflow:hidden;">
+        <div style="${printFontCss(el.font)}width:100%;white-space:${el.font?.wrap === false ? 'nowrap' : 'pre-wrap'};text-align:${align};">${html}</div></div>`;
+    }
+    case 'dbField': {
+      const d = (el.dbField ?? {}) as NonNullable<ElementData['dbField']>;
+      let val = interpolate(d.field ?? '', ctx);
+      const fmt = String(d.format ?? '');
+      if (fmt.startsWith('date:')) val = formatDbDate(val, fmt.slice(5));
+      else if (fmt === 'upper') val = val.toUpperCase();
+      else if (fmt === 'lower') val = val.toLowerCase();
+      else if (/^num:\d+$/.test(fmt)) { const n = Number(val); val = Number.isFinite(n) ? n.toFixed(Number(fmt.slice(4))) : val; }
+      if (!val) val = d.fallback ?? '';
+      const align = el.font?.align || 'left';
+      const vAlign = el.font?.vAlign || 'middle';
+      return `<div style="${st}display:flex;align-items:${valignToAlign(vAlign)};justify-content:${alignToJustify(align)};overflow:hidden;">
+        <div style="${printFontCss(el.font)}width:100%;white-space:${el.font?.wrap === false ? 'nowrap' : 'pre-wrap'};text-align:${align};">${escapeHtml(val)}</div></div>`;
     }
     case 'image': {
       if (!el.src) return '';

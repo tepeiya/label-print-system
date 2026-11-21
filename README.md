@@ -112,6 +112,7 @@ dots → mm  : mm   = dots * 25.4 / dpi
 | 变量 / 公式 / 流水号 | ✅ 含 CHECKSUM、循环依赖检测、号段预分配并发安全 | 见 `core/` |
 | 码制 | ✅ 主流一维 / 二维；GS1 FNC1、MaxiCode / HIBC / PZN 等专业码制 | `symbology.capabilities.ts` 单一真源 |
 | 码制专业性（第三层） | ✅ GS1 AI 官方全量字典（541 项）、打印后解码验证闭环（bwip→zxing）、HIBC Mod43 / PZN Mod11 校验、MaxiCode 原生 `^BD` 构造器（opt-in） | `core/{gs1-ai.full,industrial-checksum,maxicode}.ts`、`src/print/verify.*`；指令/真机通道仍待硬件验收，见下方边界 |
+| 设计器交互精度（第四层） | ✅ 富文本 runs（逐段样式/上下标）、表格合并单元格（rowSpan/colSpan 单一真源）、DB 字段元素（字段绑定/格式/空值占位） | `core/{rich-text,table-layout}.ts` + 前端 parity、`src/print/render.service.ts` 与各渲染器；指令/矢量通道富文本降级为纯文本，见下方边界 |
 | 打印通道 | ✅ 浏览器打印 / 9100 Raw TCP / 本地代理 / 服务端出图 | 4 类 Provider |
 | 输出 | ✅ ZPL / TSPL / EPL 指令 + 位图 PNG + 整标签矢量 SVG / PDF | golden 快照测试 |
 | 印刷级输出（第二层） | ✅ 真矢量 PDF（条码/图形/拉丁文本）、出血/裁切线/套准线/CMYK 色标、collate 交叉/堆叠、PDF 拆分、弧形文字/条码、缩略图 DPI 自适应 | `src/print/{vector-pdf,print-marks,impose}.ts`；二维码与中文文本块为高-DPI 位图，专色为 CMYK 近似（非真分色），见下方边界 |
@@ -145,6 +146,14 @@ dots → mm  : mm   = dots * 25.4 / dpi
 | 打印后解码验证 | bwip 渲染→zxing 解码→文本比对，覆盖 CODE128/QR/DataMatrix/EAN13/GS1-128 | 只闭环**位图通道**；ZPL/TSPL/EPL 指令通道与真机/扫描枪实测未验 |
 | HIBC / PZN 校验 | Mod43 / Mod11 纯函数，对照官方样例 | 未接真机扫描与医药监管系统验收 |
 | MaxiCode `^BD` | 显式 opt-in 原生指令 + Mode 2/3 结构化构造器 | 默认仍走位图「预览仅」；Mode 2/3 格式错误会被 UPS 拒收；固定尺寸、无旋转、`^BY` 无效；真机/承运商未验 |
+
+**设计器交互精度的诚实边界**（第四层，无新增 HTTP 端点，纯设计态 + 渲染通道）：
+
+| 能力 | 实现 | 边界 |
+|---|---|---|
+| 富文本 runs | RichTextRun[] 逐段字重/斜体/下划线/颜色/字号/上下标；HTML `<span>/<sub>/<sup>` 完整还原 | 指令通道（ZPL/TSPL/EPL）与 SVG/PDF 矢量降级为纯文本拼接 + warning，样式不保留 |
+| 表格合并单元格 | mergedCells [{row,col,rowSpan,colSpan}] 单一真源，前后端 parity；HTML 按 span 跳格、矢量按主格画框 | 仅矩形合并、越界/重叠自动钳制去冲突；非矩形自由合并未支持 |
+| DB 字段元素 | 字段绑定（支持 `{{var}}` 占位）+ upper/num/date 格式 + 空值 fallback | 数据集 `datasetId` 为预留字段，当前取数据行同名字段；跨数据集联查未实现 |
 
 ---
 
@@ -222,7 +231,7 @@ cd apps/platform && pnpm i && pnpm dev            # 平台后台 :5181
 cd backend
 pnpm typecheck                 # tsc --noEmit
 pnpm test                      # node:test + tsx，覆盖 core/**/__tests__ 与 src/**/__tests__
-# 当前：约 532 例，525 通过 / 0 失败 / 7 跳过
+# 当前：约 635 例，628 通过 / 0 失败 / 7 跳过
 
 cd apps/console && pnpm vue-tsc -b   # 前端类型检查
 ```
@@ -247,7 +256,7 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 
 按 `docs/10-dev-handover.md`，下一阶段优先级：
 
-1. **最高优先：条码设计 / 打印核心能力打磨**（产品命根子）——已完成旋转/对齐/双面、拼版、真矢量 PDF、出血/裁切线/套准线/CMYK 近似色标、collate/拆分、弧形文字/条码、缩略图 DPI（第二层）；GS1 官方全量 AI 字典、打印后解码验证闭环、HIBC/PZN 校验、MaxiCode `^BD` 构造器（第三层）；仍待：指令/真机解码验证、富文本 runs、表格合并单元格、DB 字段元素、打印机偏移校准真机验收（第四层）。
+1. **最高优先：条码设计 / 打印核心能力打磨**（产品命根子）——已完成旋转/对齐/双面、拼版、真矢量 PDF、出血/裁切线/套准线/CMYK 近似色标、collate/拆分、弧形文字/条码、缩略图 DPI（第二层）；GS1 官方全量 AI 字典、打印后解码验证闭环、HIBC/PZN 校验、MaxiCode `^BD` 构造器（第三层）；富文本 runs、表格合并单元格、DB 字段元素（第四层）；仍待：指令/真机解码验证、富文本指令/矢量通道样式还原、打印机偏移校准真机验收。
 2. **上线前技术债**：RLS 切到 `labelflow_app`（无 BYPASSRLS）角色、独立库真连库验收、白标真实 DNS / 证书、通知通道（代码已就绪，待配网关）、独立库物理备份策略。
 3. **按需功能缺口**：MySQL / SQL Server 数据源方言、更多 MCP 工具、高级计费（发票 / 退款 / 多币种）、Prompt 调用统计深化、Nest 容器级 E2E、前端测试、硬件层真机验收（Windows 打印代理 / RFID / 喷码机）。
 

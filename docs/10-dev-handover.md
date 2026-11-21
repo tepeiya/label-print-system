@@ -2544,7 +2544,7 @@ env 入口：`DB_DEDICATED_DSNS='{"acme":"postgres://..."}'`，单条失败只�
 | 二维码 / 中文文本矢量 | 为高-DPI 位图（默认 600dpi）；pdf-lib `drawSvgPath` 对 bwip 多子路径填充有坐标 bug，故二维码不矢量；纯矢量中文需嵌入 CJK 字体子集 |
 | 弧形条码解码 | 视觉近似、非标准弧形码；指令通道退化直线；真机解码未验 |
 | 印前链路 | 出血/套准/色标语义已落地，真实印刷机套准、专色版、裁切未验 |
-| 富文本 runs / 表格合并 / DB 字段元素 | 仍未做（属设计器交互第四层，非本层） |
+| 富文本 runs / 表格合并 / DB 字段元素 | 已在第四层完成（§10.33），非本层 |
 
 
 ### 10.32 码制专业性 · 第三层落地清单（B3-7，2026-11-20）
@@ -2591,4 +2591,50 @@ MaxiCode/HIBC/PZN 已有 bwip 位图通道 + 能力表登记（§10.29.2），GS
 | 解码验证的载体 | 闭环只覆盖 **bwip 位图通道**的渲染→解码一致性；ZPL/TSPL/EPL 指令通道、真机打印、扫描枪实测未验（B6 三方一致性里位图这一环已闭环，指令/硬件两环仍待） |
 | MaxiCode 默认通道 | 默认仍走位图 + warning（"预览仅"安全默认），`^BD` 为显式 opt-in；Mode 2/3 结构化数据格式错误会被 UPS 拒收，需承运商系统验收；固定约 1 英寸、无旋转、`^BY` 无效；真机未验 |
 | HIBC/PZN 校验 | 校验位算法对照官方规范样例验证，但未接真机扫描与医药监管系统验收 |
-| 第四层（设计器交互精度） | 富文本 runs / 表格合并 / DB 字段元素仍未做，属下一层，非本层 |
+| 第四层（设计器交互精度） | 已完成，见 §10.33（富文本 runs / 表格合并 / DB 字段元素） |
+
+
+### 10.33 设计器交互精度 · 第四层落地清单（B3-8，2026-11-21）
+
+> 承接「命根子第四层」= 设计器交互精度。沿用单一真源 + 纯函数可测 + 诚实标注边界的工程口径。
+> 分层定义见 §10.32：第一层（真 bug/空壳）、第二层（印刷级输出，§10.31）、
+> 第三层（码制专业性，§10.32）、**第四层（设计器交互精度，本层）**、第五层（数据绑定/工具）。
+
+**核查先行（避免重复 P8 已做项）**：分层盘点时第四层列 3 项。核查发现 P8 AI 表格识别已定义
+`mergedCells: [{row,col,rowSpan,colSpan}]` 扁平契约（`prompt.ts`/`validate-ai-template.ts`/`html-renderer.ts`），
+但**只加密度、无编辑入口、且除法矩形外的元素类型缺失**。本层不重做 AI 表格识别，只补三件事的真实缺口：
+
+| 缺口 | 分层时描述 | 本层实际交付 |
+| --- | --- | --- |
+| 富文本 runs | 文本元素只有单一 font，无逐段样式 | 新增 RichTextRun[] 数据模型 + 编辑器 + 全通道渲染（HTML 完整还原，指令/矢量降级纯文本） |
+| 表格合并单元格编辑 | 契约有 mergedCells 但无设计器编辑入口 | 重写 CellsEditor 支持起点格 + rowSpan/colSpan 合并/取消；布局纯函数前后端 parity |
+| DB 字段元素 | 无独立字段绑定元素，只能靠文本占位符 | 新增 dbField 元素类型 + 编辑器 + 字段绑定/格式/空值 fallback |
+
+**新增/修改文件**：
+
+| 工作包 | 文件 | 职责 |
+| --- | --- | --- |
+| 富文本单一真源 | `core/rich-text.ts`（新）、前端 `engine/rich-text.ts`（新，parity 副本） | `RichTextRun`/`normalizeRuns`/`runsToPlainText`/`renderRunsHtml`/`validateRuns`；归一化钳制 200 runs / 4000 字，色值/size/script 白名单校验；HTML 逐 run `<span>/<sub>/<sup>`，run 覆盖优先于 base font；指令/矢量用 `runsToPlainText` 降级 |
+| 表格布局单一真源 | `core/table-layout.ts`（新）、前端 `engine/table-layout.ts`（新，parity 副本） | `normalizeMerges`/`buildTableLayout`/`cellIndexOf`；越界钳制、1×1 丢弃、起点去重、重叠去冲突；输出 `skipped[]`（被覆盖格）与 `spans{}`（主格跨度）供渲染器一次性消费 |
+| 类型/模型/工具箱 | 前端 `types.ts`、`model.ts` | `ElementType` 增 `richtext｜dbField`；元素增 `runs?`/`dbField?`/`mergedCells?`；`TYPE_LABELS`/`TYPE_ICONS`/工具箱项/`createElement` 分支 |
+| 设计器组件 | `DesignerElement.vue`（改）、`PropsPanel.vue`（改）、`RichTextEditor.vue`（新）、`DbFieldEditor.vue`（新）、`CellsEditor.vue`（重写） | 画布富文本 `v-html` 预览 + DB 字段占位显示；属性面板挂载三类编辑器；CellsEditor 支持起点格 + rowSpan/colSpan 合并/取消 |
+| 注入层 | `src/print/render.service.ts`（改） | `RenderElement` 增 `runs`/`dbField`/`rendered`；富文本逐 run 插值保留样式；`commandTextOf` 让 ZPL/TSPL/EPL 走纯文本；`formatDbField` 处理 upper/num/date/空值 fallback（与前端同口径） |
+| HTML 渲染 | `src/print/html-renderer.ts`（改） | richtext 用 `renderRunsHtml` 输出 spans；dbField 读 `e.rendered`；表格 cellWrap 按 span 布局、跳被覆盖格 |
+| 矢量渲染 | `vector-renderer.ts`、`vector-pdf.ts`（改） | 富文本降级 `runsToPlainText` + warning；表格按 `buildTableLayout` 画主格边框、跳覆盖格 |
+| 缩略图 | `src/print/thumbnail-renderer.ts`（改） | richtext/dbField 走占位矩形 |
+| 前端打印引擎 | `engine/print.ts`（改）、`frontend-print.test.ts`（改） | richtext/dbField case；表格 grid `row/column: span N`；日期/数值格式 helper（与后端同口径） |
+| 单测 | `core/__tests__/{rich-text,table-layout,layer4-parity}.test.ts`、`src/print/__tests__/layer4.test.ts`（新）、`frontend-print.test.ts`（追加 L4） | 富文本归一化/HTML/escaping/上下标、表格越界/重叠/去冲突、前后端 parity 逐字锁定（rich-text/table-layout 同输入同输出）、注入层逐 run 插值与指令降级、HTML/SVG/PDF 四通道渲染 |
+
+**实跑基线（2026-11-21）**：`npm run typecheck` 0 error；`npm test` **635 例，628 pass / 0 fail / 7 skip**（较第三层 609 +26）；前端 `vue-tsc -b --noEmit` 通过。
+冒烟校验：`layer4.test.ts` 覆盖注入层（富文本逐段插值保样式、DB 字段取值/格式/空值、指令通道降级纯文本）+ 渲染层（HTML 逐 run span、表格合并跳格、SVG/PDF 富文本降级 warning）。
+注：第四层无新增 HTTP 端点，纯设计态数据模型 + 渲染通道改动，不改变现有 API 契约与 golden 快照。
+
+**仍待验收 / 明确边界**（不许按「已交付」表述）：
+
+| 项 | 状态 |
+| --- | --- |
+| 富文本样式跨通道 | HTML 通道完整还原字重/斜体/下划线/颜色/字号/上下标；ZPL/TSPL/EPL 指令通道与 SVG/PDF 矢量通道降级为纯文本拼接 + warning，样式不保留（指令协议无富文本语义，矢量逐 run 对齐基线成本高） |
+| 表格合并 | 仅支持矩形合并、行列 0 基；越界/重叠自动钳制去冲突但改变用户原意时无提示；非矩形自由合并、跨元素表格联动未支持 |
+| DB 字段元素 | `datasetId` 为预留字段，当前取数据行同名字段（字段可写 `{{var}}` 占位）；跨数据集联查/外键解析未实现，格式 upper/num/date 为轻量实现非 locale 完备 |
+| 真机验收 | 富文本在打印机固件的呈现、表格合并边框在真实标签纸的对齐未做真机验证 |
+| 第五层（数据绑定/工具） | 为下一层，非本层 |

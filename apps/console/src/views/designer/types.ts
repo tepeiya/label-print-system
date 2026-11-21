@@ -5,8 +5,32 @@
 // =============================================================================
 
 export type ElementType =
-  | 'text' | 'line' | 'rect' | 'ellipse' | 'table' | 'image'
-  | 'barcode' | 'qrcode' | 'formula' | 'serial' | 'datetime' | 'sysvar';
+  | 'text' | 'richtext' | 'line' | 'rect' | 'ellipse' | 'table' | 'image'
+  | 'barcode' | 'qrcode' | 'formula' | 'serial' | 'datetime' | 'sysvar' | 'dbField';
+
+/** 第四层：富文本片段（与后端 core/rich-text.ts parity） */
+export interface RichTextRun {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  color?: string;
+  /** pt 覆盖 */
+  size?: number;
+  script?: 'sub' | 'super';
+}
+
+/** 第四层：DB 字段元素（绑定数据源字段，打印时按行取值） */
+export interface DbFieldSpec {
+  /** 数据源 id（datasource 模块）；空=模板变量兜底 */
+  datasetId?: string;
+  /** 字段名（列标题/变量 key） */
+  field: string;
+  /** 取值格式化：date:YYYY-MM-DD / num:2 / upper / lower，空=原样 */
+  format?: string;
+  /** 无值时的占位文本 */
+  fallback?: string;
+}
 
 export interface FontSpec {
   family?: string;
@@ -120,9 +144,13 @@ export interface ElementData {
   name?: string;
   printIf?: string;
 
-  // text / formula / serial / datetime / sysvar
+  // text / richtext / formula / serial / datetime / sysvar
   text?: string;
+  /** 第四层：富文本片段（richtext 元素正文） */
+  runs?: RichTextRun[];
   font?: FontSpec;
+  /** 第四层：DB 字段元素绑定 */
+  dbField?: DbFieldSpec;
   formula?: { expr?: string; defaultOnError?: string };
   serial?: { sequenceRef?: string; digits?: number; prefix?: string; suffix?: string };
   datetime?: { pattern?: string; source?: string; offset?: string };
@@ -139,6 +167,10 @@ export interface ElementData {
   rows?: number;
   cols?: number;
   cells?: string[];
+  /** 第四层：合并单元格 [{row,col,rowSpan,colSpan}]（P8 AI 表格识别已用此形状） */
+  mergedCells?: Array<{ row: number; col: number; rowSpan: number; colSpan: number }>;
+  /** 第四层：单元格自动换行（默认 true） */
+  cellWrap?: boolean;
   showBorder?: boolean;
   borderWidth?: number;
   borderColor?: string;

@@ -39,6 +39,14 @@
       </div>
     </template>
 
+    <!-- 富文本（第四层）：逐 run 样式 span，画布 v-html 预览 -->
+    <div v-else-if="el.type === 'richtext'" class="el-text-inner" :style="textInnerStyle" v-html="richHtml" />
+
+    <!-- DB 字段（第四层）：显示数据源/字段名占位，打印时按行取值 -->
+    <div v-else-if="el.type === 'dbField'" class="el-text-inner" :style="textInnerStyle">
+      <span class="db-field-tag" :title="dbFieldTip">{{ dbFieldLabel }}</span>
+    </div>
+
     <!-- 图片 -->
     <template v-else-if="el.type === 'image'">
       <img v-if="el.src" class="el-img" :src="el.src" alt="" draggable="false">
@@ -104,6 +112,7 @@ import {
   tableCellStyle, tableStyle, textStyle, textStyleInner,
 } from '../engine/styles';
 import { elementText, interpolate, splitPlaceholders, type RenderContext } from '../engine/context';
+import { normalizeRuns, renderRunsHtml } from '../engine/rich-text';
 import { containSvg, makeBarcodeSvg, makeQrSvg, stretchSvg } from '../engine/barcode';
 import { MM2PX } from '../engine/util';
 
@@ -135,6 +144,8 @@ const rootStyle = computed<CSSProperties>(() => {
       textAlign: 'center',
     };
     case 'text':
+    case 'richtext':
+    case 'dbField':
     case 'formula':
     case 'serial':
     case 'datetime':
@@ -164,8 +175,35 @@ const lineGeom = computed(() => {
 const textParts = computed(() => {
   const el = props.el;
   if (el.type === 'text') return splitPlaceholders(el.text, props.ctx);
+  if (el.type === 'dbField') {
+    const shown = dbFieldLabel.value;
+    return [{ text: shown, placeholder: false, resolved: shown }];
+  }
   const shown = elementText(el, props.ctx);
   return [{ text: shown, placeholder: false, resolved: shown }];
+});
+
+/** 富文本画布预览：run 样式 span + 占位符插值（与打印态同口径） */
+const richHtml = computed(() => {
+  if (props.el.type !== 'richtext') return '';
+  const runs = normalizeRuns(props.el.runs, props.el.text);
+  const font = props.el.font ?? {};
+  return renderRunsHtml(runs, font, {
+    interp: (s: string) => interpolate(s, props.ctx),
+    // 画布预览不转义：runs 文本来自模板编辑，占位符插值结果直接显示
+    esc: (s: string) => s,
+  });
+});
+
+/** DB 字段：画布显示 {{字段}} 占位（设计态无真实数据行，预览用字段别名） */
+const dbFieldLabel = computed(() => {
+  const f = props.el.dbField?.field ?? '';
+  const resolved = interpolate(f, props.ctx);
+  return resolved && resolved !== f ? resolved : (f || '{{字段}}');
+});
+const dbFieldTip = computed(() => {
+  const d = props.el.dbField;
+  return `数据源: ${d?.datasetId || '模板变量'}\n字段: ${d?.field || '(未设置)'}\n格式: ${d?.format || '原样'}`;
 });
 
 const textInnerStyle = computed<CSSProperties>(() => ({

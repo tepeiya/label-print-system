@@ -363,3 +363,19 @@ node tools/labelctl.mjs audit --limit 10
 - `checksum()` 公式新增两方案：`CHECKSUM('HIBC', data)` → Mod43 校验字符；`CHECKSUM('PZN', base7)` → Mod11 校验位（余数 10 抛错）。
 - **解码性能**：zxing-wasm 首次初始化约 20s（进程内一次），之后单次解码 5–15ms。验证端点在生产常驻进程无此开销；单测用同一进程预热，全量测试约 +22s。
 - **诚实边界**：解码闭环只覆盖 bwip 位图通道；指令通道与真机/扫描枪未验。MaxiCode 默认仍走位图「预览仅」，`^BD` 为显式 opt-in；Mode 2/3 结构化数据错误会被 UPS 拒收。详见 `docs/10 §10.32`。
+
+## 5.17 第四层 · 设计器交互精度（2026-11-21，**无新增 HTTP 端点**）
+
+> 本层为纯设计态数据模型 + 渲染通道改动，不改变现有 API 契约与 golden 快照。模板 JSON 中元素新增以下可选字段，旧模板无需迁移（缺省走原逻辑）。详见 `docs/10 §10.33`。
+
+**模板元素新增字段**（`schemaVersion:1` 的 `elements[]` 内）：
+
+| 字段 | 元素 type | 结构 | 说明 |
+| --- | --- | --- | --- |
+| `runs` | `richtext` | `RichTextRun[]` = `{text, bold?, italic?, underline?, color?, size?, script?:'sub'｜'super'}[]` | 富文本逐段样式；run 覆盖优先于元素级 `font`。HTML 通道完整还原；指令/SVG/PDF 降级纯文本 + warning |
+| `dbField` | `dbField` | `{field, datasetId?, format?, fallback?}` | 字段绑定：`field` 可为字面字段名或 `{{var}}` 占位，从数据行同名取值；`format` 支持 `upper`/`num:N`/`date:图案`；空值取 `fallback`。`datasetId` 预留（当前未联查） |
+| `mergedCells` | `table` | `{row, col, rowSpan, colSpan}[]` | 合并单元格（行列 0 基，P8 AI 表格识别既有契约）；越界/重叠自动钳制去冲突。HTML 按 span 跳格、矢量按主格画框 |
+
+- 渲染服务 `render.service.ts`：`richtext` 逐 run 插值保样式，`dbField` 按数据行取值 + 格式 + 空值 fallback；`toZplElements`/`toTsplElements`/`toEplElements` 对富文本取纯文本拼接。
+- 前端设计器 `types.ts`/`model.ts`/`engine/` 与后端 `core/{rich-text,table-layout}.ts` 为 parity 副本，保证设计态预览与出图语义一致。
+- **诚实边界**：富文本样式跨指令/矢量通道不保留；表格仅矩形合并、`datasetId` 跨数据集联查未实现、非 locale 完备格式。均在渲染结果 `warnings` 中标注。

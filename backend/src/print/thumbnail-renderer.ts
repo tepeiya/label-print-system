@@ -127,6 +127,8 @@ function elementToSvg(el: any): string {
         stroke="${stroke}" stroke-width="${sw}"${dashAttr}/>`;
     }
     case 'text':
+    case 'richtext':
+    case 'dbField':
     case 'formula':
     case 'serial':
     case 'datetime':
