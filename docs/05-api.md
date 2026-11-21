@@ -397,3 +397,24 @@ node tools/labelctl.mjs audit --limit 10
 - 表数据通过 `{{var}}` 从数据行 / 变量注入，或在公式内直接写 KV 文本字面量。
 - 后端 `core/lookup-table.ts` 与前端 `engine/lookup-table.ts` 为 parity 副本，`lookup-table.parity.test.ts` + `formula-parity.test.ts` 锁定两端一致。
 - **诚实边界**：表数据须为字符串；后端 tokenize 不支持字符串内转义，故公式内内联 JSON（含双引号）不可用，JSON 必须走 `{{var}}` 注入；key 精确匹配，无模糊/区间匹配；`ai.*` 工具属有意推迟的产品决策，非缺口。
+
+## 5.19 MCP 工具补齐（2026-11-21，工具目录 22 → 29）
+
+> `GET /agent/v1/tools` 是当前 token 可见工具清单（MCP server 启动据此注册）；`POST /agent/v1/tools/:tool` 统一调用。本轮新增 7 个工具 + 3 类 Resource + Prompt 版本参数，详见 `docs/10 §10.37`。
+
+| 工具 | 风险 | 入参要点 | 说明 |
+| --- | --- | --- | --- |
+| `print.list_jobs` | read | `status?`、`limit?`、`cursor?`（页码）、`template?` | 返回 `{items, total, page, pageSize, nextCursor}` |
+| `print.retry_job` | write | `job_id`、`seq?`（序号数组）、`idempotency_key` | 复用原数据+流水号补打，避免重号 |
+| `print.preview` | read | `template`、`rows?`、`copies?` | 返回完整 HTML + 张数，不落库不打印 |
+| `print.commands` | read | `template`、`rows?`、`copies?`、`protocol?`、`dpi?` | 返回 ZPL/TSPL/EPL 指令文本 |
+| `printers.list` | read | 无 | 打印机清单，供选机 |
+| `printers.status` | read | `id` | 连通性探测，只读 |
+| `datasource.refresh` | write | `id`、`idempotency_key` | 仅 SQL 数据源，真执行落 `data_rows` |
+
+**Resource（MCP `resources/read`）**：新增 `labelflow://jobs/{id}`、`labelflow://alerts/open`、`labelflow://printers`。
+
+**Prompt 版本（MCP `prompts/get`）**：`arguments.version=N` 取历史版本正文；后端对应 `GET /agent/v1/prompts/:name?version=N`（不传则返回当前版本）。版本回滚与调用计数为 P6.5 既有管理端能力（`POST /agent-prompts/:name/rollback`、`GET /agent-prompts/:name/versions`）。
+
+- 写工具（risk≠read）强制 `idempotency_key`；高危（risk=high）需 `approval_id` 或 `dry_run`；全部经 `ToolsService.call()` 统一护栏链与统一信封 `{summary, data, warnings, next_actions}`。
+- **诚实边界**：真库/真机 IO 未端到端验收（沙盒无 PG/Redis）；`print.preview` 返回 HTML 非图片；`ai.*` 与反向 MCP 维持刻意不注册。

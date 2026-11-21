@@ -8,9 +8,12 @@
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { AgentApiClient, AgentApiError } from './client/agent-api.js';
 
-/** 资源 URI 前缀（§11.7.5 原样） */
+/** 资源 URI 前缀（§11.7.5 原样 + §10.37 扩展） */
 export const TEMPLATE_URI = (id: string | number) => `labelflow://templates/${encodeURIComponent(String(id))}`;
 export const STOCK_URI = (ref: string) => `labelflow://inventory/stock/${encodeURIComponent(String(ref))}`;
+export const JOB_URI = (id: string | number) => `labelflow://jobs/${encodeURIComponent(String(id))}`;
+export const ALERTS_OPEN_URI = 'labelflow://alerts/open';
+export const PRINTERS_URI = 'labelflow://printers';
 
 export interface ResourceItem {
   uri: string;
@@ -24,7 +27,7 @@ export interface ResourceItem {
  * labelflow://templates/{id} | labelflow://inventory/stock/{ref} → { kind, id }
  * id 允许是数字或业务标识（§11.7.4「参数用业务标识」），后端两种都认。
  */
-export function parseResourceUri(raw: string): { kind: 'template' | 'stock'; id: string } | null {
+export function parseResourceUri(raw: string): { kind: 'template' | 'stock' | 'job' | 'alerts' | 'printers'; id: string } | null {
   let url: URL;
   try { url = new URL(raw); } catch { return null; }
   if (url.protocol !== 'labelflow:') return null;
@@ -36,6 +39,10 @@ export function parseResourceUri(raw: string): { kind: 'template' | 'stock'; id:
     const ref = seg.slice('stock/'.length);
     if (ref) return { kind: 'stock', id: ref };
   }
+  // §10.37：任务 / 预警 / 打印机
+  if (host === 'jobs' && seg) return { kind: 'job', id: seg };
+  if (host === 'alerts' && (!seg || seg === 'open')) return { kind: 'alerts', id: seg || 'open' };
+  if (host === 'printers' && !seg) return { kind: 'printers', id: '' };
   return null;
 }
 
@@ -85,6 +92,49 @@ export async function listVisibleResources(
   } catch (e) {
     log('inventory.query_stock 失败，跳过库存资源：', (e as Error).message);
   }
+  // §10.37：任务 / 未处理预警 / 打印机快照
+  try {
+    if (has('print.list_jobs')) {
+      const res = await api.callTool('print.list_jobs', { limit: 20 });
+      for (const j of inner(res)?.items ?? []) {
+        out.push({
+          uri: JOB_URI(j.jobId),
+          name: `job-${j.jobId}`,
+          title: `任务 #${j.jobId}`,
+          description: `打印任务 #${j.jobId}：${j.status}，${j.done}/${j.total}`,
+          mimeType: 'application/json',
+        });
+      }
+    }
+  } catch (e) {
+    log('print.list_jobs 失败，跳过任务资源：', (e as Error).message);
+  }
+  if (has('alerts.list')) {
+    try {
+      const res = await api.callTool('alerts.list', { status: 'open', limit: 20 });
+      const count = (inner(res)?.items ?? []).length;
+      out.push({
+        uri: ALERTS_OPEN_URI, name: 'alerts-open', title: '未处理预警',
+        description: `当前未处理（open）预警 ${count} 条`,
+        mimeType: 'application/json',
+      });
+    } catch (e) {
+      log('alerts.list 失败，跳过预警资源：', (e as Error).message);
+    }
+  }
+  if (has('printers.list')) {
+    try {
+      const res = await api.callTool('printers.list', {});
+      const items = inner(res)?.items ?? [];
+      out.push({
+        uri: PRINTERS_URI, name: 'printers', title: '打印机列表',
+        description: `当前租户 ${items.length} 台打印机`,
+        mimeType: 'application/json',
+      });
+    } catch (e) {
+      log('printers.list 失败，跳过打印机资源：', (e as Error).message);
+    }
+  }
   return out;
 }
 
@@ -93,7 +143,7 @@ export async function readResourceUri(api: AgentApiClient, uri: string): Promise
   const parsed = parseResourceUri(uri);
   if (!parsed) {
     throw new McpError(ErrorCode.InvalidParams,
-      `无法识别的资源 URI：${uri}（支持 labelflow://templates/{id} 与 labelflow://inventory/stock/{ref}）`);
+      `无法识别的资源 URI：${uri}（支持 labelflow://templates/{id}、labelflow://inventory/stock/{ref}、labelflow://jobs/{id}、labelflow://alerts/open、labelflow://printers）`);
   }
   let env: any;
   try {

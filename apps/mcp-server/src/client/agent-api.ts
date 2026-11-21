@@ -79,7 +79,14 @@ export class AgentApiClient {
   callTool(name: string, args: Record<string, unknown>) {
     return this.req('POST', `/agent/v1/tools/${encodeURIComponent(name)}`, args ?? {});
   }
-  /** MCP ReadResource 的后端来源（§11.7.5：kind = template | stock） */
+  /** 单条提示词（§10.37）：?version=N 取历史版本正文，供 MCP prompts/get 版本参数 */
+  getPrompt(name: string, version?: number) {
+    const q = version ? `?version=${encodeURIComponent(String(version))}` : '';
+    return this.req<AgentPromptDto & { versionServed: number; fromHistory: boolean }>(
+      'GET', `/agent/v1/prompts/${encodeURIComponent(name)}${q}`,
+    );
+  }
+  /** MCP ReadResource 的后端来源（§11.7.5：kind = template | stock | job | alerts | printers） */
   getResource(kind: string, id: string) {
     return this.req('GET', `/agent/v1/resources/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`);
   }

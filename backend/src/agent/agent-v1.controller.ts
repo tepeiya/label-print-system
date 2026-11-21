@@ -5,7 +5,7 @@
 // P5：/approvals 由 400 占位改为正式实现（§11.7.6），高危工具无审批返回 **202 need_approval**。
 // =============================================================================
 import {
-  BadRequestException, Body, Controller, Get, Param, Post, Query, Request, Res, UseGuards,
+  BadRequestException, Body, Controller, Get, NotFoundException, Param, Post, Query, Request, Res, UseGuards,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { Public } from '../common/public.decorator';
@@ -65,6 +65,27 @@ export class AgentV1Controller {
   @Get('prompts')
   listPrompts(@Request() req: { agentCtx: AgentCtx }) {
     return this.prompts.forAgent(req.agentCtx.tenantId);
+  }
+
+  /**
+   * 单条提示词（§10.37 MCP prompts/get 历史版本）：?version=N 取指定版本正文。
+   * 不带 version 时等价于 forAgent 视图里按 name 找一条。
+   */
+  @Get('prompts/:name')
+  async getPrompt(
+    @Request() req: { agentCtx: AgentCtx },
+    @Param('name') name: string,
+    @Query('version') version?: string,
+  ) {
+    const v = version === undefined || version === '' ? null : Number(version);
+    if (v !== null && (!Number.isFinite(v) || v < 1)) {
+      throw new BadRequestException('version 必须是正整数');
+    }
+    if (v !== null) return this.prompts.forAgentVersion(req.agentCtx.tenantId, name, v);
+    const current = await this.prompts.forAgent(req.agentCtx.tenantId);
+    const def = current.find((p) => p.name === name);
+    if (!def) throw new NotFoundException(`提示词 "${name}" 不存在`);
+    return { ...def, versionServed: (def as any).version ?? 1, fromHistory: false };
   }
 
   /** 只读资源（labelflow://templates/{id}、labelflow://inventory/stock/{ref}） */

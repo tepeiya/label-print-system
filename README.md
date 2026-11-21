@@ -328,3 +328,21 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 | P4 可靠性与运维 | 生产可用 | HotFolder 单进程 `fs.watch` 多副本会重复监听，改共享存储 + 队列去重或对象存储事件通知；`trigger_deliveries` 已有 status/errorMsg/durationMs 但无失败率告警与前端投递历史页；补「重放某事件」管理端点 |
 
 > **诚实边界**：以上 8.1/8.2 基于已实现代码；8.3 全部为**未实施建议**。SQL 直连只读（不写回 MES/ERP），真实连库回归需第二套数据库实例，沙盒无 PostgreSQL/Redis 未实跑；MySQL/MSSQL 驱动未安装时明确报错（不静默假装成功）；无 ESB/MQ 直连（Kafka/RabbitMQ/SAP RFC/IDoc 需自行桥接到文件或 REST）；Webhook 仅出站，接收方需自行验签；所有通道经 `tenant_id` 行隔离 + JWT 鉴权。
+
+### 8.4 MCP 工具补齐（2026-11-21，已实施）
+
+> 与 8.3（触发器自动化建议，未实施）不同，本节为**已落地代码**。Agent/MCP 工具目录从 22 个增至 **29 个**（`tool.catalog.ts` 为唯一真源，MCP server 从 `GET /agent/v1/tools` 拉取自动注册）。逐项见交接文档 §10.37。
+
+| 新增工具 | 风险 | 用途 | 复用落点 |
+| --- | --- | --- | --- |
+| `print.list_jobs` | read | 分页查历史任务（状态/模板过滤 + 下一页 cursor） | `PrintService.list` |
+| `print.retry_job` | write | 补打/重打（指定序号，复用原流水号避免重号） | `PrintService.retry` |
+| `print.preview` | read | 渲染 HTML 预览（不落库不打印） | `renderPrintHtml` |
+| `print.commands` | read | 导出 ZPL/TSPL/EPL 指令供审核后再提交 | `RenderService` + 三生成器 |
+| `printers.list` / `printers.status` | read | 选打印机 / 连通性探测 | `PrinterService.list/test` |
+| `datasource.refresh` | write | 手动刷新 SQL 数据源（数据到位→打印） | `DataSourceService.refresh` |
+
+- **Resource 扩展**：新增 `labelflow://jobs/{id}`、`labelflow://alerts/open`、`labelflow://printers` 三类只读资源（后端 `resource()` + 前端 `resources.ts` 同步）。
+- **Prompt 版本**：MCP `prompts/get` 支持 `arguments.version` 取历史版本正文（后端 `GET /agent/v1/prompts/:name?version=N`）。Prompt 的调用计数 `usageCount` 与版本回滚 `rollback()` 为 P6.5 既有能力，本轮只补 MCP 侧版本透传。
+- **护栏不变**：全部新工具走 `ToolsService.call()` 统一链（scope → 模块 → 限流 → 配额 → 幂等 → 审批 → 执行 → 脱敏 → 审计）；写工具强制 `idempotency_key`，高危需 `approval_id`；统一信封 `{summary, data, warnings, next_actions}`。
+- **刻意不做**：`ai.*`（图片入参 + 计费联动未就绪）、反向 MCP（`external_mcp_servers` 表已有、实现未做，等明确客户需求）——维持既有产品决策，避免半残工具。

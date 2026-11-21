@@ -119,6 +119,36 @@ export class PromptsService {
   }
 
   /**
+   * MCP prompts/get 的历史版本取用（§10.37）：从版本表取指定 version 的正文，
+   * 按 forAgent 的 DTO 口径返回（只含 enabled 的提示词）。版本表里没有（如系统默认
+   * 从未被覆盖过）则回落到当前 forAgent 视图，并标记 versionServed=current。
+   */
+  async forAgentVersion(tenantId: number, name: string, version: number): Promise<PromptDto & { versionServed: number; fromHistory: boolean }> {
+    const target = await this.versions.findOne({
+      where: { tenantId, name, version: Number(version) }, order: { id: 'DESC' },
+    });
+    if (!target) {
+      const current = await this.forAgent(tenantId);
+      const def = current.find((p) => p.name === name);
+      if (!def) throw new NotFoundException(`提示词 "${name}" 不存在`);
+      return { ...def, versionServed: (def as any).version ?? 1, fromHistory: false };
+    }
+    return {
+      name,
+      title: target.title,
+      description: (target as any).description ?? '',
+      arguments: Array.isArray(target.arguments) ? target.arguments : [],
+      content: target.content,
+      enabled: (target as any).enabled !== false,
+      sortOrder: (target as any).sortOrder ?? 0,
+      version: Number((target as any).version),
+      usageCount: 0,
+      versionServed: Number((target as any).version),
+      fromHistory: true,
+    } as PromptDto & { versionServed: number; fromHistory: boolean };
+  }
+
+  /**
    * 新建或覆盖（同名 system 行即覆盖）；一个 name 在租户内只有一行。
    * 覆盖前若内容确有变化，写入一条版本快照（version = 旧版本号），版本号随之 +1。
    */

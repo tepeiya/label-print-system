@@ -26,6 +26,8 @@ import { BillingModule } from '../billing/billing.module';
 import { AuditModule } from '../audit/audit.module';
 import { TemplateModule } from '../template/template.module';
 import { PrintModule } from '../print/print.module';
+import { PrinterModule } from '../printer/printer.module';
+import { DataSourceModule } from '../datasource/datasource.module';
 
 @Module({
   imports: [
@@ -33,6 +35,7 @@ import { PrintModule } from '../print/print.module';
       AgentClient, AgentToken, AgentApproval, ToolIdempotency, AgentPrompt, AgentPromptVersion, Tenant, Template,
     ]),
     InventoryModule, SaasModule, BillingModule, AuditModule, TemplateModule, PrintModule,
+    PrinterModule, DataSourceModule,
   ],
   providers: [
     AgentService, AgentTokenGuard, ToolsService,

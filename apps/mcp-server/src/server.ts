@@ -142,13 +142,33 @@ export function createLabelFlowServer(api: AgentApiClient, opts: LabelFlowServer
   server.setRequestHandler(GetPromptRequestSchema, async (req) => {
     const name = String(req.params?.name ?? '');
     const args = (req.params?.arguments ?? {}) as Record<string, string>;
+    // §10.37：arguments.version 指定历史版本 → 后端按版本取正文（不参与占位符渲染）
+    const versionArg = args.version !== undefined ? Number(args.version) : NaN;
+    const wantVersion = Number.isInteger(versionArg) && versionArg > 0 ? versionArg : null;
+    const renderArgs = { ...args };
+    if (wantVersion !== null) delete renderArgs.version;
     const remote = await loadPrompts();
-    if (remote) {
-      const def = remote.find((p) => p.name === name);
-      if (!def) throw new McpError(ErrorCode.InvalidParams, `未知提示词：${name}`);
+    if (remote || wantVersion !== null) {
+      let def: RemotePromptDef;
+      if (wantVersion !== null) {
+        try {
+          const env = await api.getPrompt(name, wantVersion);
+          const p = env.data;
+          def = {
+            name: p.name, title: p.title, description: p.description,
+            arguments: (p.arguments ?? []) as RemotePromptDef['arguments'], content: p.content,
+          };
+        } catch (e) {
+          throw new McpError(ErrorCode.InvalidParams, (e as Error).message);
+        }
+      } else {
+        const found = remote!.find((p) => p.name === name);
+        if (!found) throw new McpError(ErrorCode.InvalidParams, `未知提示词：${name}`);
+        def = found;
+      }
       let text: string;
       try {
-        text = renderRemotePrompt(def, args);
+        text = renderRemotePrompt(def, renderArgs);
       } catch (e) {
         throw new McpError(ErrorCode.InvalidParams, (e as Error).message);
       }

@@ -28,6 +28,7 @@ import { UsageService } from '../billing/usage.service';
 import { AuditService } from '../audit/audit.module';
 import { TemplateService } from '../template/template.service';
 import { PrintService } from '../print/print.service';
+import { RenderService } from '../print/render.service';
 import { validateAiTemplate } from '../ai-template/validate-ai-template';
 import { tenantStorage } from '../common/tenant.context';
 import { ApprovalService } from './approval.service';
@@ -38,6 +39,14 @@ import {
   APPROVAL_MESSAGES, approvalArgsHash, approvalVerdict, isDryRun,
 } from './approval.calc';
 import { batchOverLimit, BATCH_MAX as DEFAULT_BATCH_MAX } from './rate.calc';
+// 2026-11-21 补齐：打印预览/指令工具复用打印域的纯函数生成器（单一真源，不重复实现）
+import { renderPrintHtml } from '../print/html-renderer';
+import { generateZpl, mmToDots } from '../../core/zpl-generator';
+import { buildJob as buildTsplJob } from '../../core/tspl-generator';
+import { buildJob as buildEplJob } from '../../core/epl-generator';
+import { PrinterService } from '../printer/printer.module';
+import { DataSourceService } from '../datasource/datasource.service';
+import * as crypto from 'crypto';
 import {
   ApprovalInvalidException, BusinessException, FeatureDisabledException,
   IdempotencyConflictException, ModuleNotSubscribedException, PermissionDeniedException,
@@ -85,6 +94,9 @@ export class ToolsService {
     private cfg: TenantConfigService,
     private tplSvc: TemplateService,
     private printSvc: PrintService,
+    private renderSvc: RenderService,
+    private printerSvc: PrinterService,
+    private dataSourceSvc: DataSourceService,
     private approvals: ApprovalService,
     private idem: IdempotencyService,
     private rate: AgentRateService,
@@ -371,7 +383,21 @@ export class ToolsService {
         };
       });
     }
-    throw new BadRequestException(`未知资源类型：${kind}（支持 template / stock）`);
+    // 2026-11-21 Resource 扩展（§10.37）：全部复用既有工具的完整护栏链
+    if (k === 'job') {
+      const jid = Number(id);
+      if (!Number.isFinite(jid) || jid <= 0) throw new BadRequestException('job 资源 id 必须是数字任务 id');
+      return this.call(ctx, 'print.get_status', { job_id: jid });
+    }
+    if (k === 'alerts') {
+      // labelflow://alerts/open → 未处理预警快照；其它值按状态透传
+      const status = id === 'open' || !id ? 'open' : id;
+      return this.call(ctx, 'alerts.list', { status, limit: 50 });
+    }
+    if (k === 'printers') {
+      return this.call(ctx, 'printers.list', {});
+    }
+    throw new BadRequestException(`未知资源类型：${kind}（支持 template / stock / job / alerts / printers）`);
   }
 
   // ---------------------------------------------------------------- dispatch 内部
@@ -491,6 +517,14 @@ export class ToolsService {
       case 'print.estimate': return this.execEstimate(ctx, args);
       case 'print.wait_for_job': return this.execWaitForJob(ctx, args);
       case 'print.cancel_job': return this.execCancelJob(ctx, args);
+      // ---------------- 2026-11-21 补齐（§10.37） ----------------
+      case 'print.list_jobs': return this.execListJobs(ctx, args);
+      case 'print.retry_job': return this.execRetryJob(ctx, args);
+      case 'print.preview': return this.execPreview(ctx, args);
+      case 'print.commands': return this.execCommands(ctx, args);
+      case 'printers.list': return this.execPrintersList(ctx);
+      case 'printers.status': return this.execPrinterStatus(ctx, args);
+      case 'datasource.refresh': return this.execDatasourceRefresh(ctx, args);
       default:
         throw new BadRequestException(`工具 ${tool.name} 未实现`);
     }
@@ -990,6 +1024,163 @@ export class ToolsService {
       summary: `任务 #${id} 已取消（原状态 ${before.status}）`,
       data: { jobId: id, status: 'canceled', changed: true },
       warnings: [], next_actions: ['print.get_status'],
+    };
+  }
+
+  // ================================================================
+  // 2026-11-21 补齐的执行器（§10.37）：全部复用既有领域服务/纯函数，不另起链路
+  // ================================================================
+
+  /** 历史任务列表：复用 PrintService.list（分页 + 按状态过滤），模板过滤在内存侧精修 */
+  private async execListJobs(ctx: AgentCtx, args: Record<string, any>): Promise<ToolResult> {
+    const page = Math.max(1, Math.floor(Number(args.cursor ?? 1)) || 1);
+    const pageSize = this.clampLimit(args.limit ?? 20);
+    const res = await this.inAgentTenant(ctx, () => this.printSvc.list({ status: args.status ? String(args.status) : undefined, page, pageSize }));
+    let [rows, total] = res as [any[], number];
+    // 模板维度过滤（list() 只支持 status；模板名/id 在此精修，避免改领域服务签名）
+    if (args.template !== undefined && String(args.template).trim()) {
+      const want = String(args.template).trim();
+      rows = rows.filter((j) => String(j.templateId) === want || /^\d+$/.test(want) && Number(j.templateId) === Number(want));
+    }
+    const items = rows.map((j) => ({
+      jobId: Number(j.id), status: j.status, total: Number(j.total ?? 0),
+      done: Number(j.done ?? 0), failed: Number(j.failed ?? 0),
+      templateId: j.templateId, printerId: j.printerId ?? null,
+      createdAt: j.createdAt, finishedAt: j.finishedAt ?? null,
+    }));
+    const hasMore = page * pageSize < total;
+    return {
+      summary: `打印任务列表第 ${page} 页：${items.length} 条（共 ${total} 条）${hasMore ? '，还有下一页' : '，已到末页'}`,
+      data: { items, total, page, pageSize, nextCursor: hasMore ? page + 1 : null },
+      warnings: [], next_actions: items.length ? ['print.get_status'] : ['templates.search'],
+    };
+  }
+
+  /** 补打/重打：复用 PrintService.retry（原数据+流水号），seq 指定序号。写工具幂等键由框架强制 */
+  private async execRetryJob(ctx: AgentCtx, args: Record<string, any>): Promise<ToolResult> {
+    const id = Number(args.job_id);
+    if (!Number.isFinite(id) || id <= 0) throw new BadRequestException('需要 job_id');
+    const before = await this.inAgentTenant(ctx, () => this.printSvc.getJob(id));
+    if (!before) throw new NotFoundException(`打印任务不存在：${id}`);
+    const seqNos = Array.isArray(args.seq) && args.seq.length
+      ? args.seq.map((n: unknown) => Math.max(1, Math.floor(Number(n)))).filter((n: number) => Number.isFinite(n))
+      : undefined;
+    const job = await this.inAgentTenant(ctx, () => this.printSvc.retry(id, seqNos));
+    return {
+      summary: `任务 #${id} 已补打（新任务 #${job.jobId}，${seqNos ? `仅序号 ${seqNos.join(',')}` : '整单'}），复用原流水号避免重号`,
+      data: { jobId: job.jobId, reprintOf: id, status: job.status, seqNos: seqNos ?? null },
+      warnings: [], next_actions: ['print.get_status', 'print.wait_for_job'],
+    };
+  }
+
+  /** HTML 预览：复用 renderPrintHtml 纯函数（变量/公式/流水号已求值），不落库不打印 */
+  private async execPreview(ctx: AgentCtx, args: Record<string, any>): Promise<ToolResult> {
+    const copies = Math.max(1, Math.min(500, Math.floor(Number(args.copies ?? 1)) || 1));
+    const rows = Array.isArray(args.rows) ? args.rows : [{}];
+    const over = batchOverLimit(copies, rows);
+    if (over) throw new BadRequestException(`${over}（§11.7.7 护栏 5：单次批量 ≤ ${BATCH_LIMIT}）`);
+    const tpl = await this.resolveTemplate(ctx, args.template);
+    const tplContent = (tpl.content ?? {}) as any;
+    if (!tplContent.page || !Array.isArray(tplContent.elements)) throw new BadRequestException('模板缺少 page/elements 结构，无法预览');
+    const out = renderPrintHtml({ templateContent: tplContent, rows, copies });
+    return {
+      summary: `模板「${tpl.name}」预览已生成：${out.labelCount} 张标签，HTML ${out.html.length} 字符（${out.widthMm}×${out.heightMm}mm @${out.dpi}dpi）。此为预览，未提交真实打印`,
+      data: {
+        template: { id: Number(tpl.id), name: tpl.name },
+        html: out.html, labelCount: out.labelCount,
+        widthMm: out.widthMm, heightMm: out.heightMm, dpi: out.dpi,
+        estimated: true,
+      },
+      warnings: [], next_actions: ['print.commands', 'print.submit_job'],
+    };
+  }
+
+  /** 指令导出：复用 RenderService + ZPL/TSPL/EPL 生成器（与 print/commands 端点同口径） */
+  private async execCommands(ctx: AgentCtx, args: Record<string, any>): Promise<ToolResult> {
+    const copies = Math.max(1, Math.min(500, Math.floor(Number(args.copies ?? 1)) || 1));
+    const rows: any[] = Array.isArray(args.rows) && args.rows.length ? args.rows : [{}];
+    const over = batchOverLimit(copies, rows);
+    if (over) throw new BadRequestException(`${over}（§11.7.7 护栏 5：单次批量 ≤ ${BATCH_LIMIT}）`);
+    const protocol: 'zpl' | 'tspl' | 'epl' = args.protocol === 'tspl' ? 'tspl' : args.protocol === 'epl' ? 'epl' : 'zpl';
+    const tpl = await this.resolveTemplate(ctx, args.template);
+    const tplContent = tpl.content as any;
+    if (!tplContent?.page) throw new BadRequestException('模板缺少 page 结构，无法导出指令');
+    const dpi = Math.max(96, Math.min(1200, Math.floor(Number(args.dpi ?? tplContent.page.dpi ?? 300)) || 300));
+    const frames: string[] = [];
+    const genWarnings: string[] = [];
+    for (let i = 0; i < rows.length; i++) {
+      const rendered = this.renderSvc.renderRow(
+        tplContent.elements ?? [], rows[i], {},
+        { pageNo: i + 1, pageTotal: rows.length, printDate: new Date().toISOString().slice(0, 10), printTime: new Date().toISOString().slice(11, 19), uuid: crypto.randomUUID(), _now: new Date() },
+        i, tplContent.variables ?? [],
+      );
+      if (protocol === 'zpl') {
+        const out = generateZpl(this.renderSvc.toZplElements(rendered), dpi);
+        genWarnings.push(...out.warnings);
+        frames.push(out.text.replace('^XZ', `^PQ${copies}^XZ`));
+      } else if (protocol === 'epl') {
+        const out = buildEplJob(this.renderSvc.toEplElements(rendered) as any, dpi, {
+          widthMm: tplContent.page.widthMm, heightMm: tplContent.page.heightMm,
+          gapMm: tplContent.page.gapMm ?? 2, copies,
+        });
+        genWarnings.push(...out.warnings);
+        frames.push(out.buffer.toString('ascii'));
+      } else {
+        const out = buildTsplJob(this.renderSvc.toTsplElements(rendered), dpi, {
+          widthMm: tplContent.page.widthMm, heightMm: tplContent.page.heightMm,
+          gapMm: tplContent.page.gapMm ?? 2, copies,
+        }, (tplContent.page.orientation ?? 0) as any);
+        genWarnings.push(...out.warnings);
+        frames.push(out.buffer.toString('utf8'));
+      }
+    }
+    const text = protocol === 'zpl' ? frames.join('\n') : frames.join('');
+    return {
+      summary: `模板「${tpl.name}」已导出 ${rows.length * copies} 张 ${protocol.toUpperCase()} 指令（${Buffer.byteLength(text, 'utf8')} 字节）。只读预览，未发送打印机`,
+      data: { template: { id: Number(tpl.id), name: tpl.name }, protocol, text, labelCount: rows.length * copies, dpi },
+      warnings: [...new Set(genWarnings)],
+      next_actions: ['print.preview', 'print.submit_job'],
+    };
+  }
+
+  /** 打印机列表：复用 PrinterService.list（含 normalize） */
+  private async execPrintersList(ctx: AgentCtx): Promise<ToolResult> {
+    const list = await this.inAgentTenant(ctx, () => this.printerSvc.list());
+    const items = (list as any[]).map((p) => ({
+      id: Number(p.id), name: p.name, type: p.type,
+      protocol: p.connection?.protocol ?? null, dpi: p.dpi,
+      labelWidthMm: p.labelWidthMm, labelHeightMm: p.labelHeightMm, isDefault: p.isDefault,
+    }));
+    return {
+      summary: `当前租户有 ${items.length} 台打印机${items.length ? `（默认：${items.find((p) => p.isDefault)?.name ?? '未设'}）` : ''}`,
+      data: { items }, warnings: [],
+      next_actions: items.length ? ['printers.status', 'print.submit_job'] : [],
+    };
+  }
+
+  /** 打印机连通性：复用 PrinterService.test（只读探测，不改配置） */
+  private async execPrinterStatus(ctx: AgentCtx, args: Record<string, any>): Promise<ToolResult> {
+    const id = Number(args.id);
+    if (!Number.isFinite(id) || id <= 0) throw new BadRequestException('需要 id（打印机 id，先用 printers.list 取）');
+    const p = await this.inAgentTenant(ctx, () => this.printerSvc.get(id));
+    const res = await this.inAgentTenant(ctx, () => this.printerSvc.test(id));
+    return {
+      summary: `打印机「${p.name}」（${p.type}）连通性：${res.ok ? '正常' : '失败'}${res.skipped ? '（该通道由前端/本地代理完成，无需服务端连通测试）' : ''}`,
+      data: { id, name: p.name, type: p.type, ...res },
+      warnings: res.ok ? [] : [`连通性失败：${res.error ?? '未知原因'}`],
+      next_actions: ['printers.list'],
+    };
+  }
+
+  /** 数据源刷新：复用 DataSourceService.refresh（真执行 SQL 落 data_rows）。写工具幂等键由框架强制 */
+  private async execDatasourceRefresh(ctx: AgentCtx, args: Record<string, any>): Promise<ToolResult> {
+    const id = Number(args.id);
+    if (!Number.isFinite(id) || id <= 0) throw new BadRequestException('需要 id（数据源 id）');
+    const res = await this.inAgentTenant(ctx, () => this.dataSourceSvc.refresh(id));
+    return {
+      summary: `数据源 #${id} 已刷新：${res.rows} 行、${res.columns?.length ?? 0} 列，耗时 ${res.durationMs}ms`,
+      data: { sourceId: res.sourceId, rows: res.rows, columns: res.columns, durationMs: res.durationMs, replaceRows: res.replaceRows },
+      warnings: res.warnings ?? [], next_actions: ['print.submit_job', 'templates.search'],
     };
   }
 

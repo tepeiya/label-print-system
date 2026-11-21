@@ -2774,3 +2774,63 @@ MaxiCode/HIBC/PZN 已有 bwip 位图通道 + 能力表登记（§10.29.2），GS
 | P4 可靠性与运维 | HotFolder 单进程；无可观测告警/事件重放 | 共享存储 + 队列去重或对象存储事件通知；`trigger_deliveries` 已有 status/errorMsg/durationMs，补失败率告警 + 前端投递历史页；补「重放某事件」管理端点 | `hotfolder.service.ts` 用 `fs.watch`；后端有 `GET /triggers/:id/deliveries` 无前端页 |
 
 **验收边界**：以上均为**未实施建议**。真落地需配真库/真机回归——沙盒无 PostgreSQL/Redis，事件投递链路未实跑；SQL 直连只读不写回 MES/ERP；无 ESB/MQ 直连（Kafka/RabbitMQ/SAP RFC/IDoc 需自行桥接到文件或 REST）；Webhook 仅出站、接收方需自行验签。
+
+---
+
+### 10.37 MCP 工具补齐：体验闭环 + 业务扩展（2026-11-21）
+
+> 承接三轮对接/自动化咨询后的实际开发落地（与 §10.36「分析结论」不同，本节为**已交付代码**）。
+> 依据用户提供的现状清单核查后实施：清单中两处已过时——`ai.*` 早已刻意不注册、
+> Prompt 版本回滚 `rollback()` 与调用计数 `usageCount` 在 P6.5 已实现——均不重复开发。
+> 工程口径不变：单一真源（`tool.catalog.ts`）+ 统一护栏链（`ToolsService.call()`）+ 诚实标注边界。
+
+#### 10.37.1 核查先行（避免重复/错误开发）
+
+| 清单说法 | 代码核查结论 | 处理 |
+| --- | --- | --- |
+| `print.estimate/wait/cancel`、`alerts.*`、`bom.*` 注释称「仍占位」 | 均已在目录 + `run()` 执行器实现，仅注释过时 | 更新 `tool.catalog.ts` 顶部注释，删过时描述 |
+| Prompt「无调用量/采纳率、无版本历史回滚」 | `usageCount`（`bumpUsage`）、`listVersions`、`rollback` 均已在 P6.5 实现 | 不重复做；只补 MCP `prompts/get` 的 version 透传 |
+| `ai.generate_template` 等 | 图片入参 + `ai_generate` 计费联动未就绪 | 维持刻意不注册（与既有决策一致） |
+| 反向 MCP（external_mcp_servers） | 表已有、无实现、工程量大 | 等明确客户需求再立项 |
+
+#### 10.37.2 新增 7 个工具（22 → 29）
+
+| 工具 | risk / permission / modules | 复用落点 | 说明 |
+| --- | --- | --- | --- |
+| `print.list_jobs` | read / print:job:read / print | `PrintService.list` | 分页（cursor=页码）+ 状态过滤 + 模板名/id 精修；返回 items + total + nextCursor |
+| `print.retry_job` | write / print:job:write / print | `PrintService.retry` | 原数据+流水号补打，seq 指定序号（1-based）；框架强制 idempotency_key，重复调用只补打一次 |
+| `print.preview` | read / print:job:read / print | `renderPrintHtml` | 模板+行渲染完整 HTML（变量/公式/流水号已求值），不落库不打印；带批量护栏 |
+| `print.commands` | read / print:job:read / print | `RenderService` + `generateZpl`/`buildTsplJob`/`buildEplJob` | 导出 ZPL/TSPL/EPL 指令文本，与 `/print/commands` 端点同口径，供审核后再提交 |
+| `printers.list` | read / print:job:read / print | `PrinterService.list` | 打印机清单（id/名/类型/协议/纸张/是否默认），供 Agent 选机（打印机无独立权限码，归 print 模块） |
+| `printers.status` | read / print:job:read / print | `PrinterService.test` | 单台连通性探测（raw_tcp 真实建连；其它通道标注由前端/代理完成），只读不改配置 |
+| `datasource.refresh` | write / datasource:write / datasource | `DataSourceService.refresh` | 真执行 SQL 落 data_rows，解锁「数据到位→打印」；框架强制 idempotency_key |
+
+**改动文件**：
+- `agent/tool.catalog.ts`（改）：顶部注释清理 + 7 个 ToolDef 注册。
+- `agent/tools.service.ts`（改）：DI 注入 `RenderService`/`PrinterService`/`DataSourceService`；`run()` switch 加 7 case + 7 个 `exec*` 执行器；全部复用领域服务/纯函数，未另起链路。
+- `agent/agent.module.ts`（改）：`imports` 加 `PrinterModule`、`DataSourceModule`（均无回指 Agent，无循环依赖）。
+
+#### 10.37.3 Resource 扩展 + Prompt 版本
+
+| 项 | 文件 | 内容 |
+| --- | --- | --- |
+| Resource 三类 | `tools.service.ts` `resource()`、`apps/mcp-server/src/resources.ts` | 新增 `labelflow://jobs/{id}`（→ print.get_status）、`labelflow://alerts/open`（→ alerts.list status=open）、`labelflow://printers`（→ printers.list）；URI 解析与 ListResources 列举前后端同步；后端复用既有工具完整护栏链 |
+| Prompt 版本 | `prompts.service.ts`（+`forAgentVersion`）、`agent-v1.controller.ts`（+`GET prompts/:name?version=N`）、`mcp-server/{client/agent-api,server,prompts}.ts` | `prompts/get` 的 `arguments.version` 取历史版本正文（从版本表快照渲染）；不传 version 保持原行为；版本从渲染参数剔除避免误当占位符 |
+
+#### 10.37.4 验证（实跑基线 2026-11-21）
+
+- 后端 `npm test` **652 例，645 pass / 0 fail / 7 skip**（较第五层 648 +4，为新增 4 条工具目录测试：注册/权限/幂等/可见性/无重名）；`npm run typecheck` 0 error。
+- MCP server `npm run build` EXIT=0（先 `npm install` 补齐依赖——沙盒此前未装 node_modules，非代码问题）。
+- Resource URI 解析探针 8/8 通过（含 3 类新 URI + 非法输入回落）。
+- 新增测试：`agent/__tests__/print-tools.test.ts` 追加 4 条覆盖 7 工具的注册/implemented/权限/风险/模块/必填项、写工具幂等与非高危、可见性（print 模块与 datasource 模块隔离）、目录无重名。
+
+#### 10.37.5 诚实边界（不许按「已验收」表述）
+
+| 项 | 状态 |
+| --- | --- |
+| 真库/真机 | 沙盒无 PostgreSQL/Redis，执行器仅通过类型检查 + 纯函数/目录单测验证；`retry_job`、`datasource.refresh`、`printers.status` 的真实 IO 未端到端实跑，待真库/真机验收 |
+| `print.preview` 返回 | 返回完整 HTML 字符串（可能较大），非图片 URL / base64；如需缩略图走既有 thumbnail 通道 |
+| `print.commands` | 指令通道富文本降级纯文本、二维码/中文位图等既有边界不变（见 §10.31/§10.32） |
+| `datasource.refresh` | 仅 SQL 数据源；写工具带幂等键但不需审批（非高危）；重复 key 在 `data_rows` 已落库后重放只返回缓存结果 |
+| Prompt version | 取的是版本表快照正文；系统默认从未被覆盖过时回落当前版本并标记 `fromHistory=false`；`prompts/get` 带 version 会多一次后端 GET |
+| 刻意不做 | `ai.*`、反向 MCP 见 §10.37.1，非本层缺口；触发器自动化 P1–P4 仍是未实施建议（§10.36.3） |
