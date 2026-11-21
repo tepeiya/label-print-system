@@ -116,6 +116,7 @@ dots → mm  : mm   = dots * 25.4 / dpi
 | 数据绑定/工具（第五层） | ✅ 公式 LOOKUP/VLOOKUP 查表函数（变价表/物料映射，JSON 对象/行数组/KV 文本）、前后端 parity | `core/lookup-table.ts` + 前端 parity、`formula-engine.ts` 白名单注册；`ai.*` 工具为有意推迟的产品决策（需图片入参+计费联动），非缺口 |
 | 打印通道 | ✅ 浏览器打印 / 9100 Raw TCP / 本地代理 / 服务端出图 | 4 类 Provider |
 | 输出 | ✅ ZPL / TSPL / EPL 指令 + 位图 PNG + 整标签矢量 SVG / PDF | golden 快照测试 |
+| 设计/打印止血（第一层） | ✅ 旋转条码/二维码打印（printRotateStyle 统一口径 + 外层盒承载旋转）、右对齐/底对齐、双面打印 duplex（正反面交替页，多联拼版按 sheet 交替） | `engine/print.ts`、`store.ts`、`PropsPanel.vue`、`html-renderer.ts`；双面依赖打印机短边翻转，真机套准未验，见交接文档 §10.35 |
 | 印刷级输出（第二层） | ✅ 真矢量 PDF（条码/图形/拉丁文本）、出血/裁切线/套准线/CMYK 色标、collate 交叉/堆叠、PDF 拆分、弧形文字/条码、缩略图 DPI 自适应 | `src/print/{vector-pdf,print-marks,impose}.ts`；二维码与中文文本块为高-DPI 位图，专色为 CMYK 近似（非真分色），见下方边界 |
 | 批量 / 队列 | ✅ CSV / DB 数据源 + BullMQ 异步 + 重打补打 + 防重代码 | 见 `src/jobs`、`src/print` |
 | 多租户 / RBAC | ✅ tenant_id 隔离 + 资源级权限点 + 模块订阅门 + 审计 | 见 `src/saas` / `src/auth` |
@@ -264,7 +265,17 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 
 按 `docs/10-dev-handover.md`，下一阶段优先级：
 
-1. **最高优先：条码设计 / 打印核心能力打磨**（产品命根子）——已完成旋转/对齐/双面、拼版、真矢量 PDF、出血/裁切线/套准线/CMYK 近似色标、collate/拆分、弧形文字/条码、缩略图 DPI（第二层）；GS1 官方全量 AI 字典、打印后解码验证闭环、HIBC/PZN 校验、MaxiCode `^BD` 构造器（第三层）；富文本 runs、表格合并单元格、DB 字段元素（第四层）；公式 LOOKUP/VLOOKUP 查表函数（第五层）；仍待：指令/真机解码验证、富文本指令/矢量通道样式还原、打印机偏移校准真机验收。
+1. **最高优先：条码设计 / 打印核心能力打磨**（产品命根子）——**五层全部完工**，逐层清单见 [`docs/10-dev-handover.md`](docs/10-dev-handover.md) §10.31–§10.35：
+
+   | 层 | 主题 | 已完工交付 | 测试基线 |
+   | --- | --- | --- | --- |
+   | 第一层 | 设计/打印止血 | 旋转条码/二维码打印、右/底对齐、双面打印 duplex | 532 例 / 525 pass |
+   | 第二层 | 印刷级输出 | 真矢量 PDF、出血/裁切线/套准线/CMYK 色标、collate 拆分、弧形文字/条码、缩略图 DPI | 568 例 / 561 pass |
+   | 第三层 | 码制专业性 | GS1 官方全量 AI 字典（541）、打印后解码验证闭环、HIBC/PZN 校验、MaxiCode `^BD` 构造器 | 609 例 / 602 pass |
+   | 第四层 | 设计器交互精度 | 富文本 runs、表格合并单元格、DB 字段元素 | 635 例 / 628 pass |
+   | 第五层 | 数据绑定/工具 | 公式 LOOKUP/VLOOKUP 查表函数 + 前后端 parity | 648 例 / 641 pass |
+
+   **仍待验收**（不计入「已完工」）：指令/真机解码验证、富文本指令/矢量通道样式还原、专色真分色、打印机偏移校准真机验收。
 2. **上线前技术债**：RLS 切到 `labelflow_app`（无 BYPASSRLS）角色、独立库真连库验收、白标真实 DNS / 证书、通知通道（代码已就绪，待配网关）、独立库物理备份策略。
 3. **按需功能缺口**：MySQL / SQL Server 数据源方言、更多 MCP 工具、高级计费（发票 / 退款 / 多币种）、Prompt 调用统计深化、Nest 容器级 E2E、前端测试、硬件层真机验收（Windows 打印代理 / RFID / 喷码机）。
 
