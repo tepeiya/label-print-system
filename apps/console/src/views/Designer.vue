@@ -4,11 +4,12 @@
       @library="openLibrary(null)"
       @versions="openLibrary(store.templateId)"
       @print="printVisible = true"
+      @help="shortcutsVisible = true"
     />
 
     <div class="design-grid">
       <DesignerToolbox @added="focusProperties" />
-      <DesignerCanvas ref="canvasRef" />
+      <DesignerCanvas ref="canvasRef" @properties="focusProperties" />
       <InspectorPanel ref="inspectorRef" />
     </div>
 
@@ -18,6 +19,8 @@
       @opened="onTemplateOpened"
     />
     <PrintPreviewDialog v-model="printVisible" />
+    <ShortcutsDialog v-model="shortcutsVisible" />
+    <DesignerTour v-model="tourVisible" />
   </div>
 </template>
 
@@ -37,6 +40,8 @@ import DesignerCanvas from './designer/components/DesignerCanvas.vue';
 import InspectorPanel from './designer/components/InspectorPanel.vue';
 import TemplateLibraryDialog from './designer/components/TemplateLibraryDialog.vue';
 import PrintPreviewDialog from './designer/components/PrintPreviewDialog.vue';
+import ShortcutsDialog from './designer/components/ShortcutsDialog.vue';
+import DesignerTour from './designer/components/DesignerTour.vue';
 import { useDesignerStore } from './designer/store';
 import { useTemplateIO } from './designer/useTemplateIO';
 import { useShortcuts } from './designer/useShortcuts';
@@ -53,6 +58,8 @@ const inspectorRef = ref<InstanceType<typeof InspectorPanel> | null>(null);
 const libraryVisible = ref(false);
 const libraryVersionTarget = ref<number | null>(null);
 const printVisible = ref(false);
+const shortcutsVisible = ref(false);
+const tourVisible = ref(false);
 
 function openLibrary(versionTarget: number | null) {
   libraryVersionTarget.value = versionTarget;

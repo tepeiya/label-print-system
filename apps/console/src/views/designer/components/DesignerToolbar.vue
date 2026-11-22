@@ -46,6 +46,7 @@
         {{ saving ? '保存中…' : '💾 保存' }}
       </button>
       <button type="button" class="btn" :disabled="!canWrite || store.templateId == null" v-permission="'template:write'" title="另存为新模板" @click="doSave(true)">另存为</button>
+      <button type="button" class="icon-btn help-btn" title="快捷键与使用技巧" @click="emit('help')">?</button>
     </div>
 
     <input ref="fileRef" type="file" accept=".json,application/json" hidden @change="onFile">
@@ -67,7 +68,7 @@ import { useTemplateIO } from '../useTemplateIO';
 import { MM2PX } from '../engine/util';
 import { useAuthStore } from '@/store/auth';
 
-const emit = defineEmits<{ library: []; versions: []; print: [] }>();
+const emit = defineEmits<{ library: []; versions: []; print: []; help: [] }>();
 
 const store = useDesignerStore();
 const auth = useAuthStore();

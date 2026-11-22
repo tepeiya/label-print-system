@@ -33,21 +33,24 @@
         <el-input-number v-model="form.copies" :min="1" :max="500" />
       </el-form-item>
 
-      <el-form-item label="数据">
+      <el-form-item label="数据源">
         <div class="data-box">
+          <el-link type="primary" :underline="false" style="font-size: 12px" @click="router.push('/datasource')">去数据源管理导入表格 →</el-link>
+          <el-select v-model="selectedSourceId" filterable clearable placeholder="选择已保存的数据源（在「数据源管理」中导入）"
+                     style="width: 100%; margin-bottom: 8px" :loading="sourcesLoading" @change="onSourceChange">
+            <el-option v-for="s in sources" :key="s.id" :label="`${s.name}（${s.type?.toUpperCase() || 'CSV'}）`" :value="s.id" />
+          </el-select>
           <el-input
             v-model="dataText"
             type="textarea"
             :rows="8"
             spellcheck="false"
-            placeholder='JSON 数组：[{"sku":"A-100","name":"可乐 330ml"}]  或  CSV/TSV（第一行为表头）'
-            @input="parse"
+            placeholder='临时数据：JSON 数组或 CSV/TSV（第一行为表头）。正式数据请在「数据源管理」导入后从上方选择。'
+            @input="onTempInput"
           />
           <div class="data-actions">
-            <el-button size="small" @click="fileRef?.click()">导入文件</el-button>
             <el-button size="small" @click="useSample">用示例数据</el-button>
-            <el-button size="small" @click="clearData">清空</el-button>
-            <input ref="fileRef" type="file" accept=".csv,.tsv,.txt,.json" hidden @change="onFile" />
+            <el-button size="small" @click="clearData">清空临时数据</el-button>
             <span class="stat">{{ stat }}</span>
           </div>
 
@@ -100,8 +103,10 @@ import { ref, reactive, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { apiListTemplates, apiGetTemplate } from '@/api/templates';
-import { apiListPrinters, apiCreatePrintJob } from '@/api';
-import { buildPrintHtml } from './designer/engine/print';
+import {
+  apiListPrinters, apiCreatePrintJob, apiListDataSources, apiDataSourceRows,
+} from '@/api';
+import { buildPrintHtml, parseData } from './designer/engine/print';
 import { sampleRowOf } from './designer/engine/context';
 
 const router = useRouter();
@@ -113,17 +118,21 @@ const form = reactive({ templateId: undefined as number | undefined, printerId: 
 const dataText = ref('');
 const submitting = ref(false);
 const result = ref<any>(null);
-const fileRef = ref<HTMLInputElement | null>(null);
 const previewVisible = ref(false);
+
+// 数据源引用（统一在「数据源管理」导入）
+const sources = ref<any[]>([]);
+const sourcesLoading = ref(false);
+const selectedSourceId = ref<number | null>(null);
 const previewHtml = ref('');
 
-let rows: Record<string, unknown>[] = [];
-let headers: string[] = [];
+const rows = ref<Record<string, unknown>[]>([]);
+const headers = ref<string[]>([]);
 const stat = ref('未填数据时，按模板示例值打印 1 张');
 
-const rowsCount = computed(() => (rows.length ? rows.length : 1));
+const rowsCount = computed(() => (rows.value.length ? rows.value.length : 1));
 const labelCount = computed(() => rowsCount.value * form.copies);
-const previewRows = computed(() => rows.slice(0, 8));
+const previewRows = computed(() => rows.value.slice(0, 8));
 const canSubmit = computed(() => !!form.templateId && !!form.printerId && !submitting.value);
 
 function typeLabel(t: string) {
@@ -134,34 +143,37 @@ function cellText(v: unknown): string {
   return typeof v === 'object' ? JSON.stringify(v) : String(v);
 }
 
-/** 解析 JSON 数组 / 对象，或 CSV/TSV（首行表头） */
-function parseData(text: string): { rows: Record<string, unknown>[]; headers: string[] } {
-  const s = text.trim();
-  if (!s) return { rows: [], headers: [] };
-  if (s[0] === '[' || s[0] === '{') {
-    const parsed = JSON.parse(s);
-    const arr = Array.isArray(parsed) ? parsed : [parsed];
-    const hs: string[] = [];
-    for (const r of arr) if (r && typeof r === 'object') for (const k of Object.keys(r)) if (!hs.includes(k)) hs.push(k);
-    return { rows: arr.map((r) => (r && typeof r === 'object' ? r : { value: r })), headers: hs };
+async function loadSources() {
+  sourcesLoading.value = true;
+  try { sources.value = (await apiListDataSources()) as any[]; }
+  catch { /* 未订阅 datasource 时保持空，打印仍可用临时数据 */ }
+  finally { sourcesLoading.value = false; }
+}
+
+async function onSourceChange(id: number | null) {
+  if (!id) return;
+  try {
+    const res: any = await apiDataSourceRows(id, 2000);
+    const list = Array.isArray(res) ? res : (res?.rows ?? res?.items ?? []);
+    if (!list.length) { ElMessage.warning('该数据源暂无数据行（SQL 源请先执行刷新）'); return; }
+    rows.value = list;
+    headers.value = Object.keys(list[0] ?? {});
+    dataText.value = '';
+    stat.value = `数据源「${sources.value.find((s) => s.id === id)?.name || id}」共 ${rows.value.length} 行`;
+  } catch (e) {
+    ElMessage.error(`读取数据源失败：${(e as Error).message}`);
   }
-  const lines = s.split(/\r?\n/).filter((l) => l.trim() !== '');
-  if (!lines.length) return { rows: [], headers: [] };
-  const delim = lines[0].includes('\t') ? '\t' : ',';
-  const hs = lines[0].split(delim).map((h) => h.trim());
-  const rs = lines.slice(1).map((line) => {
-    const cells = line.split(delim);
-    const obj: Record<string, unknown> = {};
-    hs.forEach((h, i) => (obj[h] = cells[i]?.trim() ?? ''));
-    return obj;
-  });
-  return { rows: rs, headers: hs };
+}
+
+function onTempInput() {
+  selectedSourceId.value = null;
+  parse();
 }
 
 function parse(loud = false) {
   try {
     const { rows: r, headers: h } = parseData(dataText.value);
-    rows = r; headers = h;
+    rows.value = r; headers.value = h;
     stat.value = r.length
       ? `${r.length} 行 · ${h.length} 列`
       : '未填数据时，按模板示例值打印 1 张';
@@ -171,14 +183,6 @@ function parse(loud = false) {
 }
 
 function clearData() { dataText.value = ''; parse(); }
-
-async function onFile(e: Event) {
-  const f = (e.target as HTMLInputElement).files?.[0];
-  if (!f) return;
-  try { dataText.value = (await f.text()).slice(0, 200_000); parse(true); }
-  catch (err: any) { ElMessage.error(`读取文件失败：${err?.message}`); }
-  finally { (e.target as HTMLInputElement).value = ''; }
-}
 
 function useSample() {
   dataText.value = '[{"sku":"A-100","name":"示例商品 A"},{"sku":"B-200","name":"示例商品 B"}]';
@@ -192,7 +196,7 @@ async function submit() {
     printerId: form.printerId,
     copies: form.copies,
   };
-  if (rows.length) payload.rows = rows;
+  if (rows.value.length) payload.rows = rows.value;
   submitting.value = true;
   try {
     const r: any = await apiCreatePrintJob(payload);
@@ -214,7 +218,7 @@ async function preview() {
   if (!form.templateId) { ElMessage.warning('请先选择模板'); return; }
   try {
     const tpl = await apiGetTemplate(form.templateId);
-    const data = rows.length ? rows : [sampleRowOf(tpl.content)];
+    const data = rows.value.length ? rows.value : [sampleRowOf(tpl.content)];
     previewHtml.value = buildPrintHtml(tpl.content, data, {
       copies: form.copies,
       title: tpl.name || 'LabelFlow 打印',
@@ -225,7 +229,7 @@ async function preview() {
   }
 }
 
-onMounted(load);
+onMounted(() => { load(); loadSources(); });
 </script>
 
 <style scoped>

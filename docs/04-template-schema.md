@@ -1,8 +1,11 @@
 # 4. 模板 JSON Schema 定义与示例
 
-> 模板 `content` 以 JSONB 存储，顶层结构如下。所有 `x/y/w/h` 单位为 **mm**（对外约定）。
+> 模板 `content` 以 JSONB 存储，顶层结构如下。所有 `x/y/w/h` 单位为 **mm**（独立模块约定）。
 > `schemaVersion` 用于导入时兼容迁移；`variables` 定义模板内变量；`elements` 为元素数组；
-> `dataSources` 为绑定数据源；`print` 为默认打印参数。
+> `print` 为默认打印参数。
+>
+> **数据源不随模板保存**：表格/Excel/CSV 在「数据源管理」统一导入到 `data_sources` / `data_rows` 表，
+> 打印时在预览或打印页选择数据源、由调用方把行数据随 `rows` 传入。DB字段元素的 `datasetId` 为预留字段，当前不参与取值。
 
 ## 4.1 顶层结构（TypeScript 类型）
 
@@ -12,7 +15,6 @@ interface LabelTemplate {
   page: PageSettings;                    // 页面/纸张/多联设置
   variables: TemplateVariable[];         // 模板变量定义
   elements: ElementBase[];               // 元素列表（12 类，联合类型）
-  dataSources?: DataSourceRef[];         // 可选数据源绑定
   print?: PrintDefaults;                 // 默认打印参数
   meta?: Record<string, unknown>;
 }

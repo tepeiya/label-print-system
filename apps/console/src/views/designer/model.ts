@@ -124,34 +124,44 @@ export const TYPE_ICONS: Record<ElementType, string> = {
   barcode: '▮▮', qrcode: '▩', formula: 'ƒ', serial: '#', datetime: '📅', sysvar: '{}', dbField: '⛁',
 };
 
-export const TOOLS: Array<{ group: string; items: Array<{ type: ElementType; label: string; icon: string }> }> = [
+export interface ToolItem {
+  type: ElementType;
+  label: string;
+  icon: string;
+  /** 白话副标题：一句话说明这个元素拿来干什么 */
+  desc: string;
+  /** 悬浮详细解释：解决「它和另一个有什么区别」的疑问 */
+  tip: string;
+}
+
+export const TOOLS: Array<{ group: string; items: ToolItem[] }> = [
   {
     group: '基本图形',
     items: [
-      { type: 'text', label: '文本', icon: 'T' },
-      { type: 'richtext', label: '富文本', icon: '𝐓' },
-      { type: 'line', label: '直线', icon: '／' },
-      { type: 'rect', label: '矩形', icon: '▭' },
-      { type: 'ellipse', label: '椭圆', icon: '◯' },
-      { type: 'table', label: '表格', icon: '▦' },
-      { type: 'image', label: '图片', icon: '🖼' },
+      { type: 'text', label: '文本', icon: 'T', desc: '写一行字', tip: '在右侧填写文字；双击标签可以直接在画布上改。支持 {{变量名}} 插入动态内容。' },
+      { type: 'richtext', label: '富文本', icon: '𝐓', desc: '一段里多种样式', tip: '把文字拆成多个片段，每段单独设粗体/颜色/字号。适合「品名加粗 + 规格 normal」这类混排。' },
+      { type: 'line', label: '直线', icon: '／', desc: '画分隔线', tip: '在属性里设起点/终点和线宽，可以做标签边框或分隔。' },
+      { type: 'rect', label: '矩形', icon: '▭', desc: '画方框/底色', tip: '可设填充色、边框和圆角，常用来做标签背景或色块。' },
+      { type: 'ellipse', label: '椭圆', icon: '◯', desc: '画圆/椭圆', tip: '适合做圆形图标底、角标或装饰。' },
+      { type: 'table', label: '表格', icon: '▦', desc: '行列排内容', tip: '在「单元格」里逐格填内容，可合并单元格。适合成分表、参数表。' },
+      { type: 'image', label: '图片', icon: '🖼', desc: '放 logo/照片', tip: '右侧填图片地址或 base64。建议用绝对路径，打印时才不会丢图。' },
     ],
   },
   {
     group: '条码二维码',
     items: [
-      { type: 'barcode', label: '一维码', icon: '▮▮' },
-      { type: 'qrcode', label: '二维码', icon: '▩' },
+      { type: 'barcode', label: '一维码', icon: '▮▮', desc: '商品/SKU 条码', tip: '选择码制（Code128/EAN 等）并填内容。勾选「校验位」会自动补校验字符。' },
+      { type: 'qrcode', label: '二维码', icon: '▩', desc: '扫一扫跳转/溯源', tip: '填网址或文本，扫码即可打开。可设纠错级别，越高越耐脏污。' },
     ],
   },
   {
     group: '动态字段',
     items: [
-      { type: 'formula', label: '公式', icon: 'ƒ' },
-      { type: 'serial', label: '流水号', icon: '#' },
-      { type: 'datetime', label: '日期', icon: '📅' },
-      { type: 'sysvar', label: '系统变量', icon: '{}' },
-      { type: 'dbField', label: 'DB字段', icon: '⛁' },
+      { type: 'formula', label: '公式', icon: 'ƒ', desc: '自动算出来的值', tip: '写公式如 {{price}} * {{qty}}，打印时按每行数据自动计算。双击也能在画布上改公式。' },
+      { type: 'serial', label: '流水号', icon: '#', desc: '递增编号', tip: '打印时按份数递增，可设前缀、起始号和位数，如 GRN00001、GRN00002。' },
+      { type: 'datetime', label: '日期', icon: '📅', desc: '当天日期/时间', tip: '打印时自动取当前时间，可选日期格式和前后偏移天数。' },
+      { type: 'sysvar', label: '系统变量', icon: '{}', desc: '页码/打印人等', tip: '内置 8 个变量：打印日期、时间、页码、总页数、打印机名、租户名、打印人、UUID，打印时自动填入。' },
+      { type: 'dbField', label: 'DB字段', icon: '⛁', desc: '取表格里的列', tip: '先在「数据源管理」导入 Excel/CSV，打印时选该数据源，这里填列名即可自动取值。' },
     ],
   },
 ];

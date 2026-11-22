@@ -30,6 +30,7 @@
     </div>
 
     <DesignerStatusbar :cursor="cursorMm" />
+    <DesignerContextMenu @edit="startTextEditIfEditable" @properties="emit('properties')" />
   </div>
 </template>
 
@@ -50,7 +51,9 @@ import DesignerElement from './DesignerElement.vue';
 import DesignerOverlay from './DesignerOverlay.vue';
 import DesignerRulers from './DesignerRulers.vue';
 import DesignerStatusbar from './DesignerStatusbar.vue';
+import DesignerContextMenu from './DesignerContextMenu.vue';
 
+const emit = defineEmits<{ properties: [] }>();
 const store = useDesignerStore();
 
 const areaRef = ref<HTMLElement | null>(null);

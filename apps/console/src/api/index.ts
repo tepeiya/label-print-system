@@ -272,7 +272,7 @@ export const apiCreateBackup = (name?: string) => http.post('/backups', { name }
 export const apiDeleteBackup = (id: number) => http.delete(`/backups/${id}`);
 export const apiRestoreBackup = (id: number) => http.post(`/backups/${id}/restore`);
 
-// ========== Data Sources（P1 新增页面）==========
+// ========== Data Sources（数据源统一入口）==========
 export const apiListDataSources = () => http.get('/data-sources');
 export const apiSaveSqlDataSource = (data: { name: string; connectionUrl: string; queryTemplate?: string; description?: string }) =>
   http.post('/data-sources/save-sql', data);
@@ -280,6 +280,31 @@ export const apiDeleteDataSource = (id: number) => http.delete(`/data-sources/${
 export const apiTestSqlDataSource = (id: number) => http.post(`/data-sources/${id}/sql-test`);
 export const apiExecSqlDataSource = (id: number, data?: any) =>
   http.post(`/data-sources/${id}/sql-exec`, data ?? {});
+
+/** Excel 上传（后端 SheetJS 解析首个工作表，10MB 限制） */
+export const apiUploadExcelDataSource = (file: File, name?: string) => {
+  const fd = new FormData();
+  fd.append('file', file);
+  if (name) fd.append('name', name);
+  return http.post('/data-sources/upload-excel', fd);
+};
+/** CSV 文本上传（后端 parseCsv，支持 fieldMap） */
+export const apiUploadCsvDataSource = (data: { name: string; csvText: string; fieldMap?: Record<string, string> }) =>
+  http.post('/data-sources/upload', data);
+/** 前端解析好的数据行统一入库（Excel/CSV/TSV/JSON 最终都走这里） */
+export const apiSaveDataSourceRows = (data: {
+  name: string; type: 'csv' | 'excel' | 'sql'; headers: string[]; rows: any[];
+  fieldMap?: Record<string, string>; config?: any;
+}) => http.post('/data-sources/rows', data);
+/** 读取数据源的数据行（limit 上限 2000）——后端返回 DataRow 实体，此处统一展开 payload 为真实行 */
+export const apiDataSourceRows = async (id: number, limit = 500, offset = 0): Promise<Record<string, any>[]> => {
+  const res: any = await http.get(`/data-sources/${id}/rows`, { params: { limit, offset } });
+  const list = Array.isArray(res) ? res : (res?.rows ?? res?.items ?? []);
+  return list.map((r: any) => (r && typeof r === 'object' && r.payload && typeof r.payload === 'object' ? r.payload : r));
+};
+export const apiPreviewDataSource = (data: { sourceId: number; templateId?: number; limit?: number }) =>
+  http.post('/data-sources/preview', data);
+export const apiSqlPreview = (id: number, data?: any) => http.post(`/data-sources/${id}/sql-preview`, data ?? {});
 
 // ========== Audit（P1 新增页面）==========
 export const apiListAuditLogs = (params?: any) => http.get('/audit/logs', { params });

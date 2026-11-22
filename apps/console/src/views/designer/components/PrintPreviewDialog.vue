@@ -13,21 +13,25 @@
         <div class="pp-block">
           <div class="pp-title">
             数据源
-            <span class="pp-hint">JSON / CSV / TSV，第一行为表头</span>
+            <el-link type="primary" :underline="false" style="font-size: 12px; font-weight: normal" @click="gotoDataSource">去数据源管理 →</el-link>
+          </div>
+          <div class="pp-pick">
+            <el-select v-model="selectedSourceId" filterable clearable placeholder="选择已保存的数据源（在「数据源管理」中导入）"
+                       style="width: 100%" :loading="sourcesLoading" @change="onSourceChange">
+              <el-option v-for="s in sources" :key="s.id" :label="`${s.name}（${s.type?.toUpperCase() || 'CSV'}）`" :value="s.id" />
+            </el-select>
           </div>
           <textarea
             v-model="text"
             class="pp-data"
             spellcheck="false"
-            placeholder='[{"sku":"A-100","name":"可乐 330ml","price":"5.50"}]'
-            @input="parse()"
+            placeholder='临时数据：JSON 数组或 CSV / TSV（第一行为表头）。正式数据请在「数据源管理」导入后从上方选择。'
+            @input="onTempInput"
           />
           <div class="pp-actions">
-            <el-button size="small" @click="fileRef?.click()">导入文件</el-button>
             <el-button size="small" @click="useSample">用示例数据</el-button>
-            <el-button size="small" @click="clearData">清空</el-button>
+            <el-button size="small" @click="clearData">清空临时数据</el-button>
             <el-button size="small" type="primary" @click="parse(true)">生成预览</el-button>
-            <input ref="fileRef" type="file" accept=".csv,.tsv,.txt,.json" hidden @change="onFile">
           </div>
           <div class="pp-stat">{{ stat }}</div>
         </div>
@@ -87,34 +91,76 @@
 //   同一份生成器；这里只负责喂数据（JSON/CSV）、份数与流水号起点。
 //   数据解析失败时保留上一次结果，避免边打字边报错（原生 parseAndRefresh 同语义）。
 // =============================================================================
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { useDesignerStore } from '../store';
 import { buildPrintHtml, parseData } from '../engine/print';
 import { downloadFile } from '../engine/util';
 import { sampleRowOf } from '../engine/context';
+import { apiListDataSources, apiDataSourceRows } from '@/api';
 
 const props = defineProps<{ modelValue: boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [boolean] }>();
 
 const store = useDesignerStore();
+const router = useRouter();
 
 const text = ref('');
 const copies = ref(1);
 const serialStart = ref(1);
 const stat = ref('未填数据时，按变量示例值打印 1 张');
 const frameRef = ref<HTMLIFrameElement | null>(null);
-const fileRef = ref<HTMLInputElement | null>(null);
 
-let rows: Record<string, unknown>[] = [];
-let headers: string[] = [];
+// 数据源选择（统一在「数据源管理」导入）
+const sources = ref<any[]>([]);
+const sourcesLoading = ref(false);
+const selectedSourceId = ref<number | null>(null);
+
+async function loadSources() {
+  sourcesLoading.value = true;
+  try { sources.value = (await apiListDataSources()) as any[]; }
+  catch { /* 未订阅 datasource 时保持空，不阻塞预览 */ }
+  finally { sourcesLoading.value = false; }
+}
+
+function gotoDataSource() {
+  emit('update:modelValue', false);
+  void router.push('/datasource');
+}
+
+/** 选中已保存数据源后，读取数据行并生成预览（不走本地文件解析） */
+async function onSourceChange(id: number | null) {
+  if (!id) return;
+  try {
+    const res: any = await apiDataSourceRows(id, 2000);
+    const list = Array.isArray(res) ? res : (res?.rows ?? res?.items ?? []);
+    if (!list.length) { ElMessage.warning('该数据源暂无数据行（SQL 源请先执行刷新）'); return; }
+    rows.value = list;
+    headers.value = Object.keys(list[0] ?? {});
+    text.value = ''; // 清空临时数据，避免混淆
+    stat.value = `数据源「${sources.value.find((s) => s.id === id)?.name || id}」共 ${rows.value.length} 行`;
+    build();
+  } catch (e) {
+    ElMessage.error(`读取数据源失败：${(e as Error).message}`);
+  }
+}
+
+/** 手动改临时数据时，清空数据源选择，避免两者混淆 */
+function onTempInput() {
+  selectedSourceId.value = null;
+  parse();
+}
+
+const rows = ref<Record<string, unknown>[]>([]);
+const headers = ref<string[]>([]);
 const html = ref('');
 
 const page = computed(() => store.page);
-const labelCount = computed(() => Math.max(1, rows.length) * copies.value);
+const labelCount = computed(() => Math.max(1, rows.value.length) * copies.value);
 const perSheet = computed(() => Math.max(1, page.value.columns) * Math.max(1, page.value.rows));
 const sheetCount = computed(() => Math.ceil(labelCount.value / perSheet.value));
-const previewRows = computed(() => rows.slice(0, 8));
+const previewRows = computed(() => rows.value.slice(0, 8));
 
 /** 表格里的值统一成字符串，对象/数组按 JSON 展示，和条码内容取值口径一致 */
 function cellText(v: unknown): string {
@@ -126,10 +172,10 @@ function cellText(v: unknown): string {
 function parse(loud = false): boolean {
   try {
     const parsed = parseData(text.value);
-    rows = parsed.rows;
-    headers = parsed.headers;
-    stat.value = rows.length
-      ? `${rows.length} 行 · ${headers.length} 列${rows.length > previewRows.value.length ? `（表格仅显示前 ${previewRows.value.length} 行）` : ''}`
+    rows.value = parsed.rows;
+    headers.value = parsed.headers;
+    stat.value = rows.value.length
+      ? `${rows.value.length} 行 · ${headers.value.length} 列${rows.value.length > previewRows.value.length ? `（表格仅显示前 ${previewRows.value.length} 行）` : ''}`
       : '未填数据时，按变量示例值打印 1 张';
     build();
     return true;
@@ -140,7 +186,7 @@ function parse(loud = false): boolean {
 }
 
 function build() {
-  const data = rows.length ? rows : [sampleRowOf(store.template)];
+  const data = rows.value.length ? rows.value : [sampleRowOf(store.template)];
   html.value = buildPrintHtml(store.template, data, {
     copies: copies.value,
     serialStart: serialStart.value,
@@ -160,20 +206,6 @@ function useSample() {
 function clearData() {
   text.value = '';
   parse();
-}
-
-async function onFile(e: Event) {
-  const inp = e.target as HTMLInputElement;
-  const f = inp.files?.[0];
-  if (!f) return;
-  try {
-    text.value = (await f.text()).slice(0, 200_000);
-    parse(true);
-  } catch (err) {
-    ElMessage.error(`读取文件失败：${(err as Error).message}`);
-  } finally {
-    inp.value = '';
-  }
 }
 
 function printNow() {
@@ -197,7 +229,9 @@ watch(() => props.modelValue, (open) => {
   if (!open) return;
   serialStart.value = store.serialStart;
   copies.value = Math.max(1, page.value.copies ?? 1);
-  if (!text.value) useSample();
-  else parse();
+  if (!text.value && !selectedSourceId.value) useSample();
+  else if (text.value) parse();
 });
+
+onMounted(loadSources);
 </script>

@@ -1,6 +1,6 @@
 <template>
   <FGroup title="富文本片段">
-    <span class="f-hint">每段独立设置样式；占位符 {{'{{变量}}'}} 在每段内均可用</span>
+    <span class="f-hint">{{ hintText }}</span>
     <div v-for="(run, i) in runs" :key="i" class="rt-run">
       <div class="rt-run-head">
         <span class="rt-idx">#{{ i + 1 }}</span>
@@ -50,6 +50,7 @@ import FText from './fields/FText.vue';
 const props = defineProps<{ el: ElementData }>();
 const store = useDesignerStore();
 const commit = inject(COMMIT_KEY, NO_COMMIT);
+const hintText = '每段独立设置样式；占位符 {{变量}} 在每段内均可用';
 
 const runs = computed<RichTextRun[]>(() => normalizeRuns(props.el.runs, props.el.text));
 const SCRIPT_OPTIONS: Array<[string, string]> = [['', '正常'], ['sub', '下标'], ['super', '上标']];

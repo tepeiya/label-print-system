@@ -10,6 +10,7 @@ import { onBeforeUnmount, onMounted, ref, type Ref } from 'vue';
 import { useDesignerStore } from './store';
 import { clamp, r2, screenToLocal } from './engine/util';
 import { elementBBox, mmToPx, snapPosition } from './engine/geometry';
+import { openContextMenu } from './contextMenuState';
 import type { ElementData } from './types';
 
 const SNAP_MM = 0.5;
@@ -452,6 +453,29 @@ export function useGestures(opts: GestureOptions) {
     store.startTextEdit(el.id);
   }
 
+  // --------------------------- 右键快捷菜单 ---------------------------
+  function onContextMenu(e: MouseEvent) {
+    e.preventDefault();
+    const target = e.target as HTMLElement;
+
+    // 手柄 / 参考线 / 正在输入的文本上不弹菜单，避免误触
+    if (target.closest?.('[data-handle]') || target.closest?.('[data-guide-id]')) return;
+    if (isTyping(target)) return;
+
+    const node = target.closest?.('.lf-el') as HTMLElement | null;
+    const onPage = !!target.closest?.('[data-page]');
+    let targetId: string | undefined;
+    if (node && onPage) {
+      const id = node.dataset.id;
+      if (id && store.elementById(id)) targetId = id;
+    }
+
+    // 只在页面空白区右键才清空选择；元素上右键保留已有多选（由菜单组件决定是否补选）
+    if (!targetId && onPage && !e.shiftKey) store.clearSelection();
+
+    openContextMenu({ x: e.clientX, y: e.clientY, targetId });
+  }
+
   function onKeyDown(e: KeyboardEvent) {
     if (e.code === 'Space' && !isTyping(e.target)) {
       spaceDown = true;
@@ -478,7 +502,7 @@ export function useGestures(opts: GestureOptions) {
     viewport.addEventListener('pointermove', onHoverCursor);
     viewport.addEventListener('dblclick', onDblClick);
     viewport.addEventListener('wheel', onWheel, { passive: false });
-    viewport.addEventListener('contextmenu', (e) => e.preventDefault());
+    viewport.addEventListener('contextmenu', onContextMenu);
     page.addEventListener('dragstart', onDragStart);
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
@@ -494,6 +518,7 @@ export function useGestures(opts: GestureOptions) {
     viewport?.removeEventListener('pointermove', onHoverCursor);
     viewport?.removeEventListener('dblclick', onDblClick);
     viewport?.removeEventListener('wheel', onWheel);
+    viewport?.removeEventListener('contextmenu', onContextMenu);
     page?.removeEventListener('dragstart', onDragStart);
     window.removeEventListener('pointermove', onPointerMove);
     window.removeEventListener('pointerup', onPointerUp);

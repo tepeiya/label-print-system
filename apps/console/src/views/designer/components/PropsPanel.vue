@@ -50,7 +50,7 @@
         <FBtn kind="danger" @click="store.removeElements()">删除</FBtn>
       </div>
 
-      <FGroup title="位置与尺寸">
+      <FGroup title="位置与尺寸" collapsible store-key="pos">
         <FRow>
           <FField label="X (mm)"><FNum :model-value="r2v(el!.x)" :step="0.5" @update:model-value="set({ x: r2v($event) })" /></FField>
           <FField label="Y (mm)"><FNum :model-value="r2v(el!.y)" :step="0.5" @update:model-value="set({ y: r2v($event) })" /></FField>
@@ -72,7 +72,7 @@
       </FGroup>
 
       <!-- 第二层：弧形排布（文本/一维码）—— SVG 导出走真曲线，指令通道退化为直线 -->
-      <FGroup v-if="isCurvable" title="弧形排布">
+      <FGroup v-if="isCurvable" title="弧形排布" collapsible advanced store-key="curve" default-collapsed>
         <FRow>
           <FCheck
             text="沿弧线排布"
@@ -97,7 +97,7 @@
         </template>
       </FGroup>
 
-      <FGroup title="外观与输出">
+      <FGroup title="外观与输出" collapsible advanced store-key="appearance" default-collapsed>
         <FRow>
           <FLabel text="透明度" />
           <FSlider :model-value="el!.opacity ?? 1" @update:model-value="set({ opacity: $event })" />
@@ -114,7 +114,7 @@
 
       <!-- ------------------------------ 文本 ------------------------------ -->
       <template v-if="el!.type === 'text'">
-        <FGroup title="文本内容">
+        <FGroup title="文本内容" collapsible store-key="content">
           <FArea :model-value="el!.text ?? ''" :rows="3" placeholder="支持 {{变量}} 占位" @update:model-value="set({ text: $event })" />
           <FRow>
             <FCheck text="自动换行" :model-value="el!.font?.wrap !== false" @update:model-value="setFont({ wrap: $event })" />
@@ -137,7 +137,7 @@
 
       <!-- ------------------------------ 矩形 ------------------------------ -->
       <template v-else-if="el!.type === 'rect'">
-        <FGroup title="矩形样式">
+        <FGroup title="矩形样式" collapsible store-key="rect">
           <FRow>
             <FLabel text="填充" />
             <FColor :model-value="el!.fill ?? '#ffffff'" @update:model-value="set({ fill: $event })" />
@@ -150,7 +150,7 @@
 
       <!-- ------------------------------ 椭圆 ------------------------------ -->
       <template v-else-if="el!.type === 'ellipse'">
-        <FGroup title="椭圆样式">
+        <FGroup title="椭圆样式" collapsible store-key="ellipse">
           <FRow>
             <FLabel text="填充" />
             <FColor :model-value="el!.fill ?? '#ffffff'" @update:model-value="set({ fill: $event })" />
@@ -161,7 +161,7 @@
 
       <!-- ------------------------------ 直线 ------------------------------ -->
       <template v-else-if="el!.type === 'line'">
-        <FGroup title="直线端点">
+        <FGroup title="直线端点" collapsible store-key="line">
           <FRow>
             <FField label="终点 X (mm)"><FNum :model-value="el!.x2 ?? el!.x" :step="0.5" @update:model-value="set({ x2: r2v($event) })" /></FField>
             <FField label="终点 Y (mm)"><FNum :model-value="el!.y2 ?? el!.y" :step="0.5" @update:model-value="set({ y2: r2v($event) })" /></FField>
@@ -172,7 +172,7 @@
 
       <!-- ------------------------------ 表格 ------------------------------ -->
       <template v-else-if="el!.type === 'table'">
-        <FGroup title="表格结构">
+        <FGroup title="表格结构" collapsible store-key="table">
           <FRow>
             <FLabel text="行" />
             <FNum :model-value="el!.rows ?? 1" :step="1" :min="1" @update:model-value="set({ rows: Math.max(1, Math.round($event)) })" />
@@ -199,7 +199,7 @@
       </template>
 
       <!-- ------------------------------ 图片 ------------------------------ -->
-      <FGroup v-else-if="el!.type === 'image'" title="图片">
+      <FGroup v-else-if="el!.type === 'image'" title="图片" collapsible store-key="image">
         <FArea :model-value="el!.src ?? ''" :rows="4" placeholder="data:image/png;base64,... 或 http 图片地址" @update:model-value="set({ src: $event })" />
         <FRow>
           <FBtn @click="pickImage">📁 选择本地图片</FBtn>
@@ -208,7 +208,7 @@
       </FGroup>
 
       <!-- ------------------------------ 一维码 ------------------------------ -->
-      <FGroup v-else-if="el!.type === 'barcode'" title="一维码内容">
+      <FGroup v-else-if="el!.type === 'barcode'" title="一维码内容" collapsible store-key="barcode">
         <FRow>
           <FLabel text="码制" />
           <FSelect :model-value="bc!.sym ?? 'CODE128'" :options="BARCODE_SYM_OPTIONS" @update:model-value="setBarcode({ sym: $event })" />
@@ -250,7 +250,7 @@
       </FGroup>
 
       <!-- ------------------------------ 二维码 ------------------------------ -->
-      <FGroup v-else-if="el!.type === 'qrcode'" title="二维码内容">
+      <FGroup v-else-if="el!.type === 'qrcode'" title="二维码内容" collapsible store-key="qrcode">
         <FRow>
           <FLabel text="码制" />
           <FSelect :model-value="qr!.sym ?? 'QRCODE'" :options="QRCODE_SYM_OPTIONS" @update:model-value="setQr({ sym: $event })" />
@@ -290,7 +290,7 @@
 
       <!-- ------------------------------ 公式 ------------------------------ -->
       <template v-else-if="el!.type === 'formula'">
-        <FGroup title="公式">
+        <FGroup title="公式" collapsible store-key="formula">
           <FArea
             :model-value="el!.formula?.expr ?? ''"
             :rows="3"
@@ -305,7 +305,7 @@
 
       <!-- ------------------------------ 流水号 ------------------------------ -->
       <template v-else-if="el!.type === 'serial'">
-        <FGroup title="流水号">
+        <FGroup title="流水号" collapsible store-key="serial">
           <FField label="序列名">
             <FText :model-value="se!.sequenceRef ?? 'default'" @update:model-value="setSerial({ sequenceRef: $event })" />
           </FField>
@@ -329,7 +329,7 @@
 
       <!-- ------------------------------ 日期 ------------------------------ -->
       <template v-else-if="el!.type === 'datetime'">
-        <FGroup title="日期时间">
+        <FGroup title="日期时间" collapsible store-key="datetime">
           <FField label="格式串">
             <FText
               :model-value="dt!.pattern ?? ''"
@@ -360,7 +360,7 @@
 
       <!-- ------------------------------ 系统变量 ------------------------------ -->
       <template v-else-if="el!.type === 'sysvar'">
-        <FGroup title="系统变量">
+        <FGroup title="系统变量" collapsible store-key="sysvar">
           <FField label="键名">
             <FSelect
               :model-value="sv!.key ?? 'printDate'"

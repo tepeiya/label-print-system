@@ -103,9 +103,12 @@
 
 | 方法 | 路径 | 入参 | 出参 | 权限 |
 | --- | --- | --- | --- | --- |
-| POST | `/data-sources/upload` | `multipart csv/xlsx` + `fieldMap` | `{sourceId, rows, columns[]}` | template_designer |
-| POST | `/data-sources/preview` | `{sourceId, templateId, limit=10}` | `{rows:[]}`（变量映射后） | 任意登录 |
-| POST | `/print/jobs` | `{templateId, printerId, dataSource?, rows?, copies, params}` | `{jobId, status}` | print_operator |
+| POST | `/data-sources/upload` | JSON `{name, csvText, fieldMap?}`（**非 multipart**） | `{sourceId, rows, columns[]}` | datasource:write |
+| POST | `/data-sources/upload-excel` | `multipart` `file`(.xlsx/.xls，≤10MB) + `name?`/`fieldMap?` | `{sourceId, rows, columns[]}` | datasource:write |
+| POST | `/data-sources/rows` | `{name, type, headers, rows, fieldMap?}` 统一入库 | `{sourceId, rows, columns[]}` | datasource:write |
+| GET | `/data-sources/:id/rows` | `?limit=500&offset=0`（上限 2000） | `DataRow[]` | datasource:read |
+| POST | `/data-sources/preview` | `{sourceId, templateId?, limit=10}` | `{rows:[]}`（templateId 当前未参与映射） | datasource:read |
+| POST | `/print/jobs` | `{templateId, printerId, rows?, copies, params}`（**无 dataSource 字段**，行数据由调用方从数据源读取后随 `rows` 传入） | `{jobId, status}` | print_operator |
 | GET | `/print/jobs/:id` | — | `PrintJob`（含进度） | print_operator |
 | POST | `/print/jobs/:id/cancel` | — | `{ok}` | print_operator |
 | POST | `/print/logs/:id/reprint` | `{copies?}` | `{jobId}` | print_operator |

@@ -3,17 +3,26 @@
     <template v-for="g in TOOLS" :key="g.group">
       <div class="tool-group-title">{{ g.group }}</div>
       <div class="tool-grid">
-        <button
+        <el-tooltip
           v-for="it in g.items"
           :key="it.type"
-          type="button"
-          class="tool-btn"
-          :title="`添加${it.label}`"
-          @click="add(it.type)"
+          placement="right"
+          :show-after="350"
+          popper-class="tool-tip-popper"
         >
-          <span class="tool-ico">{{ it.icon }}</span>
-          <span class="tool-label">{{ it.label }}</span>
-        </button>
+          <template #content>
+            <div class="tool-tip">
+              <div class="tool-tip-h">{{ it.icon }} {{ it.label }} — {{ it.desc }}</div>
+              <div class="tool-tip-b">{{ it.tip }}</div>
+              <div class="tool-tip-f">点击添加到画布</div>
+            </div>
+          </template>
+          <button type="button" class="tool-btn" @click="add(it.type)">
+            <span class="tool-ico">{{ it.icon }}</span>
+            <span class="tool-label">{{ it.label }}</span>
+            <span class="tool-desc">{{ it.desc }}</span>
+          </button>
+        </el-tooltip>
       </div>
     </template>
   </aside>

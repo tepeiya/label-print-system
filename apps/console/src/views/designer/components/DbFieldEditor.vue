@@ -4,8 +4,11 @@
     <FField label="字段名 / 占位">
       <FText :model-value="d.field" placeholder="如 productName 或 {{sku}}" @update:model-value="patch({ field: $event })" />
     </FField>
-    <FField label="数据源 ID（可选）">
-      <FText :model-value="d.datasetId ?? ''" placeholder="留空=模板变量/数据行" @update:model-value="patch({ datasetId: $event })" />
+    <FField label="数据来源">
+      <div class="db-source">
+        <span class="db-hint">数据行由打印时传入：先在「数据源管理」导入表格，再在打印预览 / 打印页选择该数据源。</span>
+        <button type="button" class="db-link" @click="openDataSource">去数据源管理 →</button>
+      </div>
     </FField>
     <FField label="取值格式">
       <FSelect
@@ -33,10 +36,11 @@
 </template>
 
 <script setup lang="ts">
-// DB 字段编辑器：绑定数据源字段名 + 格式 + 空值占位。
-// 设计态只存「字段名 / {{变量}}」字符串，真实取值由后端打印时按数据行注入；
-// 这里列出模板变量作为快捷填充，避免设计器依赖数据源 API（数据源在打印侧读取）。
+// DB 字段编辑器：绑定数据行字段名 + 格式 + 空值占位。
+// 设计态只存「字段名 / {{变量}}」字符串，真实取值由打印时传入的数据行注入；
+// 数据源统一在「数据源管理」导入，本组件不重复提供上传/选择入口。
 import { computed, inject } from 'vue';
+import { useRouter } from 'vue-router';
 import { useDesignerStore } from '../store';
 import { COMMIT_KEY, NO_COMMIT } from '../useCommit';
 import type { DbFieldSpec, ElementData } from '../types';
@@ -49,9 +53,11 @@ import FText from './fields/FText.vue';
 
 const props = defineProps<{ el: ElementData }>();
 const store = useDesignerStore();
+const router = useRouter();
 const commit = inject(COMMIT_KEY, NO_COMMIT);
 
-const HINT = '字段名写 {{变量名}} 绑定模板变量/数据行，或直接写数据源列名；datasetId 仅在多数据源时指定。矢量/指令通道按纯文本输出。';
+const HINT = '字段名写 {{变量名}} 绑定模板变量，或直接写数据行列名；数据行来自打印时选择的数据源。矢量/指令通道按纯文本输出。';
+function openDataSource() { void router.push('/datasource'); }
 const FORMAT_OPTIONS: Array<[string, string]> = [
   ['', '原样'], ['upper', '转大写'], ['lower', '转小写'],
   ['num:2', '数值 2 位'], ['num:0', '数值取整'], ['date', '日期 YYYY-MM-DD'],
@@ -75,6 +81,9 @@ function onNumDigits(v: number) { patch({ format: `num:${Math.max(0, Math.round(
 </script>
 
 <style scoped>
+.db-source { display: flex; flex-direction: column; gap: 4px; }
+.db-hint { font-size: 11px; color: #888; line-height: 1.5; }
+.db-link { align-self: flex-start; font-size: 11px; color: var(--d-accent, #2563eb); background: none; border: none; cursor: pointer; padding: 0; }
 .db-quick { margin-top: 6px; }
 .db-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
 .db-chip { font-size: 11px; padding: 1px 6px; border: 1px solid var(--border, #d8dee9); border-radius: 10px; background: transparent; cursor: pointer; }

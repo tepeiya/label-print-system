@@ -26,8 +26,9 @@ test('模块订阅 + 权限点都齐时，返回完整菜单', () => {
     'datasource:read', 'sys:user:read', 'audit:read', 'backup:read',
   ];
   const tree = buildMenus(modules, permissions);
-  assert.deepEqual(keys(tree), ['dashboard', 'print', 'data', 'system', 'subscription']);
-  assert.deepEqual(childKeys(tree, 'print'), ['print-jobs', 'printers', 'designer', 'templates']);
+  assert.deepEqual(keys(tree), ['dashboard', 'print', 'template-center', 'data', 'system', 'subscription']);
+  assert.deepEqual(childKeys(tree, 'print'), ['print-jobs', 'printers']);
+  assert.deepEqual(childKeys(tree, 'template-center'), ['designer', 'templates']);
   assert.deepEqual(childKeys(tree, 'system'), ['users', 'audit', 'backups']);
 });
 
@@ -51,12 +52,13 @@ test('只订阅 print + print:job:read 时，设计器和模板库不可见，�
 
 test('权限点决定叶子：有 templates 模块但没有 template:write 时设计器被过滤', () => {
   const tree = buildMenus(['print', 'templates'], ['template:read']);
-  assert.deepEqual(childKeys(tree, 'print'), ['printers', 'templates']);
+  assert.deepEqual(childKeys(tree, 'template-center'), ['templates']);
 });
 
-test('模块门决定叶子：有 template:read 权限但未订阅 templates 模块时仍不可见（模块是门，权限是钥匙）', () => {
+test('模块门决定叶子：有 template:read 权限但未订阅 templates 模块时，模板中心整组消失', () => {
   const tree = buildMenus(['print'], ['print:job:read', 'template:read']);
-  assert.deepEqual(childKeys(tree, 'print'), ['print-jobs', 'printers']);
+  assert.deepEqual(keys(tree), ['print', 'subscription']);
+  assert.equal(tree.find((n) => n.key === 'template-center'), undefined);
 });
 
 test('通配权限 print:* 放行该模块下的读入口', () => {
