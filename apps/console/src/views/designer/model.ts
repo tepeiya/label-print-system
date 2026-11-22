@@ -308,12 +308,8 @@ export function defaultTemplate(): TemplateData {
       offsetXMm: 0, offsetYMm: 0, calibrateXMm: 0, calibrateYMm: 0,
       guides: [],
     },
-    variables: [
-      { name: 'sku', type: 'text', label: 'SKU', defaultValue: 'SKU-0001', required: false, unique: false },
-      { name: 'productName', type: 'text', label: '产品名', defaultValue: '示例商品', required: false, unique: false },
-      { name: 'price', type: 'number', label: '单价', defaultValue: 19.9, required: false, unique: false },
-      { name: 'qty', type: 'number', label: '数量', defaultValue: 12, required: false, unique: false },
-    ],
+    // 新建模板不预置变量：变量由用户按需在「变量」面板添加或从产品字段导入。
+    variables: [],
     elements: [],
   };
 }
@@ -329,18 +325,18 @@ export function demoTemplate(): TemplateData {
   };
   mk('rect', { x: 2, y: 2, w: 56, h: 36, zIndex: 1, fill: '#ffffff' });
   mk('text', {
-    x: 4, y: 4, w: 40, h: 5, zIndex: 3, text: '{{productName}}',
+    x: 4, y: 4, w: 40, h: 5, zIndex: 3, text: '示例商品',
     font: { ...baseFont(), size: 11, bold: true, color: '#111111' },
   });
   mk('line', { x: 4, y: 10, x2: 56, y2: 10, w: 52, h: 0, zIndex: 2, stroke: { width: 0.25, color: '#999999', style: 'solid' } });
   mk('text', {
-    x: 4, y: 11.5, w: 26, h: 5, zIndex: 3, text: 'SKU: {{sku}}',
+    x: 4, y: 11.5, w: 26, h: 5, zIndex: 3, text: 'SKU: SKU-0001',
     font: { ...baseFont(), size: 8 },
   });
   mk('qrcode', { x: 36, y: 12, w: 18, h: 18, zIndex: 4 });
   mk('barcode', { x: 4, y: 21.5, w: 30, h: 11, zIndex: 4, barcode: { ...createElement('barcode', t).barcode } });
   mk('text', {
-    x: 4, y: 34, w: 30, h: 4, zIndex: 3, text: '¥ {{price}}',
+    x: 4, y: 34, w: 30, h: 4, zIndex: 3, text: '¥ 19.9',
     font: { ...baseFont(), size: 9, bold: true, color: '#c0392b' },
   });
   return t;

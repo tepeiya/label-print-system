@@ -28,6 +28,8 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '打印', icon: 'Promotion', module: 'print', permission: 'print:job:write' } },
       { path: 'ai', component: () => import('@/views/AiGenerate.vue'),
         meta: { title: 'AI 生成模板', icon: 'MagicStick', module: 'ai', permission: 'ai:generate' } },
+      { path: 'ai-models', component: () => import('@/views/AiModels.vue'),
+        meta: { title: 'AI 模型配置', icon: 'Setting', module: 'ai', permission: 'ai:models:manage' } },
       { path: 'datasource', component: () => import('@/views/DataSources.vue'),
         meta: { title: '数据源管理', icon: 'Coin', module: 'datasource', permission: 'datasource:read' } },
       // 库存与出入库：与 backend/src/saas/menu.catalog.ts 的 '/inventory' 对齐。

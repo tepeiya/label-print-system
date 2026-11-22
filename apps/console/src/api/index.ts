@@ -325,6 +325,18 @@ export const auditExportUrl = (params: Record<string, any>) => {
 // 注：后端没有 /ai-template/quota 接口（配额在服务侧直接扣），所以这里不提供 apiAiQuota。
 export const apiAiJobs = (limit = 20) => http.get('/ai-template/jobs', { params: { limit } });
 export const apiAiModels = () => http.get('/ai-template/models');
+export interface AiModelInput {
+  name: string;
+  modelId: string;
+  apiEndpoint: string;
+  provider?: string;
+  apiKey?: string;
+  settings?: Record<string, any>;
+  isDefault?: boolean;
+}
+export const apiCreateAiModel = (data: AiModelInput) => http.post('/ai-template/models', data);
+export const apiTestAiModel = (id: number) => http.post(`/ai-template/models/${id}/test`);
+export const apiDeleteAiModel = (id: number) => http.delete(`/ai-template/models/${id}`);
 export const apiAiGenerate = (form: FormData) =>
   http.post('/ai-template/generate', form, { headers: { 'Content-Type': 'multipart/form-data' } });
 export const apiAiTextToTemplate = (data: { description: string; widthMm?: number; heightMm?: number }) =>
