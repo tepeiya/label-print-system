@@ -9,6 +9,7 @@
 > **前端现状（重要）**
 > - ✅ 主前端：`apps/console`（Vue 3 + TypeScript + Vite + Element Plus + Pinia）租户后台 `:5173`
 > - ✅ 平台运营后台：`apps/platform` `:5181`；Agent/MCP Server：`apps/mcp-server` `:3300`
+> - ✅ WMS 收货作业 PDA（移动端 H5）：`apps/pda` `:5185`（zxing-wasm 摄像头扫码 + 盲收/按单收 + 上架确认，需租户订阅 `wms.inbound`）
 > - ⚠️ `web/`（原生 HTML5）**已弃用（DEPRECATED）**，仅作行为对照，不再新增功能，待新前端完善后删除。
 
 ---
@@ -82,6 +83,7 @@ label-print-system/
 │   ├── console/                    # 租户后台（Vue 3 + Vite + Element Plus + Pinia），:5173
 │   │   └── src/views/designer/     # 原生 Vue 设计器（元素/引擎/检查器）
 │   ├── platform/                   # 平台运营后台，:5181
+│   ├── pda/                        # WMS 收货作业 PDA H5，:5185（zxing-wasm 扫码）
 │   └── mcp-server/                 # Agent/MCP Server，:3300
 ├── web/                            # ⚠️ 已弃用：老版原生 HTML5 前端，仅作对照
 └── tools/labelctl.mjs              # CLI：login/templates/printers/print/commands/jobs
@@ -193,6 +195,7 @@ docker compose up -d
 cd backend && npm i && npm run start:dev          # API :3200
 cd apps/console && pnpm i && pnpm dev             # 租户后台 :5173（推荐）
 cd apps/platform && pnpm i && pnpm dev            # 平台后台 :5181
+cd apps/pda && pnpm i && pnpm dev                 # WMS 收货 PDA H5 :5185（手机同网段访问 http://<IP>:5185）
 # 老版原生前端（⚠️ 已弃用，仅作对照）：node web/serve.mjs 5180
 ```
 
@@ -389,4 +392,4 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 - **模板寻址**：`templates` 表新增 `code` 列（人可读，如 `RECEIPT_LABEL_V1`）+ `(tenant_id, code)` 唯一；阶段一不做多版本，版本用 code 后缀表达。
 - **订阅门**：5 个 WMS 模块以 SQL 种子写入 `modules` 表，**存量租户默认不开通**（需手工 INSERT `tenant_modules` 验证）。
 - **测试**：新增 14 例（上架推荐规则 5 / PrintGateway 5 / 过账决策 4），全量 `npm test` 675 例、0 失败。
-- **诚实边界**：PDA 前端为独立排期项（建议 H5 + 现有 zxing-wasm）；阶段一不做同仓移库位（过账已直接入库到推荐位）、不做策略引擎/波次；未连真库/真机端到端验收；过账为跨服务独立事务（非单一物理事务）。
+- **诚实边界**：PDA 前端已落地独立 H5（`apps/pda` :5185，zxing-wasm 摄像头扫码 + 手动输入兜底，真机摄像头/扫码硬件仍待实机验收）；阶段一不做同仓移库位（过账已直接入库到推荐位）、不做策略引擎/波次；补打标签需 `WMS_SERVICE_TOKEN` 否则 503；过账为跨服务独立事务（非单一物理事务）。

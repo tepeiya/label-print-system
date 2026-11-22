@@ -14,7 +14,8 @@ export default defineConfig({
     port: 5181,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:3200',
+        // 默认 3200；端口被占用时可用 VITE_API_TARGET 覆盖
+        target: process.env.VITE_API_TARGET || 'http://127.0.0.1:3200',
         changeOrigin: true,
       },
     },

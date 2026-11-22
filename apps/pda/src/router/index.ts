@@ -1,0 +1,33 @@
+import { createRouter, createWebHistory } from 'vue-router';
+import { useAuthStore } from '@/store/auth';
+import Login from '@/views/Login.vue';
+import Home from '@/views/Home.vue';
+import ReceiptList from '@/views/ReceiptList.vue';
+import ReceiveScan from '@/views/ReceiveScan.vue';
+import PutawayList from '@/views/PutawayList.vue';
+import PutawayDetail from '@/views/PutawayDetail.vue';
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    { path: '/login', name: 'login', component: Login, meta: { public: true } },
+    { path: '/', name: 'home', component: Home, meta: { title: '收货作业' } },
+    { path: '/receipts', name: 'receipts', component: ReceiptList, meta: { title: '收货单' } },
+    { path: '/receipts/:id/scan', name: 'receive-scan', component: ReceiveScan, meta: { title: '扫码收货' } },
+    { path: '/putaway', name: 'putaway', component: PutawayList, meta: { title: '上架任务' } },
+    { path: '/putaway/:id', name: 'putaway-detail', component: PutawayDetail, meta: { title: '上架确认' } },
+    { path: '/:pathMatch(.*)*', redirect: '/' },
+  ],
+});
+
+router.beforeEach((to) => {
+  const auth = useAuthStore();
+  if (!to.meta.public && !auth.isLoggedIn) {
+    return { path: '/login', query: { redirect: to.fullPath } };
+  }
+  if (to.path === '/login' && auth.isLoggedIn) return { path: '/' };
+  document.title = to.meta.title ? `${to.meta.title} · WMS` : 'WMS 收货作业';
+  return true;
+});
+
+export default router;

@@ -1,0 +1,246 @@
+import axios, { AxiosError, type AxiosRequestConfig, type InternalAxiosRequestConfig } from 'axios';
+
+/**
+ * PDA H5 API 封装 —— 与 console 对齐：
+ * - baseURL /api/v1，Vite 代理到后端
+ * - Bearer token + x-tenant-code 请求头
+ * - 拆 { code, message, data } 信封，非 0 抛 ApiError
+ * - 401 单飞刷新令牌后重放一次
+ */
+const http = axios.create({
+  baseURL: '/api/v1',
+  timeout: 30_000,
+});
+
+export class ApiError extends Error {
+  bizCode?: number;
+  httpStatus?: number;
+  modules?: string[];
+  permissions?: string[];
+  action?: string;
+
+  constructor(
+    message: string,
+    bizCode?: number,
+    httpStatus?: number,
+    modules?: string[],
+    permissions?: string[],
+    action?: string,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+    this.bizCode = bizCode;
+    this.httpStatus = httpStatus;
+    this.modules = modules;
+    this.permissions = permissions;
+    this.action = action;
+  }
+}
+
+let refreshing: Promise<boolean> | null = null;
+
+function describeError(e: ApiError): string {
+  if (e.bizCode === 4031) return '模块未订阅：请联系管理员开通 WMS 收货上架模块';
+  if (e.bizCode === 4032) return '权限不足：请联系管理员分配 WMS 权限';
+  if (e.bizCode === 401) return '登录已失效，请重新登录';
+  return e.message || '操作失败';
+}
+
+export interface ApiEnvelope<T = any> {
+  code: number;
+  message: string;
+  data: T;
+  [k: string]: any;
+}
+
+function isEnvelope(body: any): body is ApiEnvelope {
+  return body && typeof body === 'object' && 'code' in body && 'message' in body;
+}
+
+http.interceptors.request.use((cfg: InternalAxiosRequestConfig) => {
+  const token = localStorage.getItem('labelflow_access');
+  const tenant = localStorage.getItem('labelflow_tenant');
+  if (token) cfg.headers.set('Authorization', `Bearer ${token}`);
+  if (tenant) cfg.headers.set('x-tenant-code', tenant);
+  return cfg;
+});
+
+async function doRefresh(): Promise<boolean> {
+  const refreshToken = localStorage.getItem('labelflow_refresh');
+  if (!refreshToken) return false;
+  try {
+    // 裸 axios：避免递归走拦截器
+    const res = await axios.post<ApiEnvelope>(
+      '/api/v1/auth/refresh',
+      { refreshToken },
+      { baseURL: '', timeout: 15_000 },
+    );
+    const body = res.data;
+    if (isEnvelope(body) && body.code === 0 && body.data?.accessToken) {
+      localStorage.setItem('labelflow_access', body.data.accessToken);
+      if (body.data.refreshToken) localStorage.setItem('labelflow_refresh', body.data.refreshToken);
+      return true;
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
+http.interceptors.response.use(
+  (res) => {
+    const body = res.data;
+    if (!isEnvelope(body)) return body as any;
+    if (body.code === 0) return body.data as any;
+    throw new ApiError(body.message || '操作失败', body.code, res.status, body.modules, body.permissions, body.action);
+  },
+  async (err: AxiosError) => {
+    const cfg = err.config as (InternalAxiosRequestConfig & { __retried?: boolean }) | undefined;
+    const status = err.response?.status;
+    const body = err.response?.data as ApiEnvelope | undefined;
+
+    // 401：尝试刷新令牌并重放一次
+    if (status === 401 && cfg && !cfg.__retried) {
+      refreshing = refreshing || doRefresh();
+      const ok = await refreshing;
+      refreshing = null;
+      if (ok) {
+        cfg.__retried = true;
+        return http(cfg);
+      }
+      localStorage.removeItem('labelflow_access');
+      localStorage.removeItem('labelflow_refresh');
+      localStorage.removeItem('labelflow_tenant');
+      if (location.pathname !== '/login') location.replace('/login');
+      throw new ApiError('登录已失效，请重新登录', 401, 401);
+    }
+
+    const apiErr = new ApiError(
+      body?.message || (status === 403 ? '无权限访问' : status === 404 ? '资源不存在' : err.message || '网络异常'),
+      body?.code ?? status,
+      status,
+      body?.modules,
+      body?.permissions,
+      body?.action,
+    );
+    throw apiErr;
+  },
+);
+
+export function errorMessage(err: unknown): string {
+  if (err instanceof ApiError) return describeError(err);
+  if (err instanceof Error) return err.message;
+  return '操作失败';
+}
+
+export function get<T = any>(url: string, params?: any, config?: AxiosRequestConfig): Promise<T> {
+  return http.get(url, { params, ...config }) as Promise<T>;
+}
+
+export function post<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> {
+  return http.post(url, data, config) as Promise<T>;
+}
+
+// ---------- 认证 ----------
+export interface LoginResult {
+  accessToken: string;
+  refreshToken: string;
+  tenantCode: string;
+}
+
+export const apiLogin = (username: string, password: string, tenantCode?: string) =>
+  post<LoginResult>('/auth/login', { username, password, tenantCode });
+
+export const apiMe = () => get('/auth/me');
+
+// ---------- WMS 阶段一：收货上架 ----------
+export type ReceiptStatus = 'CREATED' | 'RECEIVING' | 'RECEIVED' | 'PUTAWAY_DONE' | 'CANCELLED';
+export type LineStatus = 'PENDING' | 'RECEIVED' | 'PUTAWAY_DONE';
+export type DiffType = 'OVER' | 'SHORT' | 'WRONG_SKU' | null;
+export type TaskStatus = 'CREATED' | 'ASSIGNED' | 'DONE' | 'CANCELLED';
+
+export interface ReceiptLine {
+  id: number;
+  lineNo: number;
+  skuId: string | number;
+  sku?: string;
+  batchNo: string | null;
+  qtyExpected: number;
+  qtyReceived: number;
+  diffType: DiffType;
+  diffQty: number;
+  status: LineStatus;
+}
+
+export interface PutawayTask {
+  id: number;
+  receiptLineId: number;
+  suggestedLocationId: number | null;
+  actualLocationId: number | null;
+  qty: number;
+  status: TaskStatus;
+  recommendReason: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
+export interface Receipt {
+  id: number;
+  receiptNo: string;
+  sourceType: 'MANUAL' | 'EXCEL_IMPORT';
+  sourceNo: string | null;
+  supplierId: number | null;
+  warehouseId: number;
+  status: ReceiptStatus;
+  remark: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lines?: ReceiptLine[];
+  putawayTasks?: PutawayTask[];
+}
+
+export interface ReceiveScanResult {
+  ok: boolean;
+  warning?: string;
+  line: ReceiptLine;
+}
+
+export interface RecommendResult {
+  taskId: number;
+  locationId: number | null;
+  locationCode: string | null;
+  reason: string | null;
+  ruleId?: number;
+  currentSuggestedLocationId: number | null;
+  storedReason: string | null;
+}
+
+export const apiReceiptList = (params: { status?: string; page?: number; pageSize?: number }) =>
+  get<{ items: Receipt[]; total: number; page: number }>('/wms/receipts', params);
+
+export const apiReceiptDetail = (id: number) => get<Receipt>(`/wms/receipts/${id}`);
+
+export const apiReceiveScan = (id: number, body: { sku?: string; batchNo?: string; qty: number; lineId?: number; lineNo?: number; remark?: string }) =>
+  post<ReceiveScanResult>(`/wms/receipts/${id}/receive-scan`, body);
+
+export const apiPostReceipt = (id: number) => post(`/wms/receipts/${id}/post`);
+
+export const apiTaskList = (params: { status?: string; page?: number; pageSize?: number }) =>
+  get<{ items: PutawayTask[]; total: number }>('/wms/putaway-tasks', params);
+
+export const apiTaskRecommend = (id: number) => get<RecommendResult>(`/wms/putaway-tasks/${id}/recommend`);
+
+export const apiTaskConfirm = (id: number, body: { actualLocationId?: number; remark?: string }) =>
+  post(`/wms/putaway-tasks/${id}/confirm`, body);
+
+export const apiReprintLabel = (lineId: number) => post(`/wms/receipts/lines/${lineId}/reprint-label`);
+
+export const apiCreateReceipt = (body: {
+  receiptNo: string;
+  sourceType: 'MANUAL' | 'EXCEL_IMPORT';
+  sourceNo?: string;
+  supplierId?: number;
+  warehouseId: number;
+  remark?: string;
+  lines: { sku: string; batchNo?: string; qtyExpected: number; remark?: string }[];
+}) => post<Receipt>('/wms/receipts', body);
