@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "../dist-it",
+    "rootDir": "..",
+    "sourceMap": false,
+    "noEmitOnError": false
+  },
+  "include": ["../src/**/*", "./wms-phase1-integration.ts", "./wms-compensation-probe.ts"],
+  "exclude": ["../node_modules", "**/__tests__/**"]
+}

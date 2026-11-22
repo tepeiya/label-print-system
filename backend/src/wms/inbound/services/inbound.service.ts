@@ -233,11 +233,29 @@ export class InboundService {
     if (['RECEIVED', 'PUTAWAY_DONE'].includes(r.status)) throw new ConflictException('重复过账被拒绝：收货单已过账');
     if (r.status === 'CANCELLED') throw new BadRequestException('已取消的收货单不能过账');
 
-    const lines = await this.lines.find({ where: { tenantId, receiptId, status: 'PENDING' }, order: { lineNo: 'ASC' } });
+    // 补偿加固：纳入「已 RECEIVED 但仍缺上架任务」的中间态行。
+    // 失败点还原：increaseStock(库存,有幂等键) → 行状态 RECEIVED → tasks.save(无幂等保护) → 打印(旁路)。
+    // 若在 tasks.save 前崩溃，行已是 RECEIVED 却无任务；只查 PENDING 会漏掉该行 → 任务永久丢失、整单卡死。
+    // 以「是否已有上架任务」作为该行过账完成的幂等标志：有则跳过，无则（重）走，靠库存/打印幂等键防重复。
+    const lines = await this.lines.find({
+      where: { tenantId, receiptId, status: In(['PENDING', 'RECEIVED']) },
+      order: { lineNo: 'ASC' },
+    });
     if (!lines.length) throw new BadRequestException('没有待过账的收货行');
+
+    // 预载该单已存在的上架任务，用于幂等跳过已过账行
+    const existingTasks = await this.tasks.find({
+      where: { tenantId, receiptLineId: In(lines.map((l) => Number(l.id))) },
+    });
+    const postedLineIds = new Set(existingTasks.map((t) => Number(t.receiptLineId)));
 
     const results: any[] = [];
     for (const line of lines) {
+      // 已有上架任务 = 该行过账已完成（库存已加、行已 RECEIVED、任务已建），直接跳过，保证重试幂等
+      if (postedLineIds.has(Number(line.id))) {
+        results.push({ lineId: line.id, lineNo: line.lineNo, skipped: 'already_posted' });
+        continue;
+      }
       const qty = Number(line.qtyReceived);
       const sku = await this.materials.findOne({ where: { tenantId, id: Number(line.skuId) } });
       if (!sku) throw new NotFoundException(`物料不存在：${line.skuId}`);
