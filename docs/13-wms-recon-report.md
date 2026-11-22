@@ -354,5 +354,85 @@ APPROVAL_INVALID: 4034, FEATURE_DISABLED: 4035, IDEMPOTENCY_CONFLICT: 4036, RATE
 
 ---
 
-> **下一步**：请确认本报告（尤其 C2、C3 两个阻塞决策，以及 C6/C7 的复用建议）。
-> 确认后进入第 6/8 章，先落地阶段一：`wms_p1_inbound.sql` 迁移 + `print_idempotency`/internal 端点 + WMS 模块骨架 + PrintGateway/InventoryGateway + 8 个 API + 测试。阶段一完成后暂停验收，再进入阶段二。
+---
+
+## 13. 决策确认记录（2026-11-22 已拍板）
+
+| 项 | 决策 |
+|---|---|
+| C2 | **选 A**：模板表加 `code` 列 + `(tenant_id, code)` 唯一；阶段一不做多版本（版本用 code 后缀表达，租户手动切换）；存量回填用迁移脚本：name 转 slug，冲突加序号，兜底 `TMPL_{id}` |
+| C3 | 新建 internal 控制器，复用 agent token 认证；在调用边界注入租户，不改 `createJob` 签名 |
+| C6 | 复用 `Authorization: Bearer lfagent_`，不新造 token 体系 |
+| C7 | 复用 `tool_idempotency`，不新建表（前提见 §14.1 核实结论） |
+| C8 | 路径统一 `/api/v1/wms/...`，文档中的 `/api/wms` 作废 |
+| C1 | 用 SQL 种子 INSERT 到 `modules` 表；WMS 模块对存量租户默认不开通，确保订阅门生效 |
+| C4 | 打印 `variables` 由 WMS 过账服务组装，Gateway 只传输不解析（不过多查主数据） |
+| C5 | 同意简化；**硬规则：过账时库存落点必须确定，禁止无库位库存**；基于现有库位模型二选一（结论见 §14.2） |
+
+---
+
+## 14. 动工前补充勘察（按确认指令要求）
+
+### 14.1 tool_idempotency 实际结构 & C7 前提核实
+
+**文件路径**：`backend/scripts/saas_p5_agent_tools.sql:23` + `backend/src/agent/agent.entity.ts:67`
+
+```sql
+CREATE TABLE tool_idempotency (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
+    agent_client_id BIGINT NOT NULL,
+    tool VARCHAR(60) NOT NULL,
+    idem_key VARCHAR(80) NOT NULL,        -- ← 实际 80，非文档期望的 128
+    args_hash VARCHAR(64) NOT NULL,
+    result JSONB, approval_id BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX uq_tool_idem ON tool_idempotency (tenant_id, tool, idem_key);
+```
+
+**核实结论**：
+- ✅ **key 长度够用**：打印幂等键样例 `GRN:20261122:0001:L1` = 20 字符，补打键 `GRN:{no}:{line}:reprint:{n}` 通常 < 60，均在 80 以内。为对齐契约并留余量，迁移脚本加一条 `ALTER ... TYPE VARCHAR(128)`（扩列，不新建表）。
+- ✅ **"tool 强绑定"不是障碍，反而是解**：唯一键第三维 `tool` 恰好用来区分 PRINT/TOOL——打印调用固定传 `tool='print.createJob'`，Agent 工具调用传工具名，天然隔离，无需新增 `type` 字段。
+- ✅ **无需新建 `print_idempotency` 表**，TTL 清理（`maintenance.service.ts::cleanupIdempotency`，30 天）直接覆盖。
+
+### 14.2 C5 库存落点二选一结论
+
+**依据**（`inventory.service.ts`）：
+- `adjustStock(..., location_id)`：入库时若带 `location_id`，事务内更新批次 `locationId`（L1339 `if (delta > 0 && locationId != null) patch.locationId = locationId`）。
+- `transferStock`：L1419 `if (from.id === to.id) throw '调拨的出入仓库不能相同'` —— **禁止同仓调拨**。
+- `resolveStockLocation`：请求位 > 产品默认 > 分组默认 > 系统首个启用仓库位。
+
+**结论：选"过账时算出推荐位直接入库"**。理由：现有模型无暂存位、`transferStock` 禁止同仓，"先入暂存位再 transfer"路径在本仓库不成立。落地为：`post` 时先按 `wms_putaway_rules` 算出 `suggestedLocationId`（无规则则取仓库首个启用库位），以该库位调用 `InventoryGateway.increaseStock(locationId=推荐位)` 一步入库，库存落点当场确定，杜绝"无库位库存"。上架确认时若操作员改库位，阶段一记录 `suggestedLocationId` 与 `actualLocationId` 差异并写审计，库位调整暂不做同仓移库（列入阶段二，因需扩展 inventory 同仓移库位能力）。已写入验收文档。
+
+### 14.3 C3 租户注入隐藏陷阱（重要）
+
+`withTenantScope(tenantId, fn)` 只在它自己新建的 queryRunner 上 `set_config('app.tenant_id',...,true)`，而 `PrintService.createJob` 用的是 `@InjectRepository` 注入的 Repository（另一条连接）+ `useTenantId()`（读 AsyncLocalStorage）。**只包 withTenantScope 会导致 createJob 里 `useTenantId()` 抛"未初始化租户上下文"**。
+
+**正确做法（双层包裹）**：
+```ts
+const result = await tenantStorage.run(buildTenantCtx(ctx), () =>
+  this.tenantDS.withTenantScope(ctx.tenantId, (scope) =>
+    this.print.createJob(dto)   // createJob 读 ALS；GUC 由 withTenantScope 兜底
+  )
+);
+```
+已在实现中采用，写入验收文档。
+
+### 14.4 PDA 端形态评估（应确认指令要求）
+
+**结论：阶段一 PDA 端采用「移动浏览器 H5」**，理由与工作量评估见下。
+
+| 维度 | 评估 |
+|---|---|
+| 现状 | 仓库无移动端工程、无扫码硬件封装（§10）。桌面 Vue3 齐备，`zxing-wasm` 可直接用于 H5 扫码 |
+| H5 方案（推荐） | 在 `apps/console` 新增 wms 移动端路由/视图，复用现有 API 封装 + zxing-wasm 摄像头扫码；无需新建工程、无需应用商店 |
+| 原生/小程序 | 需新建工程 + 摄像头原生插件 + 独立发布流程，验证闭环成本高，阶段一不建议 |
+| 工作量 | 后端 6 项（迁移/internal/骨架/2 Gateway/8 API/测试）约为主体；PDA H5 最小闭环（扫码收货+上架确认+补打）单独评估约 2–3 人日 |
+
+**范围界定**：你给出的阶段一交付清单为「迁移 + internal 端点 + WMS 骨架 + 两个 Gateway + 8 个 API + 测试」，**不含前端**。故本轮阶段一聚焦后端闭环并以 API 可测为验收口径；**PDA H5 列出为独立排期项**，待后端验收通过后启动。如你希望本轮一并把 H5 做进来，请告知，我会追加。
+
+---
+
+> **下一步**：按 §13 决策 + §14 补充勘察进入阶段一实现（迁移 + internal 端点 + WMS 骨架 + 两个 Gateway + 8 个 API + 测试）。阶段一完成后暂停验收，再进入阶段二。PDA H5 为独立排期项。
+
