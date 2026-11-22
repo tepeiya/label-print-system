@@ -228,3 +228,63 @@ POST /api/v1/internal/print-jobs
 
 - **回填可用性细节（如实记录）**：纯中文名 `收货 标签 V1` 经 `[a-z0-9]` slug 化后只剩尾部 ASCII 片段 `v1`，业务语义弱（但未违反唯一性、不报错）。这是 C2 既定 slug 算法的特性；若需中文名可读 code，属后续增强，阶段一不扩范围。
 - **部署提醒（不可省）**：`wms_p1_inbound.sql` 建表后**必须重跑 `saas_p6_rls.sql`**，否则新表不挂策略。验收报告 §5 已列此步骤，本节用真库证实其必要性。
+
+---
+
+## 9. 测试分层加固：纯函数层 + 真 PG 集成层（2026-11-22 补充）
+
+> 应验收意见「不是重写，是加一层」：保留 14 例纯函数测试作开发快速反馈，另建 **jest + ts-jest 真 PG 集成测试层**作验收证据。两层职责不同、并存互补，非替代关系。
+
+### 9.1 为什么分两层
+
+| 层 | 框架 | 测什么 | 覆盖 | 依赖 |
+|---|---|---|---|---|
+| **纯函数层** | node:test + tsx | 决策逻辑：幂等键拼装/差异计算/库位校验/推荐排序 | `src/wms/__tests__/*.test.ts`（14 例） | 无，跑得快 |
+| **真 PG 集成层** | jest + ts-jest | 只有真库能验证：RLS 隔离、过账状态机/幂等、Gateway 降级、订阅门 | `test/integration/*.int.test.ts`（5 验收门 + 1 探针） | 真实 PostgreSQL |
+
+纯函数层测不了的四类行为（RLS 跨租户、过账事务后果、并发幂等、Gateway 真实降级）由集成层补齐——这些正是阶段二 `wms.issuing` 重度依赖的同一套 Gateway，地基先验过再盖楼。
+
+### 9.2 硬坑解决（方案 A：jest + ts-jest）
+
+- **根因**：`tsx`/esbuild 不 emit `decorator metadata`，一 import 真实 entity 即报 `ColumnTypeUndefinedError`——这是上一轮集成测试降级为纯函数的真实原因（非偷懒）。
+- **解法**：集成层用 `jest@29 + ts-jest@29`（走完整 tsc 编译，`emitDecoratorMetadata=true`），与现有 node:test 纯函数层互不干扰；`reflect-metadata` 显式装到顶层供 jest 进程加载。
+- **前置探针**：`test/integration/metadata-probe.int.test.ts` import 真实 `WmsReceipt`/`Material` 等 entity 并 `DataSource.initialize()` + 读列元数据，**通过**即证明方案成立（已通过）。**不改任何现有 entity**（未采用"补显式 type"方案）。
+
+### 9.3 5 条验收门（真 PG，全部通过）
+
+库由 `scripts/wms-test-db-bootstrap.sh` 初始化（完整 schema + 基础种子 + WMS 迁移 + RLS；租户 A=901 开通 `wms.inbound`、B=902 不开通）。mock 仅打印/库存 Gateway 可控成功/失败，其余为真实 Service/repo/Guard。
+
+| 用例 | 验收点 | 结果 |
+|---|---|---|
+| T1 跨租户隔离 + RLS | A 建单 B 查不到（应用层 404 + 列表不可见）；直连 SQL 查 4 张 WMS 表 `relrowsecurity=t` 且挂 `tenant_isolation` | ✅ PASS |
+| T2 重复过账拒绝 | 同单过账 2 次，第 2 次抛「重复过账」；库存 Gateway 仅调用 1 次（不翻倍） | ✅ PASS |
+| T3 打印降级 | 打印抛 500/超时 → 过账仍 RECEIVED、行状态一致、审计 `wms.print.call` 记 `failed`；补打用新 `:reprint:` 键、source=`reprint` | ✅ PASS |
+| T4 过账中途失败 | 库存 Gateway（第一步）抛错 → 单据仍 RECEIVING、行仍 PENDING、任务数 0（无脏数据）；恢复后重试成功 | ✅ PASS |
+| T5 订阅门 | 真实查库：A 已开通/B 未开通；`ModuleGuard` 拦 B（4031）、放行 A | ✅ PASS |
+
+- **T4 的语义结论**：库存变更位于过账第一步，失败后行状态/任务均未落库（无脏数据），且靠 §8.3 的幂等重试兜底可恢复——这从集成层实证了「非单一事务 + 向最终一致收敛」的补偿语义是成立的。
+- **全链路①**（建单→扫码→过账→打印→上架 UI 端到端）按约定留 PDA H5 就绪后补；后端各环节已分别真实验证。
+
+### 9.4 可复现命令
+
+```bash
+# 1) 起测试 PG（宿主 5434，独立于开发 compose 的 5433）
+docker run -d --name wms-it-pg -e POSTGRES_PASSWORD=labelflow -e POSTGRES_USER=labelflow \
+  -e POSTGRES_DB=labelflow -p 5434:5432 postgres:16-alpine
+
+# 2) 灌库（完整 schema + 种子 + WMS 迁移 + RLS + 测试数据）
+cd backend && bash scripts/wms-test-db-bootstrap.sh wms-it-pg
+
+# 3) 跑集成层（5 验收门 + 1 探针）
+DB_HOST=127.0.0.1 DB_PORT=5434 DB_NAME=labelflow DB_USER=labelflow DB_PASS=labelflow pnpm test:integration
+
+# 4) 跑纯函数层（14 WMS 例含在全量 675 例内，不受集成层影响）
+npm test
+```
+
+### 9.5 本层验证结果汇总
+
+- 集成层：`pnpm test:integration` → **6 PASS / 0 FAIL**（5 验收门 + 1 metadata 探针）。
+- 纯函数层：`npm test` → **675 tests / 668 pass / 0 fail / 7 skip**（WMS 14 例全绿），与加层前一致、无回归。
+- 后端 typecheck：0 error。
+- **结论**：阶段一现有「纯函数反馈层 + 真 PG 验收层」双保险，5 条验收门覆盖阶段二依赖的全部 Gateway 行为，可作为进入阶段二的前置条件。
