@@ -20,6 +20,8 @@ import { PromptsService } from './prompts.service';
 import { PromptsController } from './prompts.controller';
 import { AgentsController } from './agents.controller';
 import { AgentV1Controller } from './agent-v1.controller';
+import { InternalPrintService } from './internal-print.service';
+import { InternalPrintController } from './internal-print.controller';
 import { InventoryModule } from '../inventory/inventory.module';
 import { SaasModule } from '../saas/saas.module';
 import { BillingModule } from '../billing/billing.module';
@@ -42,8 +44,9 @@ import { JobsModule } from '../jobs/jobs.module';
   providers: [
     AgentService, AgentTokenGuard, ToolsService,
     ApprovalService, IdempotencyService, AgentRateService, PromptsService,
+    InternalPrintService,
   ],
-  controllers: [AgentsController, AgentV1Controller, PromptsController],
-  exports: [AgentService, PromptsService],
+  controllers: [AgentsController, AgentV1Controller, PromptsController, InternalPrintController],
+  exports: [AgentService, PromptsService, IdempotencyService],
 })
 export class AgentModule {}

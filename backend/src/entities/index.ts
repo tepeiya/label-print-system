@@ -23,3 +23,5 @@ export { PrintTrigger, TriggerDelivery } from '../jobs/trigger.entity';
 export { GovernanceSetting, TemplateGovernance, TemplateReview, PrintDedupe } from '../governance/governance.entity';
 // P8.5 硬件层（DDL: scripts/saas_p8_hardware.sql）
 export { HardwareAgent, HardwareAgentJob, RfidWriteLog } from '../hardware/hardware.entity';
+// WMS 阶段一（DDL: scripts/wms_p1_inbound.sql）
+export { WmsReceipt, WmsReceiptLine, WmsPutawayTask, WmsPutawayRule } from '../wms/inbound/entities/wms.entity';

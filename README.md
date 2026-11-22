@@ -366,3 +366,26 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 - **纯函数判定层**：`jobs/ingest.calc.ts` 的 `normalizeIngest`（验签/事件源白名单/租户隔离/payload 边界/幂等键），零依赖可测；复用 `trigger.calc.ts` 的 HMAC 真源与指纹。
 - **安全护栏**：租户只从 Agent Token 解析（请求体 `tenantId` 一律忽略并告警）；触发打印需 `print:job:write` scope；`guardLoop` 不拦外部事件源（避免误判为「打印事件→再打印」）；入站写审计 `agent.event.ingest`。
 - **诚实边界**：HMAC 验签默认关闭（未配 `INGEST_HMAC_SECRET` 时仅 Agent Token 鉴权，响应 warnings 显式标注）；真实签名事件驱动真机打印的端到端验收需真库/真机，沙盒仅以纯函数探针验证到规则命中层。
+
+---
+
+## 9. WMS 模块（2026-11-22，阶段一 wms.inbound 已实施）
+
+> 按「方向 A」集成：打印系统保持独立产品线，WMS 通过**内部 HTTP 契约**调用打印能力，以模块订阅（`wms.inbound` 等）售卖。勘察报告 `docs/13-wms-recon-report.md`，阶段一验收 `docs/14-wms-phase1-acceptance.md`。
+
+**核心边界**：WMS 不 import `src/print/**` 或 `src/inventory/**` 内部实现——打印只经 `PrintGateway` → `POST /api/v1/internal/print-jobs`（Bearer service token + `print:job:write` scope），库存只经 `InventoryGateway` 包装 `InventoryService`。租户由 token 注入（请求体 `tenantId` 一律忽略并告警），模板按 `templateCode` 寻址，打印/库存变更均带幂等键（复用 `tool_idempotency`，30 天 TTL 清理）。
+
+| 模块编码 | 名称 | 阶段 |
+| --- | --- | --- |
+| `wms.inbound` | 收货与上架 | **阶段一（本轮已实施）** |
+| `wms.issuing` | 工单发料与齐套 | 阶段二 |
+| `wms.trace` / `wms.outbound` | 追溯 / 成品发运 | 阶段三 |
+| `wms.connector` | ERP/MES 连接器 | 阶段二起单独定价 |
+
+**阶段一 API**（`/api/v1/wms/...`，全部挂 `@RequireModule('wms.inbound')` 订阅门）：建单 / Excel 导入 / 列表 / 详情 / 追加行 / PDA 扫码收货 / 收货过账 / 上架任务列表 / 推荐库位 / 确认上架 / 补打标签。过账编排：更行状态 → `InventoryGateway` 入库（落推荐库位，杜绝无库位库存）→ 生成上架任务 → `PrintGateway` 打印（失败不阻塞、记 failed 审计、可补打）。
+
+- **新增文件**：`backend/src/wms/**`（模块骨架 + 两个 Gateway + inbound 服务/控制器/DTO/实体 + 上架推荐与过账决策纯函数）、`backend/src/agent/internal-print.*`（打印侧内部端点）、`backend/scripts/wms_p1_inbound.sql`（迁移）。
+- **模板寻址**：`templates` 表新增 `code` 列（人可读，如 `RECEIPT_LABEL_V1`）+ `(tenant_id, code)` 唯一；阶段一不做多版本，版本用 code 后缀表达。
+- **订阅门**：5 个 WMS 模块以 SQL 种子写入 `modules` 表，**存量租户默认不开通**（需手工 INSERT `tenant_modules` 验证）。
+- **测试**：新增 14 例（上架推荐规则 5 / PrintGateway 5 / 过账决策 4），全量 `npm test` 675 例、0 失败。
+- **诚实边界**：PDA 前端为独立排期项（建议 H5 + 现有 zxing-wasm）；阶段一不做同仓移库位（过账已直接入库到推荐位）、不做策略引擎/波次；未连真库/真机端到端验收；过账为跨服务独立事务（非单一物理事务）。
