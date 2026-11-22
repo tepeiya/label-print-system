@@ -29,7 +29,8 @@
 
 ### 其他选型（以实际代码为准）
 
-- **包管理**：后端 `npm`（`package-lock.json`，同时保留 `pnpm-lock.yaml`）；前端各 `apps/*` 用 **pnpm**（`pnpm-lock.yaml`）。
+- **包管理**：统一用 **pnpm**。后端 `backend/`、前端 `apps/console`、`apps/platform` 均用 pnpm（`pnpm-lock.yaml`）；`apps/mcp-server` 仍保留 npm（`package-lock.json`，历史遗留，后续可择机迁移）。
+  - 后端已于 2026-11-22 移除历史 `backend/package-lock.json`（与 `pnpm-lock.yaml` 并存会导致 CI/新同事装依赖时依赖集不一致——后者含 jest 集成测试依赖、前者不含）。后端装依赖一律 `cd backend && pnpm install`，校验用 `pnpm install --frozen-lockfile`。
 - **数据库**：PostgreSQL 16（`pgvector/pgvector:pg16`，模板 / 业务扩展存 `JSONB` + GIN 索引）；**Redis 7** 用于号段缓存、BullMQ 队列、租户配置缓存。
 - **ORM**：TypeORM（`synchronize: false`，全部建表 / 改列走 `backend/scripts/*.sql` 手工执行）。
 - **渲染 / 识别**：服务端 `sharp`（位图）、`pdf-lib`（矢量 PDF / 精确分页）、`@bwip-js/node`（条码二维码，含 GS1 / DataMatrix / PDF417 / Aztec）、`zxing-wasm` + `@zxing/library`（解码校验）、`tesseract.js`（OCR）、`xlsx`（数据导入）。
