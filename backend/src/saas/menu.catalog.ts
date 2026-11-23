@@ -66,10 +66,21 @@ export const MENU_CATALOG: MenuNode[] = [
       { key: 'bom', name: 'BOM 齐套率', icon: 'Connection', path: '/bom', module: 'bom', permission: 'bom:kit:read' },
     ],
   },
-  // AI 工作台：BASIC 也含 ai 模块（历史种子，见 docs/10 §10.15.5 第 1 条），入口权限点用 ai:generate
-  { key: 'ai', name: 'AI 生成模板', icon: 'MagicStick', path: '/ai', module: 'ai', permission: 'ai:generate' },
-  // AI 模型配置：供应商/Key/模型由租户自己维护（ai_model_configs 按 tenant_id 隔离）
-  { key: 'ai-models', name: 'AI 模型配置', icon: 'Setting', path: '/ai-models', module: 'ai', permission: 'ai:models:manage' },
+  // AI 工作台：BASIC 也含 ai 模块（历史种子，见 docs/10 §10.15.5 第 1 条）。
+  // 生成与模型配置统一收进这个根菜单，叶子各自再判权限点：
+  //   ai        —— 入口权限 ai:generate
+  //   ai-models —— 供应商/Key/模型由租户自己维护（ai_model_configs 按 tenant_id 隔离）
+  // 分组自身不参与可见性判断：两个叶子都无权时整组消失。
+  {
+    key: 'ai-hub',
+    name: 'AI 工作台',
+    icon: 'MagicStick',
+    module: 'ai',
+    children: [
+      { key: 'ai', name: 'AI 生成模板', icon: 'MagicStick', path: '/ai', module: 'ai', permission: 'ai:generate' },
+      { key: 'ai-models', name: 'AI 模型配置', icon: 'Setting', path: '/ai-models', module: 'ai', permission: 'ai:models:manage' },
+    ],
+  },
   // 注：serial 模块已订阅且后端有 @RequireModule('serial')，但 serial-sequences 只有
   // segment-preview 一个接口（CRUD 未实现），没有可落地的列表页 → P1 先不进菜单，
   // 等 P2 补 CRUD 时再加 /serial 条目，避免前端出现点了 404 的入口。

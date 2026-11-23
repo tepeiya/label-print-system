@@ -32,16 +32,23 @@ test('模块订阅 + 权限点都齐时，返回完整菜单', () => {
   assert.deepEqual(childKeys(tree, 'system'), ['users', 'audit', 'backups']);
 });
 
-test('AI 入口：订阅 ai 且有 ai:generate 才出现；只有模块没有权限点也不给入口', () => {
+test('AI 工作台分组：订阅 ai 且有 ai:generate 时出现「AI 生成模板」叶子', () => {
   const both = buildMenus(['ai'], ['ai:generate']);
-  assert.ok(keys(both).includes('ai'));
-  assert.equal(childKeys(both, 'ai').length, 0, 'AI 是叶子节点，不该带 children');
+  assert.deepEqual(keys(both), ['ai-hub', 'subscription']);
+  assert.deepEqual(childKeys(both, 'ai-hub'), ['ai']);
+  assert.equal(both.find((n) => n.key === 'ai-hub')?.children?.[0].path, '/ai');
 
   const moduleOnly = buildMenus(['ai'], ['template:read']);
-  assert.ok(!keys(moduleOnly).includes('ai'));
+  assert.ok(!keys(moduleOnly).includes('ai-hub'), '无任何 AI 权限点时整组消失');
 
   const permOnly = buildMenus(['print'], ['ai:generate']);
-  assert.ok(!keys(permOnly).includes('ai'), '未订阅 ai 模块时，有权限点也不该出现入口');
+  assert.ok(!keys(permOnly).includes('ai-hub'), '未订阅 ai 模块时，有权限点也不该出现分组');
+});
+
+test('AI 工作台分组：只有 ai:models:manage 时只出现「AI 模型配置」', () => {
+  const tree = buildMenus(['ai'], ['ai:models:manage']);
+  assert.deepEqual(childKeys(tree, 'ai-hub'), ['ai-models']);
+  assert.equal(tree.find((n) => n.key === 'ai-hub')?.children?.[0].path, '/ai-models');
 });
 
 test('只订阅 print + print:job:read 时，设计器和模板库不可见，数据源/系统管理整组消失', () => {
