@@ -47,9 +47,9 @@
       <span class="db-field-tag" :title="dbFieldTip">{{ dbFieldLabel }}</span>
     </div>
 
-    <!-- 图片 -->
+    <!-- 图片：src 支持 {{变量}}，设计态用变量示例值预览 -->
     <template v-else-if="el.type === 'image'">
-      <img v-if="el.src" class="el-img" :src="el.src" alt="" draggable="false">
+      <img v-if="imgSrc" class="el-img" :src="imgSrc" alt="" draggable="false">
       <div v-else class="img-ph">🖼<span>未设置图片<br>右侧属性面板粘贴 data URL</span></div>
     </template>
 
@@ -122,6 +122,9 @@ const props = defineProps<{
   ctx: RenderContext;
 }>();
 
+/** 图片地址按数据上下文解析：绑定变量后画布仍显示示例图，不会裂图 */
+const imgSrc = computed(() => interpolate(props.el.src ?? '', props.ctx));
+
 /** 盒子 + 类型外观合并成一份 style（原生版是分两条语句写 DOM，这里等价） */
 const rootStyle = computed<CSSProperties>(() => {
   const el = props.el;
@@ -132,7 +135,7 @@ const rootStyle = computed<CSSProperties>(() => {
     case 'ellipse': return { ...base, ...ellipseStyle(el, z) };
     case 'table': return { ...base, ...tableStyle(el, z) };
     case 'barcode': return { ...base, ...barcodeStyle(el) };
-    case 'image': return el.src ? base : {
+    case 'image': return imgSrc.value ? base : {
       ...base,
       display: 'flex',
       alignItems: 'center',

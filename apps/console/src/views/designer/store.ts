@@ -9,9 +9,21 @@ import { defineStore } from 'pinia';
 import { clamp, deepClone, r2, uid } from './engine/util';
 import { defaultTemplate, demoTemplate } from './model';
 import { unionBBox, type Box } from './engine/geometry';
+import {
+  isValidVariableName, planElementVariable, renamePlaceholdersInElement,
+} from './engine/element-variable';
 import type {
   ElementData, Guide, PageSpec, TemplateData, VariableSpec,
 } from './types';
+
+/** 「元素 → 变量」结果：UI 只负责把 reason / name 翻译成人话 */
+export interface ElementVariableOutcome {
+  ok: boolean;
+  reason?: string;
+  name?: string;
+  created?: boolean;
+  slot?: string;
+}
 
 const HISTORY_LIMIT = 80;
 export const AUTOSAVE_KEY = 'labelflow.autosave.v1';
@@ -392,6 +404,60 @@ export const useDesignerStore = defineStore('designer', {
 
     removeVariable(name: string) {
       this.tx((t) => { t.variables = (t.variables ?? []).filter((v) => v.name !== name); });
+    },
+
+    /**
+     * 一键把选中元素的内容变成变量：建变量（同名则复用）→ 内容改 {{变量名}} → 图层名对齐。
+     * 一次历史快照，撤销可整体回退。
+     */
+    createVariableFromElement(id?: string): ElementVariableOutcome {
+      const ids = id ? [id] : this.selectedIds;
+      if (ids.length !== 1) {
+        return { ok: false, reason: ids.length ? '请只选中一个元素' : '请先选中一个元素' };
+      }
+      const target = this.template.elements.find((e) => e.id === ids[0]);
+      if (!target) return { ok: false, reason: '元素不存在' };
+
+      if (!Array.isArray(this.template.variables)) this.template.variables = [];
+      const plan = planElementVariable(target, this.template.variables.map((v) => v.name));
+      if (!plan.ok) return plan;
+
+      const before = this.snapshot();
+      const existingVar = this.template.variables.find((v) => v.name === plan.name);
+      const created = !existingVar;
+      if (!existingVar) {
+        // 示例值沿用元素原内容，设计预览和无数据打印都不会「变空」
+        this.template.variables.push({
+          name: plan.name,
+          type: 'text',
+          label: plan.name,
+          defaultValue: plan.sample,
+        });
+      } else if (!existingVar.expr && !existingVar.defaultValue && plan.sample) {
+        // 复用已有变量时只补空示例值，不覆盖用户已配置的内容
+        existingVar.defaultValue = plan.sample;
+      }
+      plan.apply(target);
+      target.name = plan.name;
+      this.commitSnapshot(before);
+      return { ok: true, name: plan.name, created, slot: plan.slot };
+    },
+
+    /** 变量改名：同步所有元素里的 {{旧名}} 占位与同名图层，避免占位失效 */
+    renameVariable(from: string, to: string): boolean {
+      const next = String(to ?? '').trim();
+      if (!from || from === next) return false;
+      if (!isValidVariableName(next)) return false;
+      if (!Array.isArray(this.template.variables)) return false;
+      if (this.template.variables.some((v) => v.name === next)) return false;
+      const v = this.template.variables.find((x) => x.name === from);
+      if (!v) return false;
+
+      const before = this.snapshot();
+      v.name = next;
+      for (const el of this.template.elements) renamePlaceholdersInElement(el, from, next);
+      this.commitSnapshot(before);
+      return true;
     },
 
     guides(): Guide[] {

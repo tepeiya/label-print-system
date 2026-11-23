@@ -527,6 +527,24 @@
 }
 .insp-id { flex: 1 1 auto; font-size: 11px; color: #94a3b8; font-family: ui-monospace, Consolas, monospace; }
 
+/* 一键设为变量：按钮 + 结果预演 */
+.insp-bind {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 10px;
+  background: var(--d-accent-soft);
+  border: 1px solid var(--d-line);
+  border-radius: 10px;
+}
+.insp-bind .bind-hint {
+  font-size: 11px;
+  line-height: 1.55;
+  color: #6b7a90;
+  word-break: break-all;
+}
+.insp-bind .bind-hint.is-warn { color: #b45309; }
+
 /* ------------------------------ 表单控件 ------------------------------ */
 .f-group {
   display: flex;

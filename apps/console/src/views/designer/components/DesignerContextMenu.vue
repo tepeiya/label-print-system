@@ -30,12 +30,15 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useDesignerStore } from '../store';
 import { TYPE_LABELS } from '../model';
+import { planElementVariable } from '../engine/element-variable';
+import { useElementVariable } from '../useElementVariable';
 import { closeContextMenu, contextMenuOpen, contextMenuPayload } from '../contextMenuState';
 import type { ElementType } from '../types';
 
 const emit = defineEmits<{ edit: []; properties: [] }>();
 
 const store = useDesignerStore();
+const { makeVariableFromElement } = useElementVariable();
 const menuRef = ref<HTMLElement | null>(null);
 
 interface MenuItem {
@@ -97,6 +100,17 @@ const items = computed<MenuItem[]>(() => {
       list.push({ key: 'edit', label: '编辑文字', icon: '✎', hint: '双击/Enter', disabled: !!one.locked, action: () => emit('edit') });
     }
     list.push({ key: 'props', label: `设置「${TYPE_LABELS[one.type] || one.type}」属性`, icon: '⚙', action: () => emit('properties') });
+
+    // 一键设为变量：内容 → {{变量名}}，原内容存为示例值
+    const plan = planElementVariable(one, store.variables.map((v) => v.name));
+    list.push({
+      key: 'toVar',
+      label: '一键设为变量',
+      icon: '𝑥',
+      hint: plan.ok ? plan.name : (plan.reason?.includes('占位') ? '已含占位' : '不可用'),
+      disabled: !plan.ok,
+      action: () => makeVariableFromElement(one.id),
+    });
   } else {
     list.push({ key: 'props', label: `批量设置 ${targets.length} 个元素`, icon: '⚙', action: () => emit('properties') });
   }

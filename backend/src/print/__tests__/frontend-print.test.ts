@@ -63,6 +63,14 @@ test('未旋转的条码/二维码：不输出 transform（无副作用）', () 
   assert.ok(!html.includes('rotate('), '未旋转不应出现 rotate');
 });
 
+test('图片元素：src 支持 {{变量}} 插值（一键设为变量后预览/浏览器打印不裂图）', () => {
+  const html = buildPrintHtml(tpl([
+    { id: 'img', type: 'image', x: 1, y: 1, w: 10, h: 10, src: '{{商品图}}' },
+  ]), [{ 商品图: 'https://cdn.example.com/a.png' }]);
+  assert.ok(html.includes('src="https://cdn.example.com/a.png"'), '应替换为数据行里的图片地址');
+  assert.ok(!html.includes('{{商品图}}'), '占位符不应残留');
+});
+
 // ------------------------------ 前端双面 ------------------------------
 test('前端 duplex=false：无 label-back、无 scaleX', () => {
   const html = buildPrintHtml(tpl([{ id: 't', type: 'text', x: 1, y: 1, w: 20, h: 6, text: 'A' }]), [{}]);

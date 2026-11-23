@@ -142,8 +142,10 @@ function printElement(el: ElementData, ctx: RenderContext): string {
         <div style="${printFontCss(el.font)}width:100%;white-space:${el.font?.wrap === false ? 'nowrap' : 'pre-wrap'};text-align:${align};">${escapeHtml(val)}</div></div>`;
     }
     case 'image': {
-      if (!el.src) return '';
-      return `<div style="${st}"><img src="${escapeHtml(el.src)}" style="width:100%;height:100%;object-fit:contain;display:block" /></div>`;
+      // src 支持 {{变量}}：设计器一键设为变量后，本地预览/浏览器打印也能取到数据行里的图片地址
+      const src = interpolate(el.src ?? '', ctx);
+      if (!src) return '';
+      return `<div style="${st}"><img src="${escapeHtml(src)}" style="width:100%;height:100%;object-fit:contain;display:block" /></div>`;
     }
     case 'barcode': {
       const content = interpolate(el.barcode?.content ?? '', ctx);

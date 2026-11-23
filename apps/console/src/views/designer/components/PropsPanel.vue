@@ -50,6 +50,12 @@
         <FBtn kind="danger" @click="store.removeElements()">删除</FBtn>
       </div>
 
+      <!-- 一键把当前内容变成变量占位，原内容存为示例值 -->
+      <div class="insp-bind">
+        <FBtn kind="primary" :disabled="!bindPlan?.ok" @click="makeVariable">一键设为变量</FBtn>
+        <div class="bind-hint" :class="{ 'is-warn': bindPlan && !bindPlan.ok }">{{ bindHint }}</div>
+      </div>
+
       <FGroup title="位置与尺寸" collapsible store-key="pos">
         <FRow>
           <FField label="X (mm)"><FNum :model-value="r2v(el!.x)" :step="0.5" @update:model-value="set({ x: r2v($event) })" /></FField>
@@ -390,6 +396,8 @@ import {
 } from '../engine/context';
 
 import { barcodeNaturalWidth, validateBarcodeText } from '../engine/barcode';
+import { planElementVariable } from '../engine/element-variable';
+import { useElementVariable } from '../useElementVariable';
 import { r2 } from '../engine/util';
 import type { BarcodeSpec, ElementData, QrcodeSpec } from '../types';
 import FArea from './fields/FArea.vue';
@@ -416,6 +424,19 @@ const ROT_OPTIONS: Array<[number, string]> = [[0, '0°'], [90, '90°'], [180, '1
 
 const sel = computed(() => store.selectedElements);
 const el = computed(() => (sel.value.length === 1 ? sel.value[0] : undefined));
+
+// 一键设为变量：按钮提示直接预演结果（变量名 / 绑定位置 / 不能绑的原因）
+const bindPlan = computed(() => (el.value ? planElementVariable(el.value, store.variables.map((v) => v.name)) : null));
+const bindHint = computed(() => {
+  const p = bindPlan.value;
+  if (!p) return '';
+  if (!p.ok) return p.reason;
+  return `将生成 {{${p.name}}}${p.slot ? `（${p.slot}）` : ''}，示例值取当前内容`;
+});
+const { makeVariableFromElement } = useElementVariable();
+function makeVariable() {
+  if (el.value) makeVariableFromElement(el.value.id);
+}
 
 const bc = computed<BarcodeSpec | undefined>(() => el.value?.barcode);
 const qr = computed<QrcodeSpec | undefined>(() => el.value?.qrcode);

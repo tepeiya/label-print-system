@@ -4,7 +4,13 @@
 
     <div v-for="v in vars" :key="v.name" class="var-card">
       <div class="var-row">
-        <FText :model-value="v.name" @update:model-value="rename(v, $event)" />
+        <FText
+          lazy
+          :model-value="v.name"
+          placeholder="变量名"
+          title="回车或点空白处确认改名"
+          @update:model-value="rename(v, $event)"
+        />
         <FText :model-value="v.label ?? ''" placeholder="显示名" @update:model-value="patch(v, { label: $event })" />
         <FBtn kind="danger" @click="removeVar(v)">✕</FBtn>
       </div>
@@ -91,7 +97,12 @@ function rename(v: VariableSpec, next: string) {
     ElMessage.error('变量已存在');
     return;
   }
-  patch(v, { name: nn });
+  // 改名要同步元素里的 {{旧名}}，否则占位会变空
+  if (!store.renameVariable(v.name, nn)) {
+    ElMessage.error('改名失败，请重试');
+    return;
+  }
+  ElMessage.success(`已改名为「${nn}」，模板占位已同步`);
 }
 
 function removeVar(v: VariableSpec) {
