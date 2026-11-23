@@ -73,6 +73,19 @@ export class Material {
   @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
 }
 
+/** 物料多 GTIN（单品/中包/托盘）。DDL: scripts/wms_u5_material_gtins.sql */
+@Entity('material_gtins')
+@Index('ix_material_gtins_material', ['tenantId', 'materialId'])
+export class MaterialGtin {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ name: 'tenant_id', type: 'bigint' }) tenantId: number;
+  @Column({ name: 'material_id', type: 'bigint' }) materialId: number;
+  @Column({ length: 14, type: 'varchar' }) gtin: string;
+  @Column({ name: 'pack_level', type: 'varchar', length: 8, default: 'UNIT' }) packLevel: 'UNIT' | 'CARTON' | 'PALLET';
+  @Column({ name: 'is_primary', default: false }) isPrimary: boolean;
+  @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
+}
+
 /**
  * 产品自定义字段定义（租户级）。DDL: scripts/inventory_material_custom_fields.sql
  * type 必须显式声明，避免字面量联合反射成 Object 让 TypeORM 启动失败（同 ProductGroup.type）。

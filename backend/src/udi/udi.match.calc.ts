@@ -48,6 +48,23 @@ export function matchMaterialGtin(materialGtin: string | null | undefined, scann
   return { ok: true, skipped: false };
 }
 
+/**
+ * 多 GTIN 匹配：物料挂了单品/中包/托盘多个码时，扫到任意一个都算对。
+ * 全部为空 → 跳过；列表里有非法码 → 该条忽略但其余仍可比（不因一条脏数据拦住整组）。
+ */
+export function matchMaterialGtins(materialGtins: Array<string | null | undefined> | null | undefined, scannedGtin: string | null | undefined): GtinMatch {
+  const list = (materialGtins ?? []).map((g) => String(g ?? '').trim()).filter(Boolean);
+  if (!list.length) return { ok: true, skipped: true };
+  const scanned = String(scannedGtin ?? '').trim();
+  if (!scanned) return { ok: false, skipped: false, reason: '扫到的码里没有 GTIN(01)，无法与物料比对' };
+  const norm = list.map((g) => normalizeMaterialGtin(g)).filter((g) => g.ok && g.gtin14).map((g) => g.gtin14!);
+  if (!norm.length) return { ok: false, skipped: false, reason: `物料登记的 GTIN 全部非法：${list.join('、')}` };
+  if (!norm.includes(scanned)) {
+    return { ok: false, skipped: false, reason: `GTIN 不符：物料 ${norm.join('/')}，扫到 ${scanned}（疑似扫错料）` };
+  }
+  return { ok: true, skipped: false };
+}
+
 /** 必扫校验：物料标记 udi_required 时必须带码 */
 export function checkUdiRequired(udiRequired: boolean, hasCode: boolean): { ok: boolean; reason?: string } {
   if (udiRequired && !hasCode) return { ok: false, reason: '该物料要求扫 UDI 码（udi_required=true），未扫到码' };
@@ -57,6 +74,8 @@ export function checkUdiRequired(udiRequired: boolean, hasCode: boolean): { ok: 
 /** 扫描判定总入口：必扫 → GTIN 比对（顺序有讲究：先说"没码"，再说"码不对"） */
 export function judgeScanGtin(p: {
   materialGtin?: string | null;
+  /** 多 GTIN（单品/中包/托盘）；给了就优先按整组匹配 */
+  materialGtins?: Array<string | null | undefined> | null;
   udiRequired?: boolean;
   codeGtin?: string | null;
   hasCode: boolean;
@@ -66,6 +85,8 @@ export function judgeScanGtin(p: {
   const req = checkUdiRequired(!!p.udiRequired, p.hasCode);
   if (!req.ok) return { ok: false, reason: req.reason };
   if (!p.hasCode) return { ok: true, skipped: true };
-  const m = matchMaterialGtin(p.materialGtin, p.codeGtin);
+  const m = p.materialGtins?.length
+    ? matchMaterialGtins(p.materialGtins, p.codeGtin)
+    : matchMaterialGtin(p.materialGtin, p.codeGtin);
   return { ok: m.ok, skipped: m.skipped, reason: m.reason };
 }

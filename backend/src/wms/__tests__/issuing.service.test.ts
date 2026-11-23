@@ -419,3 +419,21 @@ test('U5.1 必扫：过账时 udi_required 行缺码 → 该行跳过不扣库�
   const b2 = stock.find((x) => x.batchNo === 'B2');
   assert.equal(Number(b2.qty), 40);                       // 只扣弹簧 10
 });
+
+
+test('U5.2 多码：扫到物料的中包 GTIN 也放行（按整组匹配）', async () => {
+  const udi = { issueByScan: async () => ({ udiKey: 'K', gtin: '06901234567908', status: 'ISSUED', idempotent: false, eventId: 1 }) };
+  const { svc } = build({
+    udi,
+    mats: { '2': { ...MATS['2'], gtin: '06901234567892', gtins: ['06901234567892', '06901234567908'] } },
+  });
+  const wo = await run(() => svc.create({ woNo: 'WO-M1', productMaterialId: 1, warehouseId: 5, demandQty: 10 }));
+  await run(() => svc.kitCheck(wo.id));
+  await run(() => svc.release(wo.id));
+  const res = await run(() => svc.issueScan(wo.id, {
+    lineNo: 1, materialCode: 'RM-001', batchNo: 'B2',
+    udiCode: '(01)06901234567908(10)L1',
+  }));
+  assert.equal(res.verdict.ok, true);
+  assert.ok(res.udi);
+});

@@ -210,8 +210,12 @@ export class InboundService {
         if (!parsed.ok) throw new BadRequestException(`UDI 码解析失败：${parsed.errors.join('；')}`);
         codeGtin = parsed.gtin ?? null;
       }
+      const gtins = dto.udiCode && target.skuId
+        ? await this.inventoryGw.resolveMaterialGtins({ tenantId, materialId: target.skuId })
+        : [];
       const judge = judgeScanGtin({
-        materialGtin: lineMaterial?.gtin, udiRequired: lineMaterial?.udiRequired,
+        materialGtin: lineMaterial?.gtin, materialGtins: gtins,
+        udiRequired: lineMaterial?.udiRequired,
         codeGtin, hasCode: !!dto.udiCode, force: !!dto.forceUdi,
       });
       if (!judge.ok) {

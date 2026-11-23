@@ -14,7 +14,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InventoryService } from '../../inventory/inventory.service';
-import { Material, Warehouse, WarehouseLocation, Bom, BomItem } from '../../inventory/inventory.entity';
+import { Material, MaterialGtin, Warehouse, WarehouseLocation, Bom, BomItem } from '../../inventory/inventory.entity';
 import { KitOutcome, round3 } from '../../inventory/kit.calc';
 import { IdempotencyService } from '../../agent/idempotency.service';
 import { argsHash } from '../../agent/agent.calc';
@@ -115,6 +115,7 @@ export class InventoryGateway {
     private inventory: InventoryService,
     private idem: IdempotencyService,
     @InjectRepository(Material) private materials: Repository<Material>,
+    @InjectRepository(MaterialGtin) private materialGtins: Repository<MaterialGtin>,
     @InjectRepository(Warehouse) private warehouses: Repository<Warehouse>,
     @InjectRepository(WarehouseLocation) private locations: Repository<WarehouseLocation>,
     @InjectRepository(Bom) private boms: Repository<Bom>,
@@ -203,13 +204,26 @@ export class InventoryGateway {
   }
 
   /** 物料解析（编码或 ID → 基础字段），供工单手工行、标签变量使用 */
-  async resolveMaterial(p: { tenantId: string | number; ref: string | number }): Promise<{ id: number; code: string; name: string; unit: string; gtin: string | null; udiRequired: boolean }> {
+  async resolveMaterial(p: { tenantId: string | number; ref: string | number }): Promise<{
+    id: number; code: string; name: string; unit: string;
+    gtin: string | null; gtins: string[]; udiRequired: boolean;
+  }> {
     const tenantId = this.resolveTenant(p.tenantId);
     const m = await this.materialById(tenantId, p.ref);
+    const rows = await this.materialGtins.find({ where: { tenantId, materialId: Number(m.id) } });
+    const gtins = rows.map((g) => g.gtin);
+    if ((m as any).gtin && !gtins.includes((m as any).gtin)) gtins.unshift((m as any).gtin);
     return {
       id: Number(m.id), code: m.code, name: m.name, unit: m.unit,
-      gtin: (m as any).gtin ?? null, udiRequired: !!(m as any).udiRequired,
+      gtin: (m as any).gtin ?? null, gtins, udiRequired: !!(m as any).udiRequired,
     };
+  }
+
+  /** 物料全部 GTIN（含单品/中包/托盘），供收货侧比对（WMS 不直接查 inventory 表） */
+  async resolveMaterialGtins(p: { tenantId: string | number; materialId: string | number }): Promise<string[]> {
+    const tenantId = this.resolveTenant(p.tenantId);
+    const rows = await this.materialGtins.find({ where: { tenantId, materialId: Number(p.materialId) } });
+    return rows.map((g) => g.gtin);
   }
 
   /** 仓库解析（编码或 ID → 基础字段） */

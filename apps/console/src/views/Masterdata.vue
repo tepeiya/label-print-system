@@ -191,10 +191,10 @@
         <el-form-item label="安全库存">
           <el-input-number v-model="matForm.safetyStock" :min="0" :precision="3" style="width:100%" />
         </el-form-item>
-        <el-form-item label="GTIN">
-          <el-input v-model="matForm.gtin" placeholder="13/14 位 GS1 GTIN，留空 = 不做扫错料比对"
-                    maxlength="14" />
-          <div class="field-hint">收货/发料扫 UDI 时比对 GTIN；填了才能拦住扫错料</div>
+        <el-form-item label="GTIN 列表">
+          <el-input v-model="matForm.gtinsText" type="textarea" :rows="3"
+                    placeholder="每行一个：13/14 位 GTIN；中包/托盘码写成 6901234567892|CARTON" />
+          <div class="field-hint">单品码为主码；收货/发料扫 UDI 时按整组比对，留空 = 不比对</div>
         </el-form-item>
         <el-form-item label="必须扫 UDI">
           <el-checkbox v-model="matForm.udiRequired">
@@ -716,7 +716,10 @@ function openMat(row?: any) {
     autoPrint: !!row.autoPrint, printerId: row.printerId ?? undefined,
     defaultWarehouseId: row.defaultWarehouseId ?? undefined,
     defaultLocationId: row.defaultLocationId ?? undefined,
-    gtin: row.gtin ?? '', udiRequired: !!row.udiRequired,
+    gtinsText: (row.gtins?.length
+      ? row.gtins.map((g: any) => (g.packLevel === 'UNIT' ? g.gtin : `${g.gtin}|${g.packLevel}`)).join('\n')
+      : (row.gtin ?? '')),
+    udiRequired: !!row.udiRequired,
     customFields: { ...(row.customFields || {}) },
   } : {
     id: null, code: '', name: '', spec: '', unit: '件', category: '', safetyStock: 0,
@@ -724,6 +727,15 @@ function openMat(row?: any) {
     defaultWarehouseId: undefined, defaultLocationId: undefined, customFields: {},
   });
   matDialog.value = true;
+}
+function parseGtins(text: string) {
+  return String(text || '')
+    .split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean)
+    .slice(0, 10)
+    .map((x) => {
+      const [gtin, level] = x.split('|').map((v) => v.trim());
+      return { gtin, packLevel: (level || 'UNIT').toUpperCase() };
+    });
 }
 async function saveMat() {
   if (!matForm.code || !matForm.name) return ElMessage.warning('编码与名称必填');
@@ -738,7 +750,7 @@ async function saveMat() {
       printerId: matForm.printerId ?? null,
       defaultWarehouseId: matForm.defaultWarehouseId ?? null,
       defaultLocationId: matForm.defaultLocationId ?? null,
-      gtin: matForm.gtin || null,
+      gtins: parseGtins(matForm.gtinsText),
       udiRequired: !!matForm.udiRequired,
       customFields: matForm.customFields || {},
     };

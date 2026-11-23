@@ -6,7 +6,7 @@ import { Template } from '../entities/template.entity';
 import { Printer } from '../entities/print.entity';
 import { PrintModule } from '../print/print.module';
 import {
-  Warehouse, WarehouseLocation, ProductGroup, Material, MaterialFieldDefinition,
+  Warehouse, WarehouseLocation, ProductGroup, Material, MaterialGtin, MaterialFieldDefinition,
   StockBatch, StockMove, Bom, BomItem,
 } from './inventory.entity';
 import { AlertRule, AlertEvent } from './alert.entity';
@@ -20,7 +20,7 @@ import { BomController } from './bom.controller';
 @Module({
   imports: [
     TypeOrmModule.forFeature([
-      Warehouse, WarehouseLocation, ProductGroup, Material, MaterialFieldDefinition,
+      Warehouse, WarehouseLocation, ProductGroup, Material, MaterialGtin, MaterialFieldDefinition,
       StockBatch, StockMove, Bom, BomItem, Template, Printer, AlertRule, AlertEvent,
     ]),
     PrintModule,

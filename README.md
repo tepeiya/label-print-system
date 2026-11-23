@@ -429,6 +429,17 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 - 测试：新增 13 例（纯函数 10 + 发料编排 3），全量 **850 例 / 843 通过 / 0 失败 / 7 跳过**；console 构建通过。
 - 诚实边界：收货拦截分支无服务级单测（缺 `InboundService` 夹具），需真库验证；一个物料只支持一个 GTIN（不含中包/箱码）；存量物料未回填 GTIN。
 
+### U5.2 多 GTIN（单品/中包/托盘）
+
+> 实施记录 `docs/22-material-multi-gtin.md`；迁移 `backend/scripts/wms_u5_material_gtins.sql`。
+
+- 新表 `material_gtins`：一个物料可挂多个 GTIN，带 `pack_level`（UNIT/CARTON/PALLET）与主码标记；既有单码自动回填。
+- 物料维护接口支持 `gtins: [{gtin, packLevel}]`（≤10 条，租户内唯一），仍兼容单个 `gtin` 字段。
+- 扫码比对改为**整组匹配**：扫到任意一个码都放行；列表为空则跳过，不误拦。
+- 产品资料页 GTIN 改为多行输入（`6901234567892|CARTON` 表达级别）。
+- 测试：新增 6 例（纯函数 5 + 发料 1），全量 **856 例 / 849 通过 / 0 失败 / 7 跳过**。
+- 边界：包装级别只做标签、不做拆箱数量换算；不支持 SSCC 箱码；真库未验证。
+
 ---
 
 ## 10. 医疗 UDI 合规赋码（2026-11-23，里程碑 U1–U5 已实施）

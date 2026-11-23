@@ -5,7 +5,7 @@ import { TypeOrmModule } from '../../common/tenant-typeorm.module';
 import {
   WmsWorkOrder, WmsWoLine, WmsIssueRecord, WmsWoReturn,
 } from './entities/wo.entity';
-import { Material, Warehouse, WarehouseLocation, Bom, BomItem } from '../../inventory/inventory.entity';
+import { Material, MaterialGtin, Warehouse, WarehouseLocation, Bom, BomItem } from '../../inventory/inventory.entity';
 import { InventoryModule } from '../../inventory/inventory.module';
 import { AgentModule } from '../../agent/agent.module';
 import { AuditModule } from '../../audit/audit.module';
@@ -19,7 +19,7 @@ import { PrintGateway } from '../gateways/print.gateway';
   imports: [
     TypeOrmModule.forFeature([
       WmsWorkOrder, WmsWoLine, WmsIssueRecord, WmsWoReturn,
-      Material, Warehouse, WarehouseLocation, Bom, BomItem,
+      Material, MaterialGtin, Warehouse, WarehouseLocation, Bom, BomItem,
     ]),
     InventoryModule,
     AgentModule,

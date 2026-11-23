@@ -412,7 +412,7 @@ export class IssuingService {
     const parsedUdi = dto.udiCode ? udiKeyFromCode(dto.udiCode) : null;
     if (parsedUdi && !parsedUdi.ok) throw new BadRequestException(`UDI 码解析失败：${parsedUdi.errors.join('；')}`);
     const udiJudge = judgeScanGtin({
-      materialGtin: material.gtin, udiRequired: material.udiRequired,
+      materialGtin: material.gtin, materialGtins: material.gtins, udiRequired: material.udiRequired,
       codeGtin: parsedUdi?.gtin ?? null, hasCode: !!dto.udiCode, force: !!dto.forceUdiGtin,
     });
     if (dto.forceUdiGtin) {
@@ -640,7 +640,7 @@ export class IssuingService {
         const m = await this.inventory.resolveMaterial({ tenantId, ref: Number(line.materialId) });
         const parsed = udiKeyFromCode(item.code);
         if (!parsed.ok) { results.push({ ok: false, code: item.code, reason: `UDI 码解析失败：${parsed.errors.join('；')}` }); continue; }
-        const judge = judgeScanGtin({ materialGtin: m.gtin, udiRequired: m.udiRequired, codeGtin: parsed.gtin, hasCode: true, force: false });
+        const judge = judgeScanGtin({ materialGtin: m.gtin, materialGtins: m.gtins, udiRequired: m.udiRequired, codeGtin: parsed.gtin, hasCode: true, force: false });
         if (!judge.ok) {
           void this.audit.write(tenantId, 'wms.wo.issue.udi.mismatch', {
             woNo: wo.woNo, lineNo: line.lineNo, code: item.code, reason: judge.reason,

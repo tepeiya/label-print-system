@@ -7,7 +7,7 @@ import { BadRequestException, Inject, Injectable, NotFoundException } from '@nes
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository, type EntityManager } from 'typeorm';
 import {
-  Material, MaterialFieldDefinition, StockBatch, StockMove, Warehouse, WarehouseLocation, ProductGroup, Bom, BomItem,
+  Material, MaterialGtin, MaterialFieldDefinition, StockBatch, StockMove, Warehouse, WarehouseLocation, ProductGroup, Bom, BomItem,
 } from './inventory.entity';
 import { Template } from '../entities/template.entity';
 import { Printer } from '../entities/print.entity';
@@ -110,6 +110,7 @@ export interface BomView {
 export class InventoryService {
   constructor(
     @InjectRepository(Material) private materials: Repository<Material>,
+    @InjectRepository(MaterialGtin) private materialGtins: Repository<MaterialGtin>,
     @InjectRepository(MaterialFieldDefinition) private fieldDefs: Repository<MaterialFieldDefinition>,
     @InjectRepository(Warehouse) private warehouses: Repository<Warehouse>,
     @InjectRepository(WarehouseLocation) private locations: Repository<WarehouseLocation>,
@@ -223,6 +224,18 @@ export class InventoryService {
       .addSelect('m.gtin', 'gtin').addSelect('m.udi_required', 'udiRequired')
       .addSelect('m.custom_fields', 'customFields')
       .orderBy('m.code', 'ASC').limit(Math.min(Math.max(limit, 1), 100)).getRawMany();
+    const ids = rows.map((r) => Number(r.id));
+    const gts = ids.length
+      ? await this.materialGtins.createQueryBuilder('g')
+        .where('g.tenant_id = :tid AND g.material_id IN (:...ids)', { tid: tenantId, ids })
+        .orderBy('g.id', 'ASC').getMany()
+      : [];
+    const byMat = new Map<number, Array<{ gtin: string; packLevel: string; isPrimary: boolean }>>();
+    for (const g of gts) {
+      const arr = byMat.get(Number(g.materialId)) ?? [];
+      arr.push({ gtin: g.gtin, packLevel: g.packLevel, isPrimary: !!g.isPrimary });
+      byMat.set(Number(g.materialId), arr);
+    }
     return rows.map((r) => ({
       ...r, id: Number(r.id), safetyStock: Number(r.safetyStock),
       customFields: parseJsonb(r.customFields),
@@ -233,6 +246,7 @@ export class InventoryService {
       defaultLocationId: r.defaultLocationId == null ? null : Number(r.defaultLocationId),
       autoPrint: !!r.autoPrint,
       gtin: r.gtin ?? null,
+      gtins: byMat.get(Number(r.id)) ?? [],
       udiRequired: !!r.udiRequired,
     }));
   }
@@ -480,19 +494,48 @@ export class InventoryService {
     return { warehouseId, locationId };
   }
 
-  /** U5.1：物料 GTIN 入库校验（补位 GTIN14 + 校验位 + 同租户唯一），空值表示不比对 */
-  private async materialGtinFor(tenantId: number, input?: string | null, exceptId?: number): Promise<string | null> {
+  /**
+   * U5.1/U5.2：物料 GTIN 校验与归一。
+   * 支持多码（单品/中包/托盘）：`gtins` 列表优先；兼容单字段 `gtin`（视为 UNIT）。
+   * 同租户内 GTIN 全局唯一（一个码只能属于一个物料）。
+   */
+  private async prepareGtins(tenantId: number, input?: {
+    gtins?: Array<{ gtin: string; packLevel?: string }> | null;
+    gtin?: string | null;
+  }, materialId?: number): Promise<{ list: Array<{ gtin: string; packLevel: 'UNIT' | 'CARTON' | 'PALLET' }>; primary: string | null }> {
     const { normalizeMaterialGtin } = await import('../udi/udi.match.calc');
-    const g = normalizeMaterialGtin(input);
-    if (!g.ok) throw new BadRequestException(g.errors.join('；'));
-    if (!g.gtin14) return null;
-    const dup = await this.materials.createQueryBuilder('m')
-      .where('m.tenant_id = :tenantId AND m.gtin = :gtin', { tenantId, gtin: g.gtin14 })
-      .getOne();
-    if (dup && Number(dup.id) !== Number(exceptId ?? -1)) {
-      throw new BadRequestException(`GTIN ${g.gtin14} 已被物料 ${dup.code} 占用`);
+    const raw = (input?.gtins?.length
+      ? input.gtins.map((g) => ({ gtin: String(g.gtin ?? ''), packLevel: String(g.packLevel ?? 'UNIT').toUpperCase() }))
+      : (input?.gtin ? [{ gtin: String(input.gtin), packLevel: 'UNIT' }] : []));
+    if (raw.length > 10) throw new BadRequestException('一个物料最多登记 10 个 GTIN');
+    const list: Array<{ gtin: string; packLevel: 'UNIT' | 'CARTON' | 'PALLET' }> = [];
+    for (const item of raw) {
+      if (!['UNIT', 'CARTON', 'PALLET'].includes(item.packLevel)) throw new BadRequestException(`未知包装级别：${item.packLevel}（UNIT/CARTON/PALLET）`);
+      const norm = normalizeMaterialGtin(item.gtin);
+      if (!norm.ok || !norm.gtin14) throw new BadRequestException(norm.errors.join('；') || `GTIN 非法：${item.gtin}`);
+      if (list.some((x) => x.gtin === norm.gtin14)) throw new BadRequestException(`GTIN 重复：${norm.gtin14}`);
+      list.push({ gtin: norm.gtin14, packLevel: item.packLevel as any });
     }
-    return g.gtin14;
+    for (const item of list) {
+      const dup = await this.materialGtins.findOne({ where: { tenantId, gtin: item.gtin } });
+      if (dup && Number(dup.materialId) !== Number(materialId ?? -1)) {
+        const owner = await this.materials.findOne({ where: { tenantId, id: Number(dup.materialId) } });
+        throw new BadRequestException(`GTIN ${item.gtin} 已被物料 ${owner?.code ?? dup.materialId} 占用`);
+      }
+    }
+    const primary = (list.find((x) => x.packLevel === 'UNIT') ?? list[0])?.gtin ?? null;
+    return { list, primary };
+  }
+
+  /** 用整组 GTIN 覆盖物料的码（先删后插，保证与前端提交一致） */
+  private async syncGtins(tenantId: number, materialId: number, list: Array<{ gtin: string; packLevel: string }>, primary: string | null) {
+    await this.materialGtins.delete({ tenantId, materialId });
+    for (const item of list) {
+      await this.materialGtins.save(this.materialGtins.create({
+        tenantId, materialId, gtin: item.gtin, packLevel: item.packLevel as any,
+        isPrimary: item.gtin === primary,
+      }));
+    }
   }
 
   async createMaterial(tenantId: number, b: {
@@ -501,6 +544,7 @@ export class InventoryService {
     groupId?: number | null; autoPrint?: boolean; printerId?: number | null;
     defaultWarehouseId?: number | null; defaultLocationId?: number | null;
     customFields?: Record<string, unknown>; gtin?: string; udiRequired?: boolean;
+    gtins?: Array<{ gtin: string; packLevel?: string }>;
   }) {
     const code = String(b.code ?? '').trim();
     if (!code || !String(b.name ?? '').trim()) throw new BadRequestException('编码与名称必填');
@@ -513,7 +557,7 @@ export class InventoryService {
     const autoPrint = !!b.autoPrint && templateId != null;
     const def = await this.defaultLocationPair(tenantId, b.defaultWarehouseId, b.defaultLocationId);
     const customFields = await this.normalizeValues(tenantId, b.customFields);
-    const gtin = await this.materialGtinFor(tenantId, b.gtin);
+    const gt = await this.prepareGtins(tenantId, { gtins: b.gtins, gtin: b.gtin });
     const row = await this.materials.save(this.materials.create({
       tenantId, code, name: String(b.name).trim(),
       spec: b.spec?.trim() || null, unit: b.unit?.trim() || '件',
@@ -521,8 +565,9 @@ export class InventoryService {
       safetyStock: String(round3(Number(b.safetyStock) || 0)),
       templateId, groupId, autoPrint, printerId,
       defaultWarehouseId: def.warehouseId, defaultLocationId: def.locationId,
-      customFields, gtin, udiRequired: !!b.udiRequired,
+      customFields, gtin: gt.primary, udiRequired: !!b.udiRequired,
     }));
+    if (gt.list.length) await this.syncGtins(tenantId, Number(row.id), gt.list, gt.primary);
     return {
       ...row, id: Number(row.id), safetyStock: Number(row.safetyStock),
       templateId, groupId, printerId, autoPrint,
@@ -535,6 +580,7 @@ export class InventoryService {
     groupId?: number | null; autoPrint?: boolean; printerId?: number | null;
     defaultWarehouseId?: number | null; defaultLocationId?: number | null;
     customFields?: Record<string, unknown>; gtin?: string; udiRequired?: boolean;
+    gtins?: Array<{ gtin: string; packLevel?: string }>;
   }) {
     const row = await this.materials.findOne({ where: { tenantId, id } });
     if (!row) throw new NotFoundException('物料不存在');
@@ -566,9 +612,12 @@ export class InventoryService {
     if (b.customFields !== undefined) {
       patch.customFields = await this.normalizeValues(tenantId, b.customFields);
     }
-    if (b.gtin !== undefined) patch.gtin = await this.materialGtinFor(tenantId, b.gtin, id);
+    const gtinsChanged = b.gtins !== undefined || b.gtin !== undefined;
+    const gt = gtinsChanged ? await this.prepareGtins(tenantId, { gtins: b.gtins, gtin: b.gtin }, id) : null;
+    if (gt) patch.gtin = gt.primary;
     if (b.udiRequired !== undefined) patch.udiRequired = !!b.udiRequired;
     await this.materials.update({ id, tenantId }, patch);
+    if (gt) await this.syncGtins(tenantId, id, gt.list, gt.primary);
     return this.listMaterials(tenantId, row.code, 1).then((r) => r[0]);
   }
 

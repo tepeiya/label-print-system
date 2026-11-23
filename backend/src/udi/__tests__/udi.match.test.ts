@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  normalizeMaterialGtin, matchMaterialGtin, checkUdiRequired, judgeScanGtin,
+  normalizeMaterialGtin, matchMaterialGtin, matchMaterialGtins, checkUdiRequired, judgeScanGtin,
 } from '../udi.match.calc';
 
 const GTIN14 = '06901234567892';
@@ -71,4 +71,41 @@ test('总入口：force 放行（保留审计由服务层写）', () => {
   const r = judgeScanGtin({ materialGtin: GTIN14, udiRequired: true, hasCode: false, force: true });
   assert.equal(r.ok, true);
   assert.equal(r.skipped, true);
+});
+
+
+// ---------------------------------------------------------------- U5.2 多 GTIN
+const GTIN_CARTON = '06901234567908';
+
+test('多码：扫到列表中任意一个（含中包码）都算对', () => {
+  const m = matchMaterialGtins([GTIN14, GTIN_CARTON], GTIN_CARTON);
+  assert.equal(m.ok, true);
+  assert.equal(m.skipped, false);
+});
+
+test('多码：都不匹配 → 报错并列出物料全部码', () => {
+  const m = matchMaterialGtins([GTIN14, GTIN_CARTON], '06901234567000');
+  assert.equal(m.ok, false);
+  assert.match(m.reason!, /疑似扫错料/);
+  assert.match(m.reason!, new RegExp(GTIN14));
+});
+
+test('多码：空列表 → 跳过；全脏数据 → 拒绝', () => {
+  assert.equal(matchMaterialGtins([], GTIN14).skipped, true);
+  assert.equal(matchMaterialGtins([null, ''], GTIN14).skipped, true);
+  const bad = matchMaterialGtins(['123', 'abc'], GTIN14);
+  assert.equal(bad.ok, false);
+  assert.match(bad.reason!, /全部非法/);
+});
+
+test('多码：13 位与 14 位混存也能对上（归一后比较）', () => {
+  assert.equal(matchMaterialGtins([GTIN13], GTIN14).ok, true);
+});
+
+test('总入口：给了多码列表就优先按整组匹配', () => {
+  const r = judgeScanGtin({
+    materialGtin: '06901234567000', materialGtins: [GTIN14, GTIN_CARTON],
+    udiRequired: true, hasCode: true, codeGtin: GTIN_CARTON,
+  });
+  assert.equal(r.ok, true);
 });
