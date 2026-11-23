@@ -279,3 +279,87 @@ export const apiUdiScanVerify = (body: {
 }) => post<UdiScanVerdict>('/udi/scan-verify', body);
 
 export const apiUdiParse = (code: string) => post<UdiParsed>('/udi/parse', { code });
+
+// ---------- WMS 阶段二：工单发料（D4） ----------
+export type WoStatus = 'CREATED' | 'RELEASED' | 'ISSUING' | 'ISSUED' | 'CLOSED' | 'CANCELLED';
+export type WoLineStatus = 'PENDING' | 'PARTIAL' | 'DONE' | 'SHORT';
+
+export interface WorkOrderItem {
+  id: number;
+  woNo: string;
+  productMaterialId: number;
+  warehouseId: number;
+  demandQty: number;
+  status: WoStatus;
+  shortageFlag: boolean;
+  priority?: number;
+  sourceType?: string;
+  sourceNo?: string | null;
+  createdAt?: string;
+}
+
+export interface WoLine {
+  id: number;
+  lineNo: number;
+  materialId: number;
+  materialCode?: string;
+  materialName?: string;
+  unit?: string;
+  batchNo?: string | null;
+  qtyRequired: number;
+  qtyIssued: number;
+  qtyShortage: number;
+  status: WoLineStatus;
+  shortageReason?: string | null;
+}
+
+export interface WorkOrderDetail extends WorkOrderItem {
+  lines: WoLine[];
+  kitSummary?: { overallKitRate?: number; shortageLines?: any[]; overallMaxSets?: number } | null;
+  issueRecords?: any[];
+  returns?: any[];
+  [k: string]: any;
+}
+
+export interface IssueScanVerdict {
+  ok: boolean;
+  mismatches?: Array<{ field: string; expected: string; actual: string | null }>;
+  message?: string;
+  [k: string]: any;
+}
+
+export const apiWoList = (params: { status?: string; keyword?: string; page?: number; pageSize?: number }) =>
+  get<{ items: WorkOrderItem[]; total: number; page: number }>('/wms/issuing/work-orders', params);
+
+export const apiWoDetail = (id: number) => get<WorkOrderDetail>(`/wms/issuing/work-orders/${id}`);
+
+export const apiWoKitCheck = (id: number) => post(`/wms/issuing/work-orders/${id}/kit-check`);
+
+export const apiWoRelease = (id: number) => post(`/wms/issuing/work-orders/${id}/release`);
+
+export const apiWoIssueStart = (id: number) => post(`/wms/issuing/work-orders/${id}/issue-start`);
+
+/** 扫码比对（不回写库存）：扫到码后先看是否与应收批次/物料一致 */
+export const apiWoIssueScan = (id: number, body: {
+  lineId?: number; lineNo?: number; materialCode?: string; batchNo?: string;
+  udiCode?: string; strictUdi?: boolean;
+}) => post<IssueScanVerdict>(`/wms/issuing/work-orders/${id}/issue-scan`, body);
+
+/** 发料过账：packs 传扫到的箱码（服务端按 pack_qty 折算件数，与收货口径一致） */
+export const apiWoIssuePost = (id: number, body: {
+  lineIds?: number[]; force?: boolean;
+  packs?: Array<{ lineId?: number; lineNo?: number; udiCode: string; packCount?: number }>;
+  udiCodes?: Array<{ code: string; lineNo?: number; lineId?: number }>;
+}) => post<any>(`/wms/issuing/work-orders/${id}/issue-post`, body);
+
+export const apiWoIssueDone = (id: number) => post<any>(`/wms/issuing/work-orders/${id}/issue-done`);
+
+export const apiWoShortages = (id: number) => get<any>(`/wms/issuing/work-orders/${id}/shortages`);
+
+export const apiWoReturn = (id: number, body: {
+  lineId: number; qty: number; batchNo?: string; reason: string; idemKey?: string;
+}) => post<any>(`/wms/issuing/work-orders/${id}/returns`, body);
+
+export const woStatusLabel = (s?: string) => ({
+  CREATED: '待齐套', RELEASED: '已放行', ISSUING: '发料中', ISSUED: '已发完', CLOSED: '已关单', CANCELLED: '已取消',
+} as Record<string, string>)[String(s)] || String(s ?? '—');

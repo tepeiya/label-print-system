@@ -23,6 +23,11 @@
           <span class="nm">上架任务</span>
           <span class="ds">库位推荐确认、完成上架</span>
         </button>
+        <button class="menu-tile" @click="router.push('/issuing')">
+          <span class="ic">📦</span>
+          <span class="nm">发料作业</span>
+          <span class="ds">工单齐套、扫码发料、退料冲销</span>
+        </button>
         <button class="menu-tile" @click="router.push('/udi/verify')">
           <span class="ic">🧬</span>
           <span class="nm">UDI 复核</span>
@@ -36,7 +41,8 @@
           · 进入收货单后点「扫码收货」，对准条码自动识别<br />
           · 盲收可直接扫 SKU，按单收请选对应行号<br />
           · 同一批次重复扫码会累加数量，超收会标红提示<br />
-          · 扫码成功有提示音与振动反馈
+          · 扫码成功有提示音与振动反馈<br />
+          · 发料扫箱码时填「包数」，过账会按每箱件数折算扣减
         </div>
       </div>
     </div>

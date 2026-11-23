@@ -18,7 +18,7 @@ import { AuditService } from '../../../audit/audit.module';
 import { useTenant, useTenantId } from '../../../common/tenant.context';
 import { UdiTraceService } from '../../../udi/udi.trace.service';
 import { udiKeyFromCode } from '../../../udi/udi.link.calc';
-import { judgeScanGtin } from '../../../udi/udi.match.calc';
+import { judgeScanGtin, matchPack, resolvePackUnits } from '../../../udi/udi.match.calc';
 import { round3 } from '../../../inventory/kit.calc';
 import { canTransit } from './wo-transit';
 import { summarizeWoKit, lineShortageText } from './kit-summary.calc';
@@ -464,6 +464,12 @@ export class IssuingService {
     lineIds?: number[]; force?: boolean;
     /** UDI 单品码（U5）：过账后记 ISSUE 事件；失败只回报不抛错（库存已动，不可回滚半截） */
     udiCodes?: Array<{ code: string; lineNo?: number; lineId?: number }>;
+    /**
+     * D4 发料侧包码（与 U5.3 收货同一口径）：扫到箱码/托码时按"包数 × 每包件数"折算本次实发件数。
+     * 一行的实发量取 min(剩余应发量, 折算件数)；码不在物料包装表里 → 该行跳过并在 skipped 里说明。
+     * 只影响"发多少"的上限，实际扣减仍走批次分配（FIFO/指定批次）。
+     */
+    packs?: Array<{ lineId?: number; lineNo?: number; udiCode: string; packCount?: number }>;
   } = {}) {
     const tenantId = useTenantId();
     const { userId } = useTenant();
@@ -515,7 +521,32 @@ export class IssuingService {
         }
       }
 
-      const remaining = round3(required - issued);
+      let remaining = round3(required - issued);
+      // D4：扫包折算（与收货 U5.3 同口径）。命中→把本次实发量收敛到折算件数；
+      // 未命中→不改行为（仍按剩余量发，记一条 packWarning 让前端提示"这不是登记过的箱码"）。
+      let packInfo: { gtin: string; packLevel: string; packQty: number; units: number; packCount: number } | null = null;
+      let packWarning: string | undefined;
+      const packReq = (dto.packs ?? []).find((p) =>
+        (p.lineId != null && Number(p.lineId) === Number(line.id))
+        || (p.lineNo != null && Number(p.lineNo) === Number(line.lineNo)));
+      if (packReq?.udiCode) {
+        const parsed = udiKeyFromCode(String(packReq.udiCode));
+        if (!parsed.ok) {
+          packWarning = `包码解析失败：${parsed.errors.join('；')}（按剩余量发料）`;
+        } else {
+          const packCount = Math.max(1, Number(packReq.packCount ?? 1));
+          const packRows = await this.inventory.resolveMaterialGtinRows({ tenantId, materialId: Number(line.materialId) });
+          const resolved = resolvePackUnits(packRows, parsed.gtin ?? null, packCount);
+          if (!resolved) {
+            packWarning = `扫到的码 ${parsed.gtin ?? ''} 不在该物料包装表内（按剩余量发料）`;
+          } else if (resolved.packLevel === 'UNIT') {
+            packInfo = { ...resolved, packCount };
+          } else {
+            packInfo = { ...resolved, packCount };
+            remaining = round3(Math.min(remaining, resolved.units));
+          }
+        }
+      }
       const batches = await this.inventory.queryBatches({ tenantId, skuId: Number(line.materialId), warehouseId: Number(wo.warehouseId) });
       const alloc = allocateBatches(batches as BatchRowPlain[], remaining, { batchNo: line.batchNo });
       if (!alloc.allocations.length) {
@@ -555,6 +586,8 @@ export class IssuingService {
         }));
         lineQty = round3(lineQty + Number(a.qty));
         posted.push({
+          ...(packInfo ? { pack: packInfo } : {}),
+          ...(packWarning ? { packWarning } : {}),
           recordId: rec.id, lineId: line.id, lineNo: line.lineNo, materialCode: material.code,
           batchNo: a.batchNo, qty: Number(a.qty),
           expiredBatch: alloc.expiredPicked.includes(a.batchNo),
@@ -723,13 +756,15 @@ export class IssuingService {
   }
 
   // ---------------------------------------------------------------- 退料
-  async createReturn(id: number, dto: { lineId: number; qty: number; batchNo?: string; locationId?: number; reason: string; approvedBy?: number }) {
+  async createReturn(id: number, dto: {
+    lineId: number; qty: number; batchNo?: string; locationId?: number; reason: string; approvedBy?: number;
+    /** D4：客户端幂等键（PDA 重试时复用同一个即可）。不传则按"工单+行+批次+数量"内容哈希，同内容只受理一次 */
+    idemKey?: string;
+  }) {
     const tenantId = useTenantId();
     const { userId } = useTenant();
     const wo = await this.requireWo(id);
     if (!dto.reason || !String(dto.reason).trim()) throw new BadRequestException('退料必须填写原因（可追溯）');
-    const tr = canTransit(wo.status, 'RETURN');
-    if (!tr.ok) throw new ConflictException(tr.reason!);
 
     const line = await this.lines.findOne({ where: { tenantId, woId: id, id: Number(dto.lineId) } });
     if (!line) throw new NotFoundException(`工单行不存在：${dto.lineId}`);
@@ -740,9 +775,28 @@ export class IssuingService {
     const batchNo: string | undefined = dto.batchNo ?? line.batchNo ?? undefined;
 
     const seq = (await this.returns.count({ where: { tenantId, woId: id, lineId: line.id } })) + 1;
-    const idemKey = returnIdemKey(wo.woNo, line.lineNo, seq).slice(0, 128);
+    // D4 幂等：客户端给了 key 就用它（`WMS_RETURN:` 前缀防止与发料键撞车）；
+    // 没给则用内容键（同工单同行同批号同数量视为同一次提交），保证网络重试不会把库存补两次。
+    const clientKey = String(dto.idemKey ?? '').trim();
+    const idemKey = (clientKey
+      ? `WMS_RETURN:${clientKey}`
+      : `WMS_RETURN:${wo.woNo}:${line.lineNo}:${batchNo ?? '-'}:${qty}`).slice(0, 128);
     const dup = await this.returns.findOne({ where: { tenantId, idemKey } });
-    if (dup) throw new ConflictException('同一序号的退料已提交（幂等冲突，请刷新后重试）');
+    if (dup) {
+      // 幂等回放：不再动库存、不再改行，直接把既有结果原样返回（前端显示"已提交过"）
+      return {
+        idempotent: true,
+        returnId: dup.id,
+        idemKey,
+        note: '同一退料已提交过，本次为幂等回放（库存未二次回补）',
+        ...(await this.detail(id)),
+      };
+    }
+
+    // 状态机校验放在幂等回放之后：重复提交时工单已回到 ISSUING，
+    // 若先校验状态，会把正常重试拦成"状态 ISSUING 不允许执行 RETURN"，幂等就白做了。
+    const tr = canTransit(wo.status, 'RETURN');
+    if (!tr.ok) throw new ConflictException(tr.reason!);
 
     // 先回补库存，再落退料记录（与发料相反的方向，失败即止）
     await this.inventory.increaseStock({

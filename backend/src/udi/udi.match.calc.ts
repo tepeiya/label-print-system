@@ -110,6 +110,28 @@ export function matchPack(rows: Array<PackRow | null | undefined> | null | undef
   return null;
 }
 
+/**
+ * D4：一次"扫包"→ 单品件数（收货/发料共用同一口径，避免两边算法漂移）。
+ * @param packRows 物料整组 GTIN（UNIT/CARTON/PALLET + packQty）
+ * @param udiCode  扫到的码（GS1 或纯 GTIN；GTIN 提取由调用方用 udiKeyFromCode 完成）
+ * @param packCount 扫了几包（默认 1）
+ * @returns null=码不在物料包装表里（调用方决定是否拦截）；否则给出折算结果
+ */
+export function resolvePackUnits(
+  packRows: Array<PackRow | null | undefined> | null | undefined,
+  codeGtin: string | null | undefined,
+  packCount = 1,
+): { gtin: string; packLevel: string; packQty: number; units: number } | null {
+  const matched = matchPack(packRows, codeGtin);
+  if (!matched) return null;
+  return {
+    gtin: matched.gtin,
+    packLevel: matched.packLevel,
+    packQty: matched.packQty,
+    units: convertToUnits(packCount, matched.packQty, matched.packLevel),
+  };
+}
+
 /** 包装数量 → 单品件数：扫 N 包 × 每包件数；UNIT 级不折算 */
 export function convertToUnits(packCount: number, packQty: number, packLevel?: string): number {
   const count = round3(Number(packCount) || 0);
