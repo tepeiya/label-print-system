@@ -113,7 +113,7 @@ export function resolveComputedVars(
   const resolved = new Set<string>();
 
   // 拓扑序：每轮取「依赖的计算变量都已解析」的项；剩余为环或缺失依赖
-  let pending = new Set(names);
+  const pending = new Set(names);
   while (pending.size) {
     let progressed = false;
     for (const name of [...pending]) {

@@ -266,7 +266,7 @@ async function runScan() {
 }
 
 async function handleAck(row: any, status: 'ack' | 'ignored') {
-  let note = '';
+  let note: string;
   try {
     const r = await ElMessageBox.prompt(
       status === 'ack' ? '确认处理该预警？可填写处理备注' : '确认忽略该预警？',

@@ -22,7 +22,7 @@
 import TemplateLibraryPanel from './TemplateLibraryPanel.vue';
 import { useTemplateIO } from '../useTemplateIO';
 
-const props = defineProps<{ modelValue: boolean; versionTarget?: number | null }>();
+defineProps<{ modelValue: boolean; versionTarget?: number | null }>();
 const emit = defineEmits<{ 'update:modelValue': [boolean]; opened: [] }>();
 
 const io = useTemplateIO();
