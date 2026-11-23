@@ -27,3 +27,5 @@ export { HardwareAgent, HardwareAgentJob, RfidWriteLog } from '../hardware/hardw
 export { WmsReceipt, WmsReceiptLine, WmsPutawayTask, WmsPutawayRule } from '../wms/inbound/entities/wms.entity';
 // UDI 医疗追溯（DDL: scripts/udi_p1_trace.sql）
 export { UdiUnit, UdiPackage, UdiEvent } from '../udi/entities/udi.entity';
+// WMS 阶段二（DDL: scripts/wms_p2_issuing.sql）
+export { WmsWorkOrder, WmsWoLine, WmsIssueRecord, WmsWoReturn } from '../wms/issuing/entities/wo.entity';

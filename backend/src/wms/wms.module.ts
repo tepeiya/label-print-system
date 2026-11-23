@@ -7,7 +7,7 @@ import { TypeOrmModule } from '../common/tenant-typeorm.module';
 import {
   WmsReceipt, WmsReceiptLine, WmsPutawayTask, WmsPutawayRule,
 } from './inbound/entities/wms.entity';
-import { Material, Warehouse, WarehouseLocation } from '../inventory/inventory.entity';
+import { Material, Warehouse, WarehouseLocation, Bom, BomItem } from '../inventory/inventory.entity';
 import { InventoryModule } from '../inventory/inventory.module';
 import { AgentModule } from '../agent/agent.module';
 import { AuditModule } from '../audit/audit.module';
@@ -20,7 +20,7 @@ import { InventoryGateway } from './gateways/inventory.gateway';
   imports: [
     TypeOrmModule.forFeature([
       WmsReceipt, WmsReceiptLine, WmsPutawayTask, WmsPutawayRule,
-      Material, Warehouse, WarehouseLocation,
+      Material, Warehouse, WarehouseLocation, Bom, BomItem,
     ]),
     InventoryModule,
     AgentModule,

@@ -382,7 +382,7 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 | 模块编码 | 名称 | 阶段 |
 | --- | --- | --- |
 | `wms.inbound` | 收货与上架 | **阶段一（本轮已实施）** |
-| `wms.issuing` | 工单发料与齐套 | 阶段二 |
+| `wms.issuing` | 工单发料与齐套 | **阶段二（本轮已实施）** |
 | `wms.trace` / `wms.outbound` | 追溯 / 成品发运 | 阶段三 |
 | `wms.connector` | ERP/MES 连接器 | 阶段二起单独定价 |
 
@@ -393,6 +393,16 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 - **订阅门**：5 个 WMS 模块以 SQL 种子写入 `modules` 表，**存量租户默认不开通**（需手工 INSERT `tenant_modules` 验证）。
 - **测试**：新增 14 例（上架推荐规则 5 / PrintGateway 5 / 过账决策 4），全量 `npm test` 675 例、0 失败。
 - **诚实边界**：PDA 前端已落地独立 H5（`apps/pda` :5185，zxing-wasm 摄像头扫码 + 手动输入兜底，真机摄像头/扫码硬件仍待实机验收）；阶段一不做同仓移库位（过账已直接入库到推荐位）、不做策略引擎/波次；补打标签需 `WMS_SERVICE_TOKEN` 否则 503；过账为跨服务独立事务（非单一物理事务）。
+
+### 阶段二补充：工单发料与齐套（`wms.issuing`，2026-11-23）
+
+> 开发文档 `docs/16-wms-phase2-dev.md`（A 版 D1–D8）；验收报告 `docs/17-wms-phase2-acceptance.md`。
+
+- **新增**：`backend/scripts/wms_p2_issuing.sql`（4 表：工单/工单行/发料记录/退料记录）、`backend/src/wms/issuing/**`（实体 + 4 个纯函数 + 服务 + 控制器 + 模块）、`InventoryGateway` 扩 6 方法（`resolveMaterial/resolveWarehouse/expandBom/checkKit/decreaseStock/queryBatches`）。
+- **17 个端点**（`/api/v1/wms/work-orders...`，全挂 `@RequireModule('wms.issuing')`）：建单 / Excel 导入 / 列表 / 详情 / 加行 / 齐套检查 / 下发 / 取消 / 开始发料 / 扫码校验 / 发料过账 / 完工 / 缺料清单 / 退料 / 关单 / 补打 / 发料记录查询。
+- **核心口径**：行需求含损耗（`qty_per×(1+loss)`，`round3`）；批次分配"过期最后 → 近效期 → FIFO"；发料按行、可部分行、可 `force` 留审计；完全无库存行置 `SHORT` 不落记录，部分可用按量发料并记 `PARTIAL`+缺口；重跑不二次扣减（`ISSUE:{woNo}:{line}` 幂等键）；打印旁路失败不阻塞；退料仅 `ISSUED` 可做、先回补再落记录。
+- **测试**：新增 49 例（齐套 8 / 流转 10 / 批次分配 10 / 发料计算与扫码 9 / 服务编排 12），全量 `pnpm test` **817 例 / 810 通过 / 0 失败 / 7 跳过**，`pnpm typecheck` 零错误。
+- **诚实边界**：真 PG 集成门 G1–G7 **未执行**（开发环境无 Docker/PostgreSQL），迁移后须重跑 `saas_p6_rls.sql` 挂租户隔离；跨服务发料非同事务（只承诺无脏数据 + 重跑收敛）；未种 `ISSUE_LABEL_V1` 模板（缺模板时打印失败但发料成功，可补打）；PDA 发料页面未做。
 
 ---
 
