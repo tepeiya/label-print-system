@@ -206,24 +206,32 @@ export class InventoryGateway {
   /** 物料解析（编码或 ID → 基础字段），供工单手工行、标签变量使用 */
   async resolveMaterial(p: { tenantId: string | number; ref: string | number }): Promise<{
     id: number; code: string; name: string; unit: string;
-    gtin: string | null; gtins: string[]; udiRequired: boolean;
+    gtin: string | null; gtins: string[];
+    gtinRows: Array<{ gtin: string; packLevel: string; packQty: number }>;
+    udiRequired: boolean;
   }> {
     const tenantId = this.resolveTenant(p.tenantId);
     const m = await this.materialById(tenantId, p.ref);
     const rows = await this.materialGtins.find({ where: { tenantId, materialId: Number(m.id) } });
-    const gtins = rows.map((g) => g.gtin);
+    const gtinRows = rows.map((g) => ({ gtin: g.gtin, packLevel: g.packLevel, packQty: Number(g.packQty) || 1 }));
+    const gtins = gtinRows.map((g) => g.gtin);
     if ((m as any).gtin && !gtins.includes((m as any).gtin)) gtins.unshift((m as any).gtin);
     return {
       id: Number(m.id), code: m.code, name: m.name, unit: m.unit,
-      gtin: (m as any).gtin ?? null, gtins, udiRequired: !!(m as any).udiRequired,
+      gtin: (m as any).gtin ?? null, gtins, gtinRows, udiRequired: !!(m as any).udiRequired,
     };
   }
 
   /** 物料全部 GTIN（含单品/中包/托盘），供收货侧比对（WMS 不直接查 inventory 表） */
   async resolveMaterialGtins(p: { tenantId: string | number; materialId: string | number }): Promise<string[]> {
+    return (await this.resolveMaterialGtinRows(p)).map((g) => g.gtin);
+  }
+
+  /** 物料全部包装码（含级别与每包件数），收货折单用 */
+  async resolveMaterialGtinRows(p: { tenantId: string | number; materialId: string | number }) {
     const tenantId = this.resolveTenant(p.tenantId);
     const rows = await this.materialGtins.find({ where: { tenantId, materialId: Number(p.materialId) } });
-    return rows.map((g) => g.gtin);
+    return rows.map((g) => ({ gtin: g.gtin, packLevel: g.packLevel, packQty: Number(g.packQty) || 1 }));
   }
 
   /** 仓库解析（编码或 ID → 基础字段） */

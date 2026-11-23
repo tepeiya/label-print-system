@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   normalizeMaterialGtin, matchMaterialGtin, matchMaterialGtins, checkUdiRequired, judgeScanGtin,
+  matchPack, convertToUnits,
 } from '../udi.match.calc';
 
 const GTIN14 = '06901234567892';
@@ -108,4 +109,35 @@ test('总入口：给了多码列表就优先按整组匹配', () => {
     udiRequired: true, hasCode: true, codeGtin: GTIN_CARTON,
   });
   assert.equal(r.ok, true);
+});
+
+
+test('折箱：扫中包码命中包装行并带级别与每包件数', () => {
+  const rows = [
+    { gtin: GTIN14, packLevel: 'UNIT', packQty: 1 },
+    { gtin: GTIN_CARTON, packLevel: 'CARTON', packQty: 24 },
+  ];
+  const m = matchPack(rows, GTIN_CARTON);
+  assert.ok(m);
+  assert.equal(m!.packLevel, 'CARTON');
+  assert.equal(m!.packQty, 24);
+});
+
+test('折箱：未命中返回 null；空列表安全返回 null', () => {
+  assert.equal(matchPack([], GTIN_CARTON), null);
+  assert.equal(matchPack(null, GTIN14), null);
+  assert.equal(matchPack([{ gtin: GTIN14, packLevel: 'UNIT', packQty: 1 }], GTIN_CARTON), null);
+});
+
+test('折箱：中包 N 包 × 每包件数折单品，UNIT 级不折算', () => {
+  assert.equal(convertToUnits(2, 24, 'CARTON'), 48);
+  assert.equal(convertToUnits(1, 24, 'PALLET'), 24);
+  assert.equal(convertToUnits(5, 24, 'UNIT'), 5);
+  assert.equal(convertToUnits(3, 10), 3);
+});
+
+test('折箱：小数包数按三舍四入到三位', () => {
+  assert.equal(convertToUnits(1.5, 10, 'CARTON'), 15);
+  assert.equal(convertToUnits(2, 0.5, 'CARTON'), 1);
+  assert.equal(convertToUnits(1.25, 8, 'CARTON'), 10);
 });

@@ -440,6 +440,17 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 - 测试：新增 6 例（纯函数 5 + 发料 1），全量 **856 例 / 849 通过 / 0 失败 / 7 跳过**。
 - 边界：包装级别只做标签、不做拆箱数量换算；不支持 SSCC 箱码；真库未验证。
 
+### U5.3 拆箱数量换算（中包/托盘 → 单品）
+
+> 实施记录 `docs/23-pack-qty-conversion.md`；迁移 `backend/scripts/wms_u5_material_gtins.sql`（追加 `pack_qty` 列）。
+
+- `material_gtins` 增 `pack_qty`（每包件数，三位小数）；UNIT 恒为 1，CARTON/PALLET 必须为正数。
+- 纯函数 `matchPack` / `convertToUnits`：扫包码命中后 `单品件数 = 包数 × 每包件数`，UNIT 不折算。
+- 收货扫码按折算后单品件数累加台账；响应带 `pack` 折算信息，UDI `RECEIVE` 事件 detail 保留包数/件数/级别。
+- 产品资料页多行录入第三段件数：`码|CARTON|24`。
+- 测试：新增 4 例纯函数，全量 **860 例 / 853 通过 / 0 失败 / 7 跳过**；console 构建通过。
+- 边界：发料侧暂不做包码折算；收货折箱分支无服务级单测；不支持 SSCC 箱码与层级递归换算；真库未验证。
+
 ---
 
 ## 10. 医疗 UDI 合规赋码（2026-11-23，里程碑 U1–U5 已实施）

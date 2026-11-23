@@ -90,3 +90,29 @@ export function judgeScanGtin(p: {
     : matchMaterialGtin(p.materialGtin, p.codeGtin);
   return { ok: m.ok, skipped: m.skipped, reason: m.reason };
 }
+
+
+// ---------------------------------------------------------------- U5.3 拆箱换算
+export interface PackRow { gtin: string; packLevel: string; packQty: number }
+
+function round3(n: number): number { return Math.round(Number(n) * 1000) / 1000; }
+
+/** 从物料整组 GTIN 里找出扫码命中的包装行（含级别与折算量） */
+export function matchPack(rows: Array<PackRow | null | undefined> | null | undefined, scannedGtin: string | null | undefined): PackRow | null {
+  const scanned = String(scannedGtin ?? '').trim();
+  if (!scanned) return null;
+  for (const row of rows ?? []) {
+    if (!row) continue;
+    if (String(row.gtin).trim() === scanned) {
+      return { gtin: scanned, packLevel: row.packLevel ?? 'UNIT', packQty: Number(row.packQty) || 1 };
+    }
+  }
+  return null;
+}
+
+/** 包装数量 → 单品件数：扫 N 包 × 每包件数；UNIT 级不折算 */
+export function convertToUnits(packCount: number, packQty: number, packLevel?: string): number {
+  const count = round3(Number(packCount) || 0);
+  const qty = round3(Number(packQty) || 1);
+  return packLevel && packLevel !== 'UNIT' ? round3(count * qty) : count;
+}

@@ -82,6 +82,7 @@ export class MaterialGtin {
   @Column({ name: 'material_id', type: 'bigint' }) materialId: number;
   @Column({ length: 14, type: 'varchar' }) gtin: string;
   @Column({ name: 'pack_level', type: 'varchar', length: 8, default: 'UNIT' }) packLevel: 'UNIT' | 'CARTON' | 'PALLET';
+  @Column({ name: 'pack_qty', type: 'numeric', precision: 14, scale: 3, default: '1' }) packQty: string;
   @Column({ name: 'is_primary', default: false }) isPrimary: boolean;
   @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
 }

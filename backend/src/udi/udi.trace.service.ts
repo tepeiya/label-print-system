@@ -275,7 +275,7 @@ export class UdiTraceService {
    * 同一收货单 + 同一单元重复扫 → 事件键幂等回放，status 不变。
    * 单元已在他单收货/已发料 → 409（避免一码多收）。
    */
-  async receiveByScan(input: { code: string; receiptNo: string; lineNo?: number; skuCode?: string; qty?: number }) {
+  async receiveByScan(input: { code: string; receiptNo: string; lineNo?: number; skuCode?: string; qty?: number; packCount?: number; packQty?: number; packLevel?: string }) {
     const tenantId = useTenantId();
     const parsed = udiKeyFromCode(input.code);
     if (!parsed.ok) throw new BadRequestException(`UDI 码解析失败：${parsed.errors.join('；')}`);

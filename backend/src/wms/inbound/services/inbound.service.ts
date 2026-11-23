@@ -21,7 +21,7 @@ import {
 import { useTenant, useTenantId } from '../../../common/tenant.context';
 import { UdiTraceService } from '../../../udi/udi.trace.service';
 import { udiKeyFromCode } from '../../../udi/udi.link.calc';
-import { judgeScanGtin } from '../../../udi/udi.match.calc';
+import { judgeScanGtin, matchPack, convertToUnits } from '../../../udi/udi.match.calc';
 
 @Injectable()
 export class InboundService {
@@ -165,8 +165,10 @@ export class InboundService {
     if (r.status === 'CANCELLED' || ['RECEIVED', 'PUTAWAY_DONE'].includes(r.status)) {
       throw new BadRequestException('当前状态不允许扫码收货');
     }
-    const qty = Number(dto.qty);
-    if (!(qty > 0)) throw new BadRequestException('实收数量必须为正数');
+    const packCount = Number(dto.qty);
+    if (!(packCount > 0)) throw new BadRequestException('实收数量必须为正数');
+    let qty = packCount;
+    let packInfo: Record<string, unknown> | null = null;
     const skuCode = String(dto.sku ?? '').trim();
     const material = skuCode
       ? await this.materials.findOne({ where: { tenantId, code: skuCode } })
@@ -210,9 +212,15 @@ export class InboundService {
         if (!parsed.ok) throw new BadRequestException(`UDI 码解析失败：${parsed.errors.join('；')}`);
         codeGtin = parsed.gtin ?? null;
       }
-      const gtins = dto.udiCode && target.skuId
-        ? await this.inventoryGw.resolveMaterialGtins({ tenantId, materialId: target.skuId })
+      const packRows = dto.udiCode && target.skuId
+        ? await this.inventoryGw.resolveMaterialGtinRows({ tenantId, materialId: target.skuId })
         : [];
+      const gtins = packRows.map((g) => g.gtin);
+      const matched = matchPack(packRows, codeGtin);
+      if (matched && matched.packLevel !== 'UNIT') {
+        qty = convertToUnits(packCount, matched.packQty, matched.packLevel);
+        packInfo = { packCount, packQty: matched.packQty, packLevel: matched.packLevel, units: qty };
+      }
       const judge = judgeScanGtin({
         materialGtin: lineMaterial?.gtin, materialGtins: gtins,
         udiRequired: lineMaterial?.udiRequired,
@@ -251,18 +259,19 @@ export class InboundService {
     if (r.status === 'CREATED') await this.receipts.update({ id: r.id }, { status: 'RECEIVING' });
     void this.audit.write(tenantId, 'wms.receive.scan', { receiptId, lineId: target.id, scannedSku: skuCode, qty, cumulative: after });
     const refreshed = await this.lines.findOne({ where: { id: Number(target.id) } });
-    const udiLink = dto.udiCode ? await this.udiOnScan(r, dto, refreshed ?? target) : null;
-    return { ok: true, line: refreshed ? this.lineView(refreshed) : this.lineView(target), ...(udiLink ?? {}) };
+    const udiLink = dto.udiCode ? await this.udiOnScan(r, dto, refreshed ?? target, qty, packInfo) : null;
+    return { ok: true, line: refreshed ? this.lineView(refreshed) : this.lineView(target), ...(packInfo ? { pack: packInfo } : {}), ...(udiLink ?? {}) };
   }
 
   /** UDI 联动（U5）：扫码收货时建档 + 记 RECEIVE；默认不阻塞收货，strictUdi 时抛错 */
-  private async udiOnScan(r: WmsReceipt, dto: any, line: WmsReceiptLine): Promise<Record<string, any>> {
+  private async udiOnScan(r: WmsReceipt, dto: any, line: WmsReceiptLine, unitQty?: number, packInfo?: Record<string, unknown> | null): Promise<Record<string, any>> {
     const tenantId = useTenantId();
     if (!this.udi) return { udiWarning: '服务端未启用 UDI 模块，已跳过建档' };
     try {
       const udi = await this.udi.receiveByScan({
         code: String(dto.udiCode), receiptNo: r.receiptNo,
-        lineNo: line.lineNo, skuCode: String(dto.sku ?? ''), qty: Number(dto.qty),
+        lineNo: line.lineNo, skuCode: String(dto.sku ?? ''), qty: unitQty ?? Number(dto.qty),
+        packCount: packInfo?.packCount as number | undefined, packQty: packInfo?.packQty as number | undefined, packLevel: packInfo?.packLevel as string | undefined,
       });
       void this.audit.write(tenantId, 'wms.receive.udi', {
         receiptNo: r.receiptNo, udiKey: udi.udiKey, gtin: udi.gtin, idempotent: udi.idempotent,

@@ -26,3 +26,8 @@ WHERE gtin IS NOT NULL
 ON CONFLICT (tenant_id, gtin) DO NOTHING;
 
 COMMENT ON TABLE material_gtins IS '物料多 GTIN：单品/中包/托盘；扫码比对按整组匹配';
+
+-- U5.3 拆箱换算：每个包装码带单件折算量（UNIT=1；CARTON/PALLET 为每包件数）
+ALTER TABLE material_gtins ADD COLUMN IF NOT EXISTS pack_qty numeric(14,3) NOT NULL DEFAULT 1;
+UPDATE material_gtins SET pack_qty = 1 WHERE pack_qty IS NULL;
+COMMENT ON COLUMN material_gtins.pack_qty IS '该包装码折算的单品件数；UNIT=1，CARTON/PALLET=每包件数';

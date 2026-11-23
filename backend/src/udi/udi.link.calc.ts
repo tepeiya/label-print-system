@@ -80,13 +80,14 @@ export function checkUnitForIssue(status: string): Guard {
 }
 
 /** RECEIVE 事件 detail：保留 WMS 侧定位信息，便于对账 */
-export function receiveDetail(p: { receiptNo?: string; lineNo?: number; skuCode?: string; qty?: number }) {
+export function receiveDetail(p: { receiptNo?: string; lineNo?: number; skuCode?: string; qty?: number; packCount?: number; packQty?: number; packLevel?: string }) {
   return {
     source: 'wms.receive-scan',
     receiptNo: p.receiptNo ?? null,
     lineNo: p.lineNo ?? null,
     skuCode: p.skuCode ?? null,
     qty: p.qty ?? null,
+    ...(p.packCount != null ? { packCount: p.packCount, packQty: p.packQty ?? null, packLevel: p.packLevel ?? null } : {}),
   };
 }
 

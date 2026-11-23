@@ -193,7 +193,7 @@
         </el-form-item>
         <el-form-item label="GTIN 列表">
           <el-input v-model="matForm.gtinsText" type="textarea" :rows="3"
-                    placeholder="每行一个：13/14 位 GTIN；中包/托盘码写成 6901234567892|CARTON" />
+                    placeholder="每行一个：13/14 位 GTIN；中包/托盘码写成 6901234567892|CARTON|24（第三段为每包件数，省略默认 1）" />
           <div class="field-hint">单品码为主码；收货/发料扫 UDI 时按整组比对，留空 = 不比对</div>
         </el-form-item>
         <el-form-item label="必须扫 UDI">
@@ -717,7 +717,7 @@ function openMat(row?: any) {
     defaultWarehouseId: row.defaultWarehouseId ?? undefined,
     defaultLocationId: row.defaultLocationId ?? undefined,
     gtinsText: (row.gtins?.length
-      ? row.gtins.map((g: any) => (g.packLevel === 'UNIT' ? g.gtin : `${g.gtin}|${g.packLevel}`)).join('\n')
+      ? row.gtins.map((g: any) => (g.packLevel === 'UNIT' ? g.gtin : `${g.gtin}|${g.packLevel}|${g.packQty ?? 1}`)).join('\n')
       : (row.gtin ?? '')),
     udiRequired: !!row.udiRequired,
     customFields: { ...(row.customFields || {}) },
@@ -733,8 +733,10 @@ function parseGtins(text: string) {
     .split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean)
     .slice(0, 10)
     .map((x) => {
-      const [gtin, level] = x.split('|').map((v) => v.trim());
-      return { gtin, packLevel: (level || 'UNIT').toUpperCase() };
+      const [gtin, level, qty] = x.split('|').map((v) => v.trim());
+      const packLevel = (level || 'UNIT').toUpperCase();
+      const packQty = packLevel === 'UNIT' ? 1 : (Number(qty) > 0 ? Number(qty) : undefined);
+      return packLevel === 'UNIT' ? { gtin, packLevel } : { gtin, packLevel, packQty };
     });
 }
 async function saveMat() {

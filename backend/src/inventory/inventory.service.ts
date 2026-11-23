@@ -230,10 +230,10 @@ export class InventoryService {
         .where('g.tenant_id = :tid AND g.material_id IN (:...ids)', { tid: tenantId, ids })
         .orderBy('g.id', 'ASC').getMany()
       : [];
-    const byMat = new Map<number, Array<{ gtin: string; packLevel: string; isPrimary: boolean }>>();
+    const byMat = new Map<number, Array<{ gtin: string; packLevel: string; packQty: number; isPrimary: boolean }>>();
     for (const g of gts) {
       const arr = byMat.get(Number(g.materialId)) ?? [];
-      arr.push({ gtin: g.gtin, packLevel: g.packLevel, isPrimary: !!g.isPrimary });
+      arr.push({ gtin: g.gtin, packLevel: g.packLevel, packQty: Number(g.packQty) || 1, isPrimary: !!g.isPrimary });
       byMat.set(Number(g.materialId), arr);
     }
     return rows.map((r) => ({
@@ -500,21 +500,24 @@ export class InventoryService {
    * 同租户内 GTIN 全局唯一（一个码只能属于一个物料）。
    */
   private async prepareGtins(tenantId: number, input?: {
-    gtins?: Array<{ gtin: string; packLevel?: string }> | null;
+    gtins?: Array<{ gtin: string; packLevel?: string; packQty?: number | string }> | null;
     gtin?: string | null;
-  }, materialId?: number): Promise<{ list: Array<{ gtin: string; packLevel: 'UNIT' | 'CARTON' | 'PALLET' }>; primary: string | null }> {
+  }, materialId?: number): Promise<{ list: Array<{ gtin: string; packLevel: 'UNIT' | 'CARTON' | 'PALLET'; packQty: number }>; primary: string | null }> {
     const { normalizeMaterialGtin } = await import('../udi/udi.match.calc');
     const raw = (input?.gtins?.length
-      ? input.gtins.map((g) => ({ gtin: String(g.gtin ?? ''), packLevel: String(g.packLevel ?? 'UNIT').toUpperCase() }))
-      : (input?.gtin ? [{ gtin: String(input.gtin), packLevel: 'UNIT' }] : []));
+      ? input.gtins.map((g) => ({ gtin: String(g.gtin ?? ''), packLevel: String(g.packLevel ?? 'UNIT').toUpperCase(), packQty: g.packQty }))
+      : (input?.gtin ? [{ gtin: String(input.gtin), packLevel: 'UNIT', packQty: 1 }] : []));
     if (raw.length > 10) throw new BadRequestException('一个物料最多登记 10 个 GTIN');
-    const list: Array<{ gtin: string; packLevel: 'UNIT' | 'CARTON' | 'PALLET' }> = [];
+    const list: Array<{ gtin: string; packLevel: 'UNIT' | 'CARTON' | 'PALLET'; packQty: number }> = [];
     for (const item of raw) {
       if (!['UNIT', 'CARTON', 'PALLET'].includes(item.packLevel)) throw new BadRequestException(`未知包装级别：${item.packLevel}（UNIT/CARTON/PALLET）`);
+      const rawQty = Number(item.packQty);
+      const packQty = item.packLevel === 'UNIT' ? 1 : (Number.isFinite(rawQty) && rawQty > 0 ? Math.round(rawQty * 1000) / 1000 : 0);
+      if (item.packLevel !== 'UNIT' && packQty <= 0) throw new BadRequestException(`包装 ${item.gtin} 的每包件数必须为正数`);
       const norm = normalizeMaterialGtin(item.gtin);
       if (!norm.ok || !norm.gtin14) throw new BadRequestException(norm.errors.join('；') || `GTIN 非法：${item.gtin}`);
       if (list.some((x) => x.gtin === norm.gtin14)) throw new BadRequestException(`GTIN 重复：${norm.gtin14}`);
-      list.push({ gtin: norm.gtin14, packLevel: item.packLevel as any });
+      list.push({ gtin: norm.gtin14, packLevel: item.packLevel as any, packQty });
     }
     for (const item of list) {
       const dup = await this.materialGtins.findOne({ where: { tenantId, gtin: item.gtin } });
@@ -528,12 +531,12 @@ export class InventoryService {
   }
 
   /** 用整组 GTIN 覆盖物料的码（先删后插，保证与前端提交一致） */
-  private async syncGtins(tenantId: number, materialId: number, list: Array<{ gtin: string; packLevel: string }>, primary: string | null) {
+  private async syncGtins(tenantId: number, materialId: number, list: Array<{ gtin: string; packLevel: string; packQty: number }>, primary: string | null) {
     await this.materialGtins.delete({ tenantId, materialId });
     for (const item of list) {
       await this.materialGtins.save(this.materialGtins.create({
         tenantId, materialId, gtin: item.gtin, packLevel: item.packLevel as any,
-        isPrimary: item.gtin === primary,
+        packQty: String(item.packQty), isPrimary: item.gtin === primary,
       }));
     }
   }
@@ -580,7 +583,7 @@ export class InventoryService {
     groupId?: number | null; autoPrint?: boolean; printerId?: number | null;
     defaultWarehouseId?: number | null; defaultLocationId?: number | null;
     customFields?: Record<string, unknown>; gtin?: string; udiRequired?: boolean;
-    gtins?: Array<{ gtin: string; packLevel?: string }>;
+    gtins?: Array<{ gtin: string; packLevel?: string; packQty?: number | string }>;
   }) {
     const row = await this.materials.findOne({ where: { tenantId, id } });
     if (!row) throw new NotFoundException('物料不存在');
