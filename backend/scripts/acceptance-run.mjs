@@ -61,6 +61,15 @@ const GATE_DEFS = [
   { id: 'R1', name: 'RLS 无 GUC → 业务表 0 行', src: 'rls-enforce' },
   { id: 'R2', name: 'RLS 带 GUC → 只见本租户行 + WITH CHECK 拒越权写', src: 'rls-enforce' },
   { id: 'R3', name: '平台表（tenants）不隔离，登录链路可读', src: 'rls-enforce' },
+  // D4：流程闭合（docs/28）
+  { id: 'D4-1', name: 'PDA 发料扫箱码：2 箱×24=48 件扣减（与收货折箱同口径）', src: 'd4-flow' },
+  { id: 'D4-1b', name: '扫未登记包码：不拦截、按剩余量发并给 packWarning', src: 'd4-flow' },
+  { id: 'D4-2', name: '退货幂等：重复提交回放，库存不二次回补', src: 'd4-flow' },
+  { id: 'D4-2b', name: '退料原因必填 + 超发量退料被拒', src: 'd4-flow' },
+  { id: 'D4-3', name: '全链 CREATED→RELEASED→ISSUING→ISSUED→CLOSED', src: 'd4-flow' },
+  // D5：能演示能报价（docs/29）
+  { id: 'DEMO-1', name: '一条命令起演示环境并注入样板数据（20 物料/2 工单/50 UDI）', src: 'demo:data-only' },
+  { id: 'U6', name: '国家 UDI 导出 Excel/XML + 字段映射表可被解析', src: 'direct:export' },
   // 收货侧 UDI 拦截（docs/21 §68 建议门）：无 InboundService 服务级夹具，本报告固定 skip
   { id: 'G8', name: '收货侧 UDI 拦截（udi_required 物料必须带码）', src: 'skip:no-fixture' },
   // UDI 门（docs/19 §6）与 U5 系列——由单测覆盖（真库集成未单列）
@@ -145,7 +154,7 @@ log('\n[2/4] 真库集成测试（jest --runInBand）');
       for (const a of suite.assertionResults) {
         const title = a.fullName || a.title;
         // 门号优先取用例标题前缀（G3/T2/P1…），无前缀才回落到套件级 id
-        const idm = /^(G\d+|T\d+|P\d+|U\d+(?:\.\d+)?)\s/.exec(a.title);
+        const idm = /^(D\d+-\d+[a-z]?|G\d+|T\d+|P\d+|U\d+(?:\.\d+)?)\s/.exec(a.title);
         // 套件内用例无门号前缀时（如打印网关 4 例），按家族字母 + 套件内序号编 P1..P4
         const id = (idm ? idm[1] : def ? (suite.assertionResults.length > 1 ? def.id.replace(/\d+$/, '') + (idx + 1) : def.id) : 'INT');
         idx += 1;
@@ -182,6 +191,33 @@ log('\n[3/4] 单测（UDI / GTIN / 拆箱换算 + 全量回归）');
     }
   } else {
     pushGate('UDI-UNIT', 'UDI 定向单测文件缺失', 'skip');
+  }
+
+  // 3.1b D5/U6：导出单测（Excel/XML 可被解析 + 字段映射表）
+  {
+    const r = run('node', ['--import', 'tsx', '--test', '--test-reporter=tap', 'src/udi/__tests__/udi.export.test.ts']);
+    const pass = Number((/# pass (\d+)/.exec(r.stdout) || [])[1] || 0);
+    const fail = Number((/# fail (\d+)/.exec(r.stdout) || [])[1] || 0);
+    pushGate('U6', '国家 UDI 导出 Excel/XML + 字段映射表', fail === 0 && pass >= 6 ? 'pass' : 'fail', {
+      detail: `pass=${pass} fail=${fail}（字段映射 14 项、xlsx 双 sheet 回读、xml 转义）`,
+      durationMs: r.ms,
+    });
+  }
+
+  // 3.2b D5/DEMO-1：一键演示环境（--data-only，独立库 labelflow_demo，不碰测试库）
+  {
+    const demoUrl = process.env.DEMO_DATABASE_URL || `postgres://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/labelflow_demo`;
+    const r = run('bash', ['scripts/demo-up.sh', '--data-only'], {
+      env: { ...ENV, DEMO_DATABASE_URL: demoUrl },
+    });
+    const counts = run('psql', [demoUrl, '-Atq', '-c',
+      "SELECT (SELECT count(*) FROM materials WHERE tenant_id=1)||','||(SELECT count(*) FROM wms_work_orders WHERE tenant_id=1)||','||(SELECT count(*) FROM udi_units WHERE tenant_id=1)"]);
+    const [mat, wo, udi] = (counts.stdout.trim() || '0,0,0').split(',');
+    const dataOk = Number(mat) >= 20 && Number(wo) >= 2 && Number(udi) >= 50;
+    pushGate('DEMO-1', '一条命令起演示环境并注入样板数据', r.status === 0 && dataOk ? 'pass' : 'fail', {
+      detail: `demo-up exit=${r.status} · 物料 ${mat} / 工单 ${wo} / UDI ${udi}`,
+      durationMs: r.ms,
+    });
   }
 
   // 3.2 全量回归

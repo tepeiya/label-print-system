@@ -71,6 +71,15 @@ export class UdiTraceController {
     return csv;
   }
 
+  /**
+   * D5/U6：导出国家 UDI 数据库格式（Excel/XML）。
+   * 返回 base64 + 文件名，前端解码下载；字段映射见 udi.export.calc.ts 的 UDI_DB_COLUMNS。
+   */
+  @Get('export/units.file')
+  exportUnitsFile(@Query() q: any) {
+    return this.svc.exportUnitsFile(q ?? {});
+  }
+
   /** 导出留痕报表 CSV */
   @Get('export/print-audit.csv')
   @Header('Content-Type', 'text/csv; charset=utf-8')

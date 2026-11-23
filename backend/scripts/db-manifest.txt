@@ -41,4 +41,5 @@ wms_u5_material_gtin.sql                   # materials 增 gtin / udi_required
 wms_u5_material_gtins.sql                  # 多码表 material_gtins（含 pack_qty），并回填旧 gtin
 saas_p6_rls.sql                            # 第二遍：必须放在所有建表之后重跑，给新表补挂隔离策略（脚本幂等）
 
-@demo seed-inventory-demo.sql              # 演示数据（物料/库位/批次/BOM），仅 --seed-demo
+@demo seed-inventory-demo.sql              # 演示数据（水果/生鲜玩具数据：物料/库位/批次/BOM），仅 --seed-demo
+@demo seed-demo-hospital.sql               # 演示数据（医疗 UDI 场景：20 医用耗材/2 工单/50 UDI 码/一物料多码），仅 --seed-demo

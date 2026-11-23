@@ -11,6 +11,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Between, Repository } from 'typeorm';
 import { UdiUnit, UdiPackage, UdiEvent } from './entities/udi.entity';
 import { parseUdi, normalizeGtin, formatGs1Date } from './udi.calc';
+import { buildUdiXlsx, buildUdiXml, udiExportFilename, type UdiExportRow } from './udi.export.calc';
 import { AuditService } from '../audit/audit.module';
 import { useTenant, useTenantId } from '../common/tenant.context';
 import {
@@ -534,6 +535,86 @@ export class UdiTraceService {
 
     void this.audit.write(tenantId, 'udi.export.units', { rows: rows.length, since: q.since, until: q.until });
     return { csv, rows: rows.length, fileName: reportFileName('udi-units', q.since, q.until) };
+  }
+
+  /**
+   * D5/U6：国家 UDI 数据库导出（Excel / XML）。
+   * 与 CSV 同一批查询条件，字段映射在 `udi.export.calc.ts` 的 UDI_DB_COLUMNS 里集中维护。
+   * 返回 base64，前端解码下载（不绕过全局响应信封，避免和 ResponseInterceptor 打架）。
+   */
+  async exportUnitsFile(q: { since?: string; until?: string; status?: string; gtin?: string; limit?: number; format?: 'xlsx' | 'xml' }) {
+    const tenantId = useTenantId();
+    const where: any = { tenantId };
+    if (q.status) where.status = q.status;
+    if (q.gtin) where.gtin = normalizeGtin(q.gtin).gtin14;
+    const range = this.range(q.since, q.until);
+    if (range) where.createdAt = range;
+    const units = await this.units.find({
+      where, order: { createdAt: 'DESC' }, take: Math.min(20000, Number(q.limit ?? 5000)),
+    });
+
+    // 产品名称/规格：udi_units 不存产品快照，用 GTIN 反查物料（查不到留空，不阻断导出）
+    const nameMap = await this.materialNamesByGtin(tenantId, [...new Set(units.map((u) => u.gtin))]);
+
+    const rows: UdiExportRow[] = units.map((u) => ({
+      udiKey: u.udiKey, gtin: u.gtin,
+      productName: nameMap.get(u.gtin)?.name ?? null,
+      spec: nameMap.get(u.gtin)?.spec ?? null,
+      lot: u.lot, serial: u.serial,
+      productionDate: u.productionDate ? String(u.productionDate).slice(0, 10) : null,
+      expiryDate: u.expiryDate ? String(u.expiryDate).slice(0, 10) : null,
+      packageSscc: u.packageSscc, workOrderNo: u.workOrderNo, templateCode: u.templateCode,
+      printedAt: u.printedAt ? new Date(u.printedAt).toISOString() : null,
+      createdAt: new Date(u.createdAt).toISOString(), status: u.status,
+    }));
+
+    const format = q.format === 'xml' ? 'xml' : 'xlsx';
+    const meta = { tenantId, since: q.since, until: q.until };
+    if (format === 'xml') {
+      const xml = buildUdiXml(rows, meta);
+      void this.audit.write(tenantId, 'udi.export.xml', { rows: rows.length, since: q.since, until: q.until });
+      return {
+        format, fileName: udiExportFilename('xml', tenantId), contentType: 'application/xml; charset=utf-8',
+        rows: rows.length, base64: Buffer.from(xml, 'utf8').toString('base64'),
+      };
+    }
+    const buf = buildUdiXlsx(rows, meta);
+    void this.audit.write(tenantId, 'udi.export.xlsx', { rows: rows.length, since: q.since, until: q.until });
+    return {
+      format, fileName: udiExportFilename('xlsx', tenantId),
+      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      rows: rows.length, base64: buf.toString('base64'),
+    };
+  }
+
+  /**
+   * GTIN → 产品名称/规格（导出补全用）。
+   * 走原生 SQL 而非注入 Material 实体：本文件被 node --test 直接加载，
+   * 而 inventory.entity.ts 依赖 emitDecoratorMetadata（tsx 下没有），引进来会连带整个 UDI 单测崩掉。
+   *
+   * @param gtins 要查的 GTIN14 列表
+   * @returns gtin → { name, spec }（一条 GTIN 对应多物料时取先登记的那条）
+   */
+  private async materialNamesByGtin(tenantId: number, gtins: string[]) {
+    const map = new Map<string, { name: string; spec: string | null }>();
+    if (!gtins.length) return map;
+    const rows: Array<{ gtin: string; name: string; spec: string | null }> = await this.units.query(
+      `SELECT g.gtin, m.name, m.spec
+         FROM material_gtins g
+         JOIN materials m ON m.id = g.material_id AND m.tenant_id = g.tenant_id
+        WHERE g.tenant_id = $1 AND g.gtin = ANY($2::varchar[])
+        ORDER BY g.is_primary DESC, g.id`,
+      [tenantId, gtins],
+    );
+    for (const r of rows) if (!map.has(r.gtin)) map.set(r.gtin, { name: r.name, spec: r.spec ?? null });
+    // 兜底：物料主档自带 gtin 但没登记 material_gtins 的老数据
+    const mats: Array<{ gtin: string; name: string; spec: string | null }> = await this.units.query(
+      `SELECT gtin, name, spec FROM materials
+        WHERE tenant_id = $1 AND gtin = ANY($2::varchar[])`,
+      [tenantId, gtins],
+    );
+    for (const m of mats) if (!map.has(m.gtin)) map.set(m.gtin, { name: m.name, spec: m.spec ?? null });
+    return map;
   }
 
   /** 留痕报表 CSV：按天汇总 + 按模板汇总两个段，方便直接给审核员 */
