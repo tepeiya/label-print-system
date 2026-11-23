@@ -220,6 +220,11 @@ export class InboundService {
         });
         throw new BadRequestException(judge.reason);
       }
+      if (dto.forceUdi && dto.udiCode) {
+        void this.audit.write(tenantId, 'wms.receive.udi.force', {
+          receiptId, lineId: target.id, materialCode: lineMaterial?.code, note: 'GTIN/必扫强制放行',
+        });
+      }
       if (judge.skipped && dto.udiCode && !lineMaterial?.gtin) {
         void this.audit.write(tenantId, 'wms.receive.udi.gtin_skipped', {
           receiptId, lineId: target.id, materialCode: lineMaterial?.code, note: '物料未登记 GTIN，跳过比对',

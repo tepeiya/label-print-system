@@ -415,6 +415,11 @@ export class IssuingService {
       materialGtin: material.gtin, udiRequired: material.udiRequired,
       codeGtin: parsedUdi?.gtin ?? null, hasCode: !!dto.udiCode, force: !!dto.forceUdiGtin,
     });
+    if (dto.forceUdiGtin) {
+      void this.audit.write(tenantId, 'wms.wo.issue.udi.gtin_force', {
+        woNo: wo.woNo, lineNo: line.lineNo, materialGtin: material.gtin, codeUdi: dto.udiCode ?? null,
+      }, undefined, 'wms_work_order', wo.id);
+    }
     if (!udiJudge.ok) {
       body.verdict.ok = false;
       body.verdict.message = udiJudge.reason ?? body.verdict.message;
