@@ -203,10 +203,13 @@ export class InventoryGateway {
   }
 
   /** 物料解析（编码或 ID → 基础字段），供工单手工行、标签变量使用 */
-  async resolveMaterial(p: { tenantId: string | number; ref: string | number }): Promise<{ id: number; code: string; name: string; unit: string }> {
+  async resolveMaterial(p: { tenantId: string | number; ref: string | number }): Promise<{ id: number; code: string; name: string; unit: string; gtin: string | null; udiRequired: boolean }> {
     const tenantId = this.resolveTenant(p.tenantId);
     const m = await this.materialById(tenantId, p.ref);
-    return { id: Number(m.id), code: m.code, name: m.name, unit: m.unit };
+    return {
+      id: Number(m.id), code: m.code, name: m.name, unit: m.unit,
+      gtin: (m as any).gtin ?? null, udiRequired: !!(m as any).udiRequired,
+    };
   }
 
   /** 仓库解析（编码或 ID → 基础字段） */

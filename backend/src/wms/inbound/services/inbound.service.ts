@@ -20,6 +20,8 @@ import {
 } from './post-decision.calc';
 import { useTenant, useTenantId } from '../../../common/tenant.context';
 import { UdiTraceService } from '../../../udi/udi.trace.service';
+import { udiKeyFromCode } from '../../../udi/udi.link.calc';
+import { judgeScanGtin } from '../../../udi/udi.match.calc';
 
 @Injectable()
 export class InboundService {
@@ -196,6 +198,32 @@ export class InboundService {
         }));
         void this.audit.write(tenantId, 'wms.receive.wrong_sku', { receiptId, lineId: wrong.id, scannedSku: skuCode, qty });
         return { ok: true, warning: 'WRONG_SKU：SKU 不在收货单内，已新增差异行', line: this.lineView(wrong), udiWarning: dto.udiCode ? 'SKU 不在单内，未记 UDI 收货' : undefined };
+      }
+    }
+
+    // U5.1：扫错料拦截——物料登记 GTIN 时必须与扫码 GTIN 一致；udi_required 物料必须带码
+    const lineMaterial = material ?? await this.materials.findOne({ where: { tenantId, id: Number(target.skuId) } });
+    if (dto.udiCode || lineMaterial?.udiRequired) {
+      let codeGtin: string | null = null;
+      if (dto.udiCode) {
+        const parsed = udiKeyFromCode(String(dto.udiCode));
+        if (!parsed.ok) throw new BadRequestException(`UDI 码解析失败：${parsed.errors.join('；')}`);
+        codeGtin = parsed.gtin ?? null;
+      }
+      const judge = judgeScanGtin({
+        materialGtin: lineMaterial?.gtin, udiRequired: lineMaterial?.udiRequired,
+        codeGtin, hasCode: !!dto.udiCode, force: !!dto.forceUdi,
+      });
+      if (!judge.ok) {
+        void this.audit.write(tenantId, 'wms.receive.udi.gtin_block', {
+          receiptId, lineId: target.id, materialCode: lineMaterial?.code, reason: judge.reason,
+        });
+        throw new BadRequestException(judge.reason);
+      }
+      if (judge.skipped && dto.udiCode && !lineMaterial?.gtin) {
+        void this.audit.write(tenantId, 'wms.receive.udi.gtin_skipped', {
+          receiptId, lineId: target.id, materialCode: lineMaterial?.code, note: '物料未登记 GTIN，跳过比对',
+        });
       }
     }
 

@@ -417,6 +417,18 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 - 测试：新增 20 例（纯函数 10 + 追溯服务 8 + 发料编排 2），全量 **837 例 / 830 通过 / 0 失败 / 7 跳过**。
 - 诚实边界：未做 GTIN↔物料校验（扫错料不会拦）、未做"码数=数量"校验、未做 `SHIP`/退货联动、真库未验证。
 
+### U5.1 物料 GTIN 与扫错料拦截
+
+> 实施记录 `docs/21-material-gtin-and-scan-match.md`；迁移 `backend/scripts/wms_u5_material_gtin.sql`。
+
+- `materials` 增 `gtin`（GTIN14，租户内唯一）与 `udi_required`；产品资料页可直接维护，列表可见。
+- 只收 13/14 位（8/12 位校验位口径与 GTIN14 不一致，录入即拒绝）；物料新增/编辑统一校验并查重。
+- 收货扫 UDI：GTIN 不符或 `udi_required` 未扫码 → 拒绝本次扫码（不累加数量），审计留痕；物料未登记 GTIN 则跳过比对不误拦。
+- 发料扫码（`issue-scan`）：不符写入 `verdict.mismatches[field=gtin]` 且 `ok=false`，可 `force` 放行留审计。
+- 发料过账（`issue-post`）：逐码比对，坏码/错码记失败不阻塞其他行；`udi_required` 行未提供码 → 该行不扣库存。
+- 测试：新增 13 例（纯函数 10 + 发料编排 3），全量 **850 例 / 843 通过 / 0 失败 / 7 跳过**；console 构建通过。
+- 诚实边界：收货拦截分支无服务级单测（缺 `InboundService` 夹具），需真库验证；一个物料只支持一个 GTIN（不含中包/箱码）；存量物料未回填 GTIN。
+
 ---
 
 ## 10. 医疗 UDI 合规赋码（2026-11-23，里程碑 U1–U5 已实施）

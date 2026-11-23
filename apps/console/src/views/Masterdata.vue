@@ -42,6 +42,18 @@
             </template>
           </el-table-column>
           <el-table-column prop="safetyStock" label="安全库存" width="110" align="right" />
+          <el-table-column prop="gtin" label="GTIN" width="150">
+            <template #default="{ row }">
+              <span v-if="row.gtin" class="mono">{{ row.gtin }}</span>
+              <span v-else class="field-hint">未赋码</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="UDI" width="90" align="center">
+            <template #default="{ row }">
+              <el-tag v-if="row.udiRequired" type="warning" size="small">必扫</el-tag>
+              <span v-else class="field-hint">—</span>
+            </template>
+          </el-table-column>
           <el-table-column label="标签模板" min-width="150">
             <template #default="{ row }">
               <span v-if="row.templateName">{{ row.templateName }}</span>
@@ -178,6 +190,16 @@
         <el-form-item label="类别"><el-input v-model="matForm.category" placeholder="水果 / 包材 / 耗材" /></el-form-item>
         <el-form-item label="安全库存">
           <el-input-number v-model="matForm.safetyStock" :min="0" :precision="3" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="GTIN">
+          <el-input v-model="matForm.gtin" placeholder="13/14 位 GS1 GTIN，留空 = 不做扫错料比对"
+                    maxlength="14" />
+          <div class="field-hint">收货/发料扫 UDI 时比对 GTIN；填了才能拦住扫错料</div>
+        </el-form-item>
+        <el-form-item label="必须扫 UDI">
+          <el-checkbox v-model="matForm.udiRequired">
+            该物料收货/发料必须扫 UDI 码（未扫到码拒绝）
+          </el-checkbox>
         </el-form-item>
         <el-form-item label="标签模板">
           <el-select v-model="matForm.templateId" clearable filterable placeholder="绑定后可直接打印条码"
@@ -694,6 +716,7 @@ function openMat(row?: any) {
     autoPrint: !!row.autoPrint, printerId: row.printerId ?? undefined,
     defaultWarehouseId: row.defaultWarehouseId ?? undefined,
     defaultLocationId: row.defaultLocationId ?? undefined,
+    gtin: row.gtin ?? '', udiRequired: !!row.udiRequired,
     customFields: { ...(row.customFields || {}) },
   } : {
     id: null, code: '', name: '', spec: '', unit: '件', category: '', safetyStock: 0,
@@ -715,6 +738,8 @@ async function saveMat() {
       printerId: matForm.printerId ?? null,
       defaultWarehouseId: matForm.defaultWarehouseId ?? null,
       defaultLocationId: matForm.defaultLocationId ?? null,
+      gtin: matForm.gtin || null,
+      udiRequired: !!matForm.udiRequired,
       customFields: matForm.customFields || {},
     };
     if (matForm.id) await apiMdUpdateMaterial(matForm.id, payload);

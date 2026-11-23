@@ -70,7 +70,7 @@ export interface ScanActual {
 }
 export interface ScanVerdict {
   ok: boolean;
-  mismatches: Array<{ field: 'material' | 'batch' | 'location'; expected: string; actual: string }>;
+  mismatches: Array<{ field: 'material' | 'batch' | 'location' | 'gtin' | 'udi'; expected: string; actual: string }>;
   /** 是否三项都扫到了（没扫到的项不判，交服务层提示） */
   checked: number;
   message: string;
@@ -115,7 +115,7 @@ export function verifyIssueScan(expected: ScanExpectation, scanned: ScanActual):
     return { ok: false, mismatches, checked: 0, message: '未扫到任何字段：请扫描物料码 / 批次码 / 库位码' };
   }
   if (mismatches.length) {
-    const fieldName = { material: '物料', batch: '批次', location: '库位' } as const;
+    const fieldName = { material: '物料', batch: '批次', location: '库位', gtin: 'GTIN', udi: 'UDI' } as const;
     return {
       ok: false, mismatches, checked,
       message: `扫码不符：${mismatches.map((m) => `${fieldName[m.field]} 应为 ${m.expected}，实际 ${m.actual}`).join('；')}`,

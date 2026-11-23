@@ -18,6 +18,10 @@ export class CreateMaterialDto {
   @IsOptional() @Type(() => Number) @IsInt() defaultLocationId?: number;
   /** 自定义字段值：{ fieldKey: value }，按字段定义校验 */
   @IsOptional() @IsObject() customFields?: Record<string, any>;
+  /** U5.1：GS1 GTIN（13/14 位，入库补位成 GTIN14） */
+  @IsOptional() @IsString() @Length(0, 14) gtin?: string;
+  /** U5.1：是否必须扫 UDI 码 */
+  @IsOptional() @IsBoolean() udiRequired?: boolean;
 }
 
 // 不继承 CreateMaterialDto：class-validator 装饰器沿原型链累加会把 code 重新变必填
@@ -34,6 +38,8 @@ export class UpdateMaterialDto {
   @IsOptional() @Type(() => Number) @IsInt() defaultWarehouseId?: number;
   @IsOptional() @Type(() => Number) @IsInt() defaultLocationId?: number;
   @IsOptional() @IsObject() customFields?: Record<string, any>;
+  @IsOptional() @IsString() @Length(0, 14) gtin?: string;
+  @IsOptional() @IsBoolean() udiRequired?: boolean;
 }
 
 /** 产品自定义字段定义 */

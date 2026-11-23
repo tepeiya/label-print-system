@@ -47,7 +47,8 @@ const MATS: Record<string, any> = {
 };
 const WHS: Record<string, any> = { '5': { id: 5, code: 'WH-A', name: '主仓' } };
 
-function build(opt: { batches?: any[]; failDecreaseOn?: string; udi?: any } = {}) {
+function build(opt: { batches?: any[]; failDecreaseOn?: string; udi?: any; mats?: Record<string, any> } = {}) {
+  const mats: Record<string, any> = { ...MATS, ...(opt.mats ?? {}) };
   const wos = new MemRepo();
   const lines = new MemRepo();
   const issues = new MemRepo();
@@ -62,8 +63,8 @@ function build(opt: { batches?: any[]; failDecreaseOn?: string; udi?: any } = {}
   const inventory: any = {
     resolveMaterial: async (_p: any) => {
       const key = String(_p.ref);
-      if (MATS[key]) return MATS[key];
-      const byCode = Object.values(MATS).find((m) => m.code === key);
+      if (mats[key]) return mats[key];
+      const byCode = Object.values(mats).find((m) => m.code === key);
       if (!byCode) throw new Error(`物料不存在：${key}`);
       return byCode;
     },
@@ -100,7 +101,7 @@ function build(opt: { batches?: any[]; failDecreaseOn?: string; udi?: any } = {}
       const min = Math.min(...linesOut.map((l) => l.maxSets));
       const bounded = Math.min(min, Number(p.demand));
       return {
-        product: MATS['1'], bom: { id: 8, version: 'v1' },
+        product: mats['1'], bom: { id: 8, version: 'v1' },
         kit: {
           demand: Number(p.demand), maxSets: bounded,
           kitRate: Math.floor((bounded / Number(p.demand)) * 10000) / 100,
@@ -347,16 +348,19 @@ test('发料过账：UDI 码逐条记 ISSUE，单条失败不影响过账（U5�
   await run(() => svc.release(wo.id));
   await run(() => svc.issueStart(wo.id));
   const r = await run(() => svc.issuePost(wo.id, {
-    udiCodes: [{ code: 'K1', lineNo: 1 }, { code: 'BAD', lineNo: 2 }],
+    udiCodes: [
+      { code: '(01)06901234567892(10)L1(21)S1', lineNo: 1 },
+      { code: 'BAD', lineNo: 2 },
+    ],
   }));
   // 库存照常过账成功；UDI 单向失败只回报
   assert.equal(r.posted.length, 2);
   assert.equal(issues.rows.length, 2);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 1);   // 坏码在解析阶段就被拦，不进 issueByScan
   assert.equal(r.udi.total, 2);
   assert.equal(r.udi.created, 1);
   assert.equal(r.udi.failed, 1);
-  assert.match(r.udi.results[1].reason, /尚未收货/);
+  assert.match(r.udi.results[1].reason, /解析失败/);
 });
 
 test('发料扫码：带 UDI 码时联动记 ISSUE，并随校验结果返回（U5）', async () => {
@@ -373,4 +377,45 @@ test('发料扫码：带 UDI 码时联动记 ISSUE，并随校验结果返回（
   assert.equal(calls[0].materialCode, 'RM-001');
   assert.equal(res.udi.udiKey, 'K1');
   assert.equal(res.lineNo, 1);
+});
+
+
+test('U5.1 扫错料：GTIN 不符 → 判定 ok=false（可 force 留审计）', async () => {
+  const { svc } = build({ mats: { '2': { ...MATS['2'], gtin: '06901234567892' } } });
+  const wo = await run(() => svc.create({ woNo: 'WO-G1', productMaterialId: 1, warehouseId: 5, demandQty: 10 }));
+  await run(() => svc.kitCheck(wo.id));
+  await run(() => svc.release(wo.id));
+  const res = await run(() => svc.issueScan(wo.id, {
+    lineNo: 1, materialCode: 'RM-001', batchNo: 'B2',
+    udiCode: '(01)06901234567908(10)L1',  // 另一个 GTIN
+  }));
+  assert.equal(res.verdict.ok, false);
+  assert.match(res.verdict.message, /GTIN 不符/);
+  assert.equal(res.canForce, true);
+  assert.equal(res.udi, undefined);
+});
+
+test('U5.1 必扫：udi_required 物料未扫 UDI → 判定 ok=false', async () => {
+  const { svc } = build({ mats: { '2': { ...MATS['2'], gtin: '06901234567892', udiRequired: true } } });
+  const wo = await run(() => svc.create({ woNo: 'WO-G2', productMaterialId: 1, warehouseId: 5, demandQty: 10 }));
+  await run(() => svc.kitCheck(wo.id));
+  await run(() => svc.release(wo.id));
+  const res = await run(() => svc.issueScan(wo.id, { lineNo: 1, materialCode: 'RM-001', batchNo: 'B2' }));
+  assert.equal(res.verdict.ok, false);
+  assert.match(res.verdict.message, /要求扫 UDI/);
+});
+
+test('U5.1 必扫：过账时 udi_required 行缺码 → 该行跳过不扣库存', async () => {
+  const udi = { issueByScan: async () => ({ udiKey: 'K', gtin: '06901234567892', status: 'ISSUED', idempotent: false, eventId: 1 }) };
+  const { svc, issues, stock } = build({ udi, mats: { '2': { ...MATS['2'], gtin: '06901234567892', udiRequired: true } } });
+  const wo = await run(() => svc.create({ woNo: 'WO-G3', productMaterialId: 1, warehouseId: 5, demandQty: 10 }));
+  await run(() => svc.kitCheck(wo.id));
+  await run(() => svc.release(wo.id));
+  await run(() => svc.issueStart(wo.id));
+  const r = await run(() => svc.issuePost(wo.id));
+  assert.equal(r.posted.length, 1);                       // 只有弹簧过账
+  assert.equal(issues.rows.length, 1);
+  assert.ok(r.skipped.some((x: any) => /udi_required/.test(String(x.reason ?? ''))));
+  const b2 = stock.find((x) => x.batchNo === 'B2');
+  assert.equal(Number(b2.qty), 40);                       // 只扣弹簧 10
 });

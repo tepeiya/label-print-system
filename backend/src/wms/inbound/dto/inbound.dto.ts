@@ -1,7 +1,7 @@
 // WMS 收货上架 DTO
 import { Type } from 'class-transformer';
 import {
-  ArrayMaxSize, IsArray, IsInt, IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, Length, Max, Min, ValidateNested,
+  ArrayMaxSize, IsArray, IsBoolean, IsInt, IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, Length, Max, Min, ValidateNested,
 } from 'class-validator';
 
 export class CreateReceiptLineDto {
@@ -38,7 +38,9 @@ export class ReceiveScanDto {
   /** UDI 码（HRI 或元素串）：扫到时自动建档并记 RECEIVE 事件（U5） */
   @IsOptional() @IsString() @Length(1, 300) udiCode?: string;
   /** UDI 联动失败是否阻塞收货（默认 false：记警告不阻塞） */
-  @IsOptional() strictUdi?: boolean;
+  @IsOptional() @IsBoolean() strictUdi?: boolean;
+  /** GTIN 比对/必扫不通过时强制放行（留审计，审批口径同 force） */
+  @IsOptional() @IsBoolean() forceUdi?: boolean;
 }
 
 export class ConfirmPutawayDto {

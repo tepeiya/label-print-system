@@ -220,6 +220,7 @@ export class InventoryService {
       .addSelect('m.auto_print', 'autoPrint').addSelect('m.printer_id', 'printerId')
       .addSelect('m.default_warehouse_id', 'defaultWarehouseId')
       .addSelect('m.default_location_id', 'defaultLocationId')
+      .addSelect('m.gtin', 'gtin').addSelect('m.udi_required', 'udiRequired')
       .addSelect('m.custom_fields', 'customFields')
       .orderBy('m.code', 'ASC').limit(Math.min(Math.max(limit, 1), 100)).getRawMany();
     return rows.map((r) => ({
@@ -231,6 +232,8 @@ export class InventoryService {
       defaultWarehouseId: r.defaultWarehouseId == null ? null : Number(r.defaultWarehouseId),
       defaultLocationId: r.defaultLocationId == null ? null : Number(r.defaultLocationId),
       autoPrint: !!r.autoPrint,
+      gtin: r.gtin ?? null,
+      udiRequired: !!r.udiRequired,
     }));
   }
 
@@ -477,12 +480,27 @@ export class InventoryService {
     return { warehouseId, locationId };
   }
 
+  /** U5.1：物料 GTIN 入库校验（补位 GTIN14 + 校验位 + 同租户唯一），空值表示不比对 */
+  private async materialGtinFor(tenantId: number, input?: string | null, exceptId?: number): Promise<string | null> {
+    const { normalizeMaterialGtin } = await import('../udi/udi.match.calc');
+    const g = normalizeMaterialGtin(input);
+    if (!g.ok) throw new BadRequestException(g.errors.join('；'));
+    if (!g.gtin14) return null;
+    const dup = await this.materials.createQueryBuilder('m')
+      .where('m.tenant_id = :tenantId AND m.gtin = :gtin', { tenantId, gtin: g.gtin14 })
+      .getOne();
+    if (dup && Number(dup.id) !== Number(exceptId ?? -1)) {
+      throw new BadRequestException(`GTIN ${g.gtin14} 已被物料 ${dup.code} 占用`);
+    }
+    return g.gtin14;
+  }
+
   async createMaterial(tenantId: number, b: {
     code: string; name: string; spec?: string | null; unit?: string;
     category?: string | null; safetyStock?: number; templateId?: number | null;
     groupId?: number | null; autoPrint?: boolean; printerId?: number | null;
     defaultWarehouseId?: number | null; defaultLocationId?: number | null;
-    customFields?: Record<string, unknown>;
+    customFields?: Record<string, unknown>; gtin?: string; udiRequired?: boolean;
   }) {
     const code = String(b.code ?? '').trim();
     if (!code || !String(b.name ?? '').trim()) throw new BadRequestException('编码与名称必填');
@@ -495,6 +513,7 @@ export class InventoryService {
     const autoPrint = !!b.autoPrint && templateId != null;
     const def = await this.defaultLocationPair(tenantId, b.defaultWarehouseId, b.defaultLocationId);
     const customFields = await this.normalizeValues(tenantId, b.customFields);
+    const gtin = await this.materialGtinFor(tenantId, b.gtin);
     const row = await this.materials.save(this.materials.create({
       tenantId, code, name: String(b.name).trim(),
       spec: b.spec?.trim() || null, unit: b.unit?.trim() || '件',
@@ -502,7 +521,7 @@ export class InventoryService {
       safetyStock: String(round3(Number(b.safetyStock) || 0)),
       templateId, groupId, autoPrint, printerId,
       defaultWarehouseId: def.warehouseId, defaultLocationId: def.locationId,
-      customFields,
+      customFields, gtin, udiRequired: !!b.udiRequired,
     }));
     return {
       ...row, id: Number(row.id), safetyStock: Number(row.safetyStock),
@@ -515,7 +534,7 @@ export class InventoryService {
     safetyStock?: number; templateId?: number | null;
     groupId?: number | null; autoPrint?: boolean; printerId?: number | null;
     defaultWarehouseId?: number | null; defaultLocationId?: number | null;
-    customFields?: Record<string, unknown>;
+    customFields?: Record<string, unknown>; gtin?: string; udiRequired?: boolean;
   }) {
     const row = await this.materials.findOne({ where: { tenantId, id } });
     if (!row) throw new NotFoundException('物料不存在');
@@ -547,6 +566,8 @@ export class InventoryService {
     if (b.customFields !== undefined) {
       patch.customFields = await this.normalizeValues(tenantId, b.customFields);
     }
+    if (b.gtin !== undefined) patch.gtin = await this.materialGtinFor(tenantId, b.gtin, id);
+    if (b.udiRequired !== undefined) patch.udiRequired = !!b.udiRequired;
     await this.materials.update({ id, tenantId }, patch);
     return this.listMaterials(tenantId, row.code, 1).then((r) => r[0]);
   }

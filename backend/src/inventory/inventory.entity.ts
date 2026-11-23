@@ -64,6 +64,9 @@ export class Material {
   @Column({ name: 'printer_id', type: 'bigint', nullable: true }) printerId: number | null;
   @Column({ name: 'default_warehouse_id', type: 'bigint', nullable: true }) defaultWarehouseId: number | null;
   @Column({ name: 'default_location_id', type: 'bigint', nullable: true }) defaultLocationId: number | null;
+  // U5.1：GS1 GTIN14（UDI 联动比对用）；udi_required=true 时收货/发料必须扫 UDI 码
+  @Column({ length: 14, type: 'varchar', nullable: true }) gtin: string | null;
+  @Column({ name: 'udi_required', default: false }) udiRequired: boolean;
   // 自定义字段值（fieldKey -> value），字段定义在 material_field_definitions
   @Column('jsonb', { name: 'custom_fields', default: {} }) customFields: Record<string, any>;
   @Column({ default: true }) active: boolean;

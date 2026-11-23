@@ -17,6 +17,8 @@ import { PrintGateway } from '../../gateways/print.gateway';
 import { AuditService } from '../../../audit/audit.module';
 import { useTenant, useTenantId } from '../../../common/tenant.context';
 import { UdiTraceService } from '../../../udi/udi.trace.service';
+import { udiKeyFromCode } from '../../../udi/udi.link.calc';
+import { judgeScanGtin } from '../../../udi/udi.match.calc';
 import { round3 } from '../../../inventory/kit.calc';
 import { canTransit } from './wo-transit';
 import { summarizeWoKit, lineShortageText } from './kit-summary.calc';
@@ -366,7 +368,7 @@ export class IssuingService {
     lineId?: number; lineNo?: number; materialCode?: string; batchNo?: string;
     locationId?: number | null; locationCode?: string; scanned?: { materialCode?: string; batchNo?: string; locationId?: number | null; locationCode?: string };
     /** UDI 码：扫到单品码时联动校验/记 ISSUE（U5） */
-    udiCode?: string; strictUdi?: boolean;
+    udiCode?: string; strictUdi?: boolean; forceUdiGtin?: boolean;
   }) {
     const tenantId = useTenantId();
     const wo = await this.requireWo(id);
@@ -406,7 +408,25 @@ export class IssuingService {
       // D1：不符可强制放行，但必须带 force=true 过账并留审计
       canForce: !verdict.ok,
     };
-    if (dto.udiCode) Object.assign(body, await this.udiOnIssueScan(wo, line, dto));
+    // U5.1：GTIN 比对与必扫校验（不符 → 判定 ok=false，可 force 过账留审计）
+    const parsedUdi = dto.udiCode ? udiKeyFromCode(dto.udiCode) : null;
+    if (parsedUdi && !parsedUdi.ok) throw new BadRequestException(`UDI 码解析失败：${parsedUdi.errors.join('；')}`);
+    const udiJudge = judgeScanGtin({
+      materialGtin: material.gtin, udiRequired: material.udiRequired,
+      codeGtin: parsedUdi?.gtin ?? null, hasCode: !!dto.udiCode, force: !!dto.forceUdiGtin,
+    });
+    if (!udiJudge.ok) {
+      body.verdict.ok = false;
+      body.verdict.message = udiJudge.reason ?? body.verdict.message;
+      body.verdict.mismatches = [...body.verdict.mismatches, {
+        field: 'gtin', expected: String(material.gtin ?? '(未登记)'), actual: String(parsedUdi?.gtin ?? '(未扫码)'),
+      }];
+      body.canForce = true;
+      void this.audit.write(tenantId, 'wms.wo.issue.udi.mismatch', {
+        woNo: wo.woNo, lineNo: line.lineNo, reason: udiJudge.reason,
+      }, undefined, 'wms_work_order', wo.id);
+    }
+    if (dto.udiCode && udiJudge.ok) Object.assign(body, await this.udiOnIssueScan(wo, line, dto));
     return body;
   }
 
@@ -474,6 +494,20 @@ export class IssuingService {
         }
         skipped.push({ lineId: line.id, lineNo: line.lineNo, reason: '已存在发料记录（幂等回放）', priorQty: priorTotal });
         continue;
+      }
+
+      // U5.1：udi_required 物料必须扫到 UDI 码（除非 force 放行）
+      if (this.udi && !dto.force) {
+        const mm = await this.inventory.resolveMaterial({ tenantId, ref: Number(line.materialId) });
+        if (mm.udiRequired) {
+          const covered = (dto.udiCodes ?? []).some((c) =>
+            (c.lineId != null && Number(c.lineId) === Number(line.id))
+            || (c.lineNo != null && Number(c.lineNo) === Number(line.lineNo)));
+          if (!covered) {
+            skipped.push({ lineId: line.id, lineNo: line.lineNo, reason: `该物料要求扫 UDI 码（udi_required），本行未提供码`, materialCode: mm.code });
+            continue;
+          }
+        }
       }
 
       const remaining = round3(required - issued);
@@ -599,6 +633,16 @@ export class IssuingService {
       if (!line) { results.push({ ok: false, code: item.code, reason: '找不到对应工单行（lineId/lineNo 无效）' }); continue; }
       try {
         const m = await this.inventory.resolveMaterial({ tenantId, ref: Number(line.materialId) });
+        const parsed = udiKeyFromCode(item.code);
+        if (!parsed.ok) { results.push({ ok: false, code: item.code, reason: `UDI 码解析失败：${parsed.errors.join('；')}` }); continue; }
+        const judge = judgeScanGtin({ materialGtin: m.gtin, udiRequired: m.udiRequired, codeGtin: parsed.gtin, hasCode: true, force: false });
+        if (!judge.ok) {
+          void this.audit.write(tenantId, 'wms.wo.issue.udi.mismatch', {
+            woNo: wo.woNo, lineNo: line.lineNo, code: item.code, reason: judge.reason,
+          }, undefined, 'wms_work_order', wo.id);
+          results.push({ ok: false, code: item.code, reason: judge.reason });
+          continue;
+        }
         const r = await this.udi.issueByScan({
           code: item.code, woNo: wo.woNo, lineNo: line.lineNo,
           materialCode: m.code, qty: Number(line.qtyRequired),
