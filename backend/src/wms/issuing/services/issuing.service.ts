@@ -7,7 +7,7 @@
 //   失败后"无脏数据 + 重跑幂等收敛"，靠 (tenant_id, idem_key) 唯一键兜底（docs/16 §7）。
 // =============================================================================
 import {
-  BadRequestException, ConflictException, Injectable, Logger, NotFoundException,
+  BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -16,6 +16,7 @@ import { InventoryGateway, BatchRowPlain } from '../../gateways/inventory.gatewa
 import { PrintGateway } from '../../gateways/print.gateway';
 import { AuditService } from '../../../audit/audit.module';
 import { useTenant, useTenantId } from '../../../common/tenant.context';
+import { UdiTraceService } from '../../../udi/udi.trace.service';
 import { round3 } from '../../../inventory/kit.calc';
 import { canTransit } from './wo-transit';
 import { summarizeWoKit, lineShortageText } from './kit-summary.calc';
@@ -59,6 +60,7 @@ export class IssuingService {
     private inventory: InventoryGateway,
     private printGw: PrintGateway,
     private audit: AuditService,
+    @Optional() private udi?: UdiTraceService,
   ) {}
 
   // ---------------------------------------------------------------- 建单
@@ -363,6 +365,8 @@ export class IssuingService {
   async issueScan(id: number, dto: {
     lineId?: number; lineNo?: number; materialCode?: string; batchNo?: string;
     locationId?: number | null; locationCode?: string; scanned?: { materialCode?: string; batchNo?: string; locationId?: number | null; locationCode?: string };
+    /** UDI 码：扫到单品码时联动校验/记 ISSUE（U5） */
+    udiCode?: string; strictUdi?: boolean;
   }) {
     const tenantId = useTenantId();
     const wo = await this.requireWo(id);
@@ -394,7 +398,7 @@ export class IssuingService {
       scanned,
     );
 
-    return {
+    const body: Record<string, any> = {
       woNo: wo.woNo, lineId: line.id, lineNo: line.lineNo,
       expected: { materialCode: material.code, materialName: material.name, batchNo: expectBatch, locationId: expectLocation.id },
       verdict,
@@ -402,10 +406,40 @@ export class IssuingService {
       // D1：不符可强制放行，但必须带 force=true 过账并留审计
       canForce: !verdict.ok,
     };
+    if (dto.udiCode) Object.assign(body, await this.udiOnIssueScan(wo, line, dto));
+    return body;
+  }
+
+  /** UDI 联动（U5）：发料扫码校验阶段记 ISSUE（已收货单元）；默认不阻塞，strictUdi 时抛错 */
+  private async udiOnIssueScan(wo: WmsWorkOrder, line: WmsWoLine, dto: { udiCode?: string; strictUdi?: boolean }): Promise<Record<string, any>> {
+    const tenantId = useTenantId();
+    if (!this.udi) return { udiWarning: '服务端未启用 UDI 模块，已跳过发料联动' };
+    try {
+      const m = await this.inventory.resolveMaterial({ tenantId, ref: Number(line.materialId) });
+      const udi = await this.udi.issueByScan({
+        code: String(dto.udiCode), woNo: wo.woNo, lineNo: line.lineNo,
+        materialCode: m.code, qty: Number(line.qtyRequired),
+      });
+      void this.audit.write(tenantId, 'wms.wo.issue.udi', {
+        woNo: wo.woNo, lineNo: line.lineNo, udiKey: udi.udiKey, gtin: udi.gtin, idempotent: udi.idempotent,
+      }, undefined, 'wms_work_order', wo.id);
+      return { udi };
+    } catch (e: any) {
+      const message = String(e?.response?.message ?? e?.message ?? e).slice(0, 200);
+      void this.audit.write(tenantId, 'wms.wo.issue.udi.failed', {
+        woNo: wo.woNo, lineNo: line.lineNo, error: message,
+      }, undefined, 'wms_work_order', wo.id);
+      if (dto.strictUdi) throw e;
+      return { udiWarning: message };
+    }
   }
 
   // ---------------------------------------------------------------- 发料过账
-  async issuePost(id: number, dto: { lineIds?: number[]; force?: boolean } = {}) {
+  async issuePost(id: number, dto: {
+    lineIds?: number[]; force?: boolean;
+    /** UDI 单品码（U5）：过账后记 ISSUE 事件；失败只回报不抛错（库存已动，不可回滚半截） */
+    udiCodes?: Array<{ code: string; lineNo?: number; lineId?: number }>;
+  } = {}) {
     const tenantId = useTenantId();
     const { userId } = useTenant();
     const wo = await this.requireWo(id);
@@ -545,7 +579,44 @@ export class IssuingService {
       woNo: wo.woNo, posted: posted.length, skipped: skipped.length, qty: round3(posted.reduce((s, p) => s + p.qty, 0)),
     }, undefined, 'wms_work_order', id);
 
-    return { woNo: wo.woNo, posted, skipped, labelFailed, shortageFlag: wo.shortageFlag, idempotent: posted.length === 0 && skipped.some((s) => /幂等/.test(s.reason ?? '')) };
+    const udiLink = dto.udiCodes?.length ? await this.udiOnPost(wo, all, dto.udiCodes) : null;
+    return {
+      woNo: wo.woNo, posted, skipped, labelFailed, shortageFlag: wo.shortageFlag,
+      idempotent: posted.length === 0 && skipped.some((s) => /幂等/.test(s.reason ?? '')),
+      ...(udiLink ?? {}),
+    };
+  }
+
+  /** UDI 联动（U5）：过账后批量记 ISSUE；逐条容错，返回汇总（库存已变更，不因个别码失败而回滚） */
+  private async udiOnPost(wo: WmsWorkOrder, lines: WmsWoLine[], codes: Array<{ code: string; lineNo?: number; lineId?: number }>): Promise<Record<string, any>> {
+    const tenantId = useTenantId();
+    if (!this.udi) return { udiWarning: '服务端未启用 UDI 模块，已跳过发料联动' };
+    const results: Array<{ ok: boolean; idempotent?: boolean; code: string; reason?: string; udiKey?: string }> = [];
+    for (const item of codes) {
+      const line = item.lineId
+        ? lines.find((l) => Number(l.id) === Number(item.lineId))
+        : lines.find((l) => Number(l.lineNo) === Number(item.lineNo));
+      if (!line) { results.push({ ok: false, code: item.code, reason: '找不到对应工单行（lineId/lineNo 无效）' }); continue; }
+      try {
+        const m = await this.inventory.resolveMaterial({ tenantId, ref: Number(line.materialId) });
+        const r = await this.udi.issueByScan({
+          code: item.code, woNo: wo.woNo, lineNo: line.lineNo,
+          materialCode: m.code, qty: Number(line.qtyRequired),
+        });
+        results.push({ ok: true, idempotent: r.idempotent, code: item.code, udiKey: r.udiKey });
+      } catch (e: any) {
+        results.push({ ok: false, code: item.code, reason: String(e?.response?.message ?? e?.message ?? e).slice(0, 200) });
+      }
+    }
+    const summary = {
+      total: results.length,
+      created: results.filter((r) => r.ok && !r.idempotent).length,
+      replayed: results.filter((r) => r.ok && r.idempotent).length,
+      failed: results.filter((r) => !r.ok).length,
+
+    };
+    void this.audit.write(tenantId, 'wms.wo.issue.udi', { woNo: wo.woNo, ...summary }, undefined, 'wms_work_order', wo.id);
+    return { udi: { ...summary, results } };
   }
 
   async issueDone(id: number, dto: { force?: boolean } = {}) {

@@ -9,6 +9,7 @@ import { Material, Warehouse, WarehouseLocation, Bom, BomItem } from '../../inve
 import { InventoryModule } from '../../inventory/inventory.module';
 import { AgentModule } from '../../agent/agent.module';
 import { AuditModule } from '../../audit/audit.module';
+import { UdiModule } from '../../udi/udi.module';
 import { IssuingService } from './services/issuing.service';
 import { IssuingController } from './controllers/issuing.controller';
 import { InventoryGateway } from '../gateways/inventory.gateway';
@@ -23,6 +24,7 @@ import { PrintGateway } from '../gateways/print.gateway';
     InventoryModule,
     AgentModule,
     AuditModule,
+    UdiModule,
   ],
   controllers: [IssuingController],
   providers: [IssuingService, InventoryGateway, PrintGateway],

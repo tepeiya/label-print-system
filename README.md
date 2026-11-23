@@ -371,6 +371,17 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 - **安全护栏**：租户只从 Agent Token 解析（请求体 `tenantId` 一律忽略并告警）；触发打印需 `print:job:write` scope；`guardLoop` 不拦外部事件源（避免误判为「打印事件→再打印」）；入站写审计 `agent.event.ingest`。
 - **诚实边界**：HMAC 验签默认关闭（未配 `INGEST_HMAC_SECRET` 时仅 Agent Token 鉴权，响应 warnings 显式标注）；真实签名事件驱动真机打印的端到端验收需真库/真机，沙盒仅以纯函数探针验证到规则命中层。
 
+### U5 联动（2026-11-23）：UDI 贯穿收货与发料
+
+> 实施记录 `docs/20-udi-wms-integration.md`。
+
+- 收货扫码带 `udiCode`：自动建档 + 记 `RECEIVE`（`refType=wms_receipt`，幂等键 `RECEIVE:{收货单}:{udiKey}`）。
+- 发料扫码/过账带 `udiCode`/`udiCodes`：记 `ISSUE`（`refType=wms_work_order`，幂等键 `ISSUE:{工单}:{行}:{udiKey}`）。
+- 状态守卫：一码不可多收、未收货不可发、已发料不可重发（同单/同工单幂等回放）。
+- 旁路原则：UDI 失败默认只给 `udiWarning` + 审计，不回滚库存动作；需强校验传 `strictUdi: true`。
+- 测试：新增 20 例（纯函数 10 + 追溯服务 8 + 发料编排 2），全量 **837 例 / 830 通过 / 0 失败 / 7 跳过**。
+- 诚实边界：未做 GTIN↔物料校验（扫错料不会拦）、未做"码数=数量"校验、未做 `SHIP`/退货联动、真库未验证。
+
 ---
 
 ## 9. WMS 模块（2026-11-22，阶段一 wms.inbound 已实施）

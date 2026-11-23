@@ -214,3 +214,79 @@ test('查询：单元列表按状态过滤', async () => {
   assert.equal(all.total, 1);
   assert.equal(all.items[0].status, 'REGISTERED');
 });
+
+// ---------------------------------------------------------------- U5：WMS 联动
+test('联动收货：扫码自动建档并记 RECEIVE，状态 RECEIVED', async () => {
+  const { svc, units, events } = build();
+  const r = await run(() => svc.receiveByScan({ code: HRI, receiptNo: 'GRN-1', lineNo: 1, skuCode: 'FG-001', qty: 3 }));
+  assert.equal(r.created, true);
+  assert.equal(r.idempotent, false);
+  assert.equal(r.udiKey, '06901234567892|LOT202611|SN0001|271231');
+  assert.equal(r.status, 'RECEIVED');
+  assert.equal(units.rows[0].status, 'RECEIVED');
+  const receiveEvents = events.rows.filter((e: any) => e.eventType === 'RECEIVE');
+  assert.equal(receiveEvents.length, 1);
+  assert.equal(receiveEvents[0].refType, 'wms_receipt');
+  assert.equal(receiveEvents[0].refNo, 'GRN-1');
+  assert.equal(receiveEvents[0].detail.lineNo, 1);
+});
+
+test('联动收货：同一单重复扫 → 事件幂等回放，不重复写事件', async () => {
+  const { svc, events } = build();
+  await run(() => svc.receiveByScan({ code: HRI, receiptNo: 'GRN-1', skuCode: 'FG-001', qty: 1 }));
+  const r2 = await run(() => svc.receiveByScan({ code: HRI, receiptNo: 'GRN-1', skuCode: 'FG-001', qty: 1 }));
+  assert.equal(r2.idempotent, true);
+  assert.equal(events.rows.filter((e: any) => e.eventType === 'RECEIVE').length, 1);
+  assert.equal(r2.status, 'RECEIVED');
+});
+
+test('联动收货：换一张收货单重复收同一码 → 409（一码不可多收）', async () => {
+  const { svc } = build();
+  await run(() => svc.receiveByScan({ code: HRI, receiptNo: 'GRN-1' }));
+  await assert.rejects(() => run(() => svc.receiveByScan({ code: HRI, receiptNo: 'GRN-2' })), /已收货/);
+});
+
+test('联动发料：未收货的单元拒绝发料', async () => {
+  const { svc } = build();
+  await run(() => svc.registerUnits([{ code: HRI }]));
+  await assert.rejects(
+    () => run(() => svc.issueByScan({ code: HRI, woNo: 'WO20261123', lineNo: 1 })),
+    /尚未收货/,
+  );
+});
+
+test('联动发料：收货后可发料，重复提交幂等', async () => {
+  const { svc, units, events } = build();
+  await run(() => svc.receiveByScan({ code: HRI, receiptNo: 'GRN-1' }));
+  const r = await run(() => svc.issueByScan({ code: HRI, woNo: 'WO20261123', lineNo: 2, materialCode: 'RM-001' }));
+  assert.equal(r.status, 'ISSUED');
+  assert.equal(r.idempotent, false);
+  assert.equal(units.rows[0].status, 'ISSUED');
+  const issueEv = events.rows.find((e: any) => e.eventType === 'ISSUE');
+  assert.equal(issueEv.refType, 'wms_work_order');
+  assert.equal(issueEv.refNo, 'WO20261123');
+  assert.equal(issueEv.detail.lineNo, 2);
+
+  const r2 = await run(() => svc.issueByScan({ code: HRI, woNo: 'WO20261123', lineNo: 2, materialCode: 'RM-001' }));
+  assert.equal(r2.idempotent, true);
+  assert.equal(events.rows.filter((e: any) => e.eventType === 'ISSUE').length, 1);
+});
+
+test('联动发料：已发料后换个工单再发 → 409', async () => {
+  const { svc } = build();
+  await run(() => svc.receiveByScan({ code: HRI, receiptNo: 'GRN-1' }));
+  await run(() => svc.issueByScan({ code: HRI, woNo: 'WO-A', lineNo: 1 }));
+  await assert.rejects(() => run(() => svc.issueByScan({ code: HRI, woNo: 'WO-B', lineNo: 1 })), /已发料/);
+});
+
+test('联动发料：未建档的码 → 404（必须先收货）', async () => {
+  const { svc } = build();
+  await assert.rejects(() => run(() => svc.issueByScan({ code: HRI, woNo: 'WO-A', lineNo: 1 })), /未建档/);
+});
+
+test('联动：已发料单元不可再收货', async () => {
+  const { svc } = build();
+  await run(() => svc.receiveByScan({ code: HRI, receiptNo: 'GRN-1' }));
+  await run(() => svc.issueByScan({ code: HRI, woNo: 'WO-A', lineNo: 1 }));
+  await assert.rejects(() => run(() => svc.receiveByScan({ code: HRI, receiptNo: 'GRN-2' })), /已发料/);
+});

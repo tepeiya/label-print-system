@@ -35,6 +35,10 @@ export class ReceiveScanDto {
   @IsOptional() @Type(() => Number) @IsInt() lineNo?: number;  // 按单收时指定行号；盲收留空
   @IsOptional() lineId?: number;
   @IsOptional() @IsString() @Length(0, 200) remark?: string;
+  /** UDI 码（HRI 或元素串）：扫到时自动建档并记 RECEIVE 事件（U5） */
+  @IsOptional() @IsString() @Length(1, 300) udiCode?: string;
+  /** UDI 联动失败是否阻塞收货（默认 false：记警告不阻塞） */
+  @IsOptional() strictUdi?: boolean;
 }
 
 export class ConfirmPutawayDto {

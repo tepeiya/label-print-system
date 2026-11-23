@@ -6,7 +6,7 @@
 //       打印为旁路，失败不阻塞过账，只记 failed 审计 + 提供补打入口。
 // 租户：走 Controller 的 JWT 守卫 + TenantContextInterceptor，ALS 已注入；查询带 tenantId 兜底。
 // =============================================================================
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { WmsReceipt, WmsReceiptLine, WmsPutawayTask, WmsPutawayRule } from '../entities/wms.entity';
@@ -19,6 +19,7 @@ import {
   receiptIdemKey, reprintIdemKey, stockIdemKey, assertStockLocation, calcDiff, buildReceiptVariables,
 } from './post-decision.calc';
 import { useTenant, useTenantId } from '../../../common/tenant.context';
+import { UdiTraceService } from '../../../udi/udi.trace.service';
 
 @Injectable()
 export class InboundService {
@@ -34,6 +35,7 @@ export class InboundService {
     private printGw: PrintGateway,
     private inventoryGw: InventoryGateway,
     private audit: AuditService,
+    @Optional() private udi?: UdiTraceService,
   ) {}
 
   // ------------------------------------------------------------------ 建单
@@ -178,7 +180,7 @@ export class InboundService {
       if (material && Number(material.id) !== Number(target.skuId)) {
         await this.lines.update({ id: target.id }, { diffType: 'WRONG_SKU' });
         void this.audit.write(tenantId, 'wms.receive.wrong_sku', { receiptId, lineId: target.id, scannedSku: skuCode });
-        return { ok: true, warning: 'WRONG_SKU：扫到的 SKU 与行不符，已标记差异', line: this.lineView(target) };
+        return { ok: true, warning: 'WRONG_SKU：扫到的 SKU 与行不符，已标记差异', line: this.lineView(target), udiWarning: dto.udiCode ? 'SKU 不符，未记 UDI 收货' : undefined };
       }
     } else {
       // 盲收：按 SKU 找单内行
@@ -193,7 +195,7 @@ export class InboundService {
           diffType: 'WRONG_SKU', diffQty: String(qty), status: 'PENDING',
         }));
         void this.audit.write(tenantId, 'wms.receive.wrong_sku', { receiptId, lineId: wrong.id, scannedSku: skuCode, qty });
-        return { ok: true, warning: 'WRONG_SKU：SKU 不在收货单内，已新增差异行', line: this.lineView(wrong) };
+        return { ok: true, warning: 'WRONG_SKU：SKU 不在收货单内，已新增差异行', line: this.lineView(wrong), udiWarning: dto.udiCode ? 'SKU 不在单内，未记 UDI 收货' : undefined };
       }
     }
 
@@ -212,7 +214,31 @@ export class InboundService {
     if (r.status === 'CREATED') await this.receipts.update({ id: r.id }, { status: 'RECEIVING' });
     void this.audit.write(tenantId, 'wms.receive.scan', { receiptId, lineId: target.id, scannedSku: skuCode, qty, cumulative: after });
     const refreshed = await this.lines.findOne({ where: { id: Number(target.id) } });
-    return { ok: true, line: refreshed ? this.lineView(refreshed) : this.lineView(target) };
+    const udiLink = dto.udiCode ? await this.udiOnScan(r, dto, refreshed ?? target) : null;
+    return { ok: true, line: refreshed ? this.lineView(refreshed) : this.lineView(target), ...(udiLink ?? {}) };
+  }
+
+  /** UDI 联动（U5）：扫码收货时建档 + 记 RECEIVE；默认不阻塞收货，strictUdi 时抛错 */
+  private async udiOnScan(r: WmsReceipt, dto: any, line: WmsReceiptLine): Promise<Record<string, any>> {
+    const tenantId = useTenantId();
+    if (!this.udi) return { udiWarning: '服务端未启用 UDI 模块，已跳过建档' };
+    try {
+      const udi = await this.udi.receiveByScan({
+        code: String(dto.udiCode), receiptNo: r.receiptNo,
+        lineNo: line.lineNo, skuCode: String(dto.sku ?? ''), qty: Number(dto.qty),
+      });
+      void this.audit.write(tenantId, 'wms.receive.udi', {
+        receiptNo: r.receiptNo, udiKey: udi.udiKey, gtin: udi.gtin, idempotent: udi.idempotent,
+      });
+      return { udi };
+    } catch (e: any) {
+      const message = String(e?.response?.message ?? e?.message ?? e).slice(0, 200);
+      void this.audit.write(tenantId, 'wms.receive.udi.failed', {
+        receiptNo: r.receiptNo, lineNo: line.lineNo, error: message,
+      });
+      if (dto.strictUdi) throw e;
+      return { udiWarning: message };
+    }
   }
 
   // ------------------------------------------------------------------ 收货过账

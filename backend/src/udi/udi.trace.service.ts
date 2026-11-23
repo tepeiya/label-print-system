@@ -17,6 +17,10 @@ import {
   gs1DateToIso, nextStatus, validateSscc, ancestorsOf, descendantsOf,
   summarizePrintAudit, toCsv, reportFileName, UDI_STATUS,
 } from './udi.trace.calc';
+import {
+  udiKeyFromCode, receiveIdemKey, issueIdemKey,
+  checkUnitForReceive, checkUnitForIssue, receiveDetail, issueDetail,
+} from './udi.link.calc';
 
 export interface UnitRegisterRow {
   /** 已编码的扫码内容（HRI 或元素串）；给了就以它为准解析 */
@@ -263,6 +267,82 @@ export class UdiTraceService {
     }, undefined, 'udi_event', ev.id);
 
     return { idempotent: false, eventId: ev.id, status: tr.status, event: ev };
+  }
+
+  // ---------------------------------------------------------------- WMS 联动（U5）
+  /**
+   * 收货扫码联动：扫码 → 建档（幂等）→ 记 RECEIVE 事件。
+   * 同一收货单 + 同一单元重复扫 → 事件键幂等回放，status 不变。
+   * 单元已在他单收货/已发料 → 409（避免一码多收）。
+   */
+  async receiveByScan(input: { code: string; receiptNo: string; lineNo?: number; skuCode?: string; qty?: number }) {
+    const tenantId = useTenantId();
+    const parsed = udiKeyFromCode(input.code);
+    if (!parsed.ok) throw new BadRequestException(`UDI 码解析失败：${parsed.errors.join('；')}`);
+    if (!input.receiptNo) throw new BadRequestException('缺少收货单号，无法记 RECEIVE 事件');
+
+    // 建档幂等：已存在直接返回 existed
+    const reg = await this.registerUnits([{ code: input.code }]);
+    const unit = await this.units.findOne({ where: { tenantId, udiKey: parsed.udiKey! } });
+    if (!unit) {
+      throw new BadRequestException(reg.errors[0]?.message ?? 'UDI 单元建档失败');
+    }
+
+    const idemKey = receiveIdemKey(input.receiptNo, parsed.udiKey!);
+    const dup = await this.events.findOne({ where: { tenantId, idemKey } });
+    if (dup) {
+      return { udiKey: unit.udiKey, gtin: unit.gtin, lot: unit.lot, serial: unit.serial, status: dup.statusAfter, eventId: dup.id, idempotent: true, created: false };
+    }
+
+    const guard = checkUnitForReceive(unit.status);
+    if (!guard.ok) throw new ConflictException(guard.reason!);
+
+    const ev = await this.recordEvent({
+      code: input.code, eventType: 'RECEIVE', refType: 'wms_receipt', refNo: input.receiptNo,
+      idemKey, detail: receiveDetail(input),
+    });
+    void this.audit.write(tenantId, 'udi.link.receive', {
+      receiptNo: input.receiptNo, udiKey: unit.udiKey, gtin: unit.gtin, lineNo: input.lineNo ?? null,
+    }, undefined, 'udi_unit', unit.id);
+    return {
+      udiKey: unit.udiKey, gtin: unit.gtin, lot: unit.lot, serial: unit.serial,
+      status: ev.status, eventId: ev.eventId, idempotent: ev.idempotent, created: reg.created > 0,
+    };
+  }
+
+  /**
+   * 发料扫码联动：只对已收货（RECEIVED）单元记 ISSUE，必须已建档。
+   * 同一工单 + 行 + 单元重复提交 → 幂等回放（与发料记录重跑幂等同一语义）。
+   */
+  async issueByScan(input: { code: string; woNo: string; lineNo: number | string; materialCode?: string; qty?: number }) {
+    const tenantId = useTenantId();
+    const parsed = udiKeyFromCode(input.code);
+    if (!parsed.ok) throw new BadRequestException(`UDI 码解析失败：${parsed.errors.join('；')}`);
+    if (!input.woNo) throw new BadRequestException('缺少工单号，无法记 ISSUE 事件');
+
+    const unit = await this.units.findOne({ where: { tenantId, udiKey: parsed.udiKey! } });
+    if (!unit) throw new NotFoundException(`UDI 单元未建档：${parsed.udiKey}（请先收货建档）`);
+
+    const idemKey = issueIdemKey(input.woNo, input.lineNo, parsed.udiKey!);
+    const dup = await this.events.findOne({ where: { tenantId, idemKey } });
+    if (dup) {
+      return { udiKey: unit.udiKey, gtin: unit.gtin, lot: unit.lot, serial: unit.serial, status: dup.statusAfter, eventId: dup.id, idempotent: true };
+    }
+
+    const guard = checkUnitForIssue(unit.status);
+    if (!guard.ok) throw new ConflictException(guard.reason!);
+
+    const ev = await this.recordEvent({
+      code: input.code, eventType: 'ISSUE', refType: 'wms_work_order', refNo: input.woNo,
+      idemKey, detail: issueDetail(input),
+    });
+    void this.audit.write(tenantId, 'udi.link.issue', {
+      woNo: input.woNo, udiKey: unit.udiKey, gtin: unit.gtin, lineNo: input.lineNo,
+    }, undefined, 'udi_unit', unit.id);
+    return {
+      udiKey: unit.udiKey, gtin: unit.gtin, lot: unit.lot, serial: unit.serial,
+      status: ev.status, eventId: ev.eventId, idempotent: ev.idempotent,
+    };
   }
 
   // ---------------------------------------------------------------- 追溯查询

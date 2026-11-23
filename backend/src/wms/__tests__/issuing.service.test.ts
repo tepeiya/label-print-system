@@ -47,7 +47,7 @@ const MATS: Record<string, any> = {
 };
 const WHS: Record<string, any> = { '5': { id: 5, code: 'WH-A', name: '主仓' } };
 
-function build(opt: { batches?: any[]; failDecreaseOn?: string } = {}) {
+function build(opt: { batches?: any[]; failDecreaseOn?: string; udi?: any } = {}) {
   const wos = new MemRepo();
   const lines = new MemRepo();
   const issues = new MemRepo();
@@ -136,7 +136,7 @@ function build(opt: { batches?: any[]; failDecreaseOn?: string } = {}) {
     find: async (q: any) => auditRows.filter((r) => r.action === q.action).map((r) => ({ ...r, targetType: 'wms_work_order' })),
     exportRows: async () => [],
   };
-  const svc = new IssuingService(wos as any, lines as any, issues as any, returns as any, inventory, printGw, audit);
+  const svc = new IssuingService(wos as any, lines as any, issues as any, returns as any, inventory, printGw, audit, opt.udi);
   return { svc, wos, lines, issues, returns, calls, auditRows, stock, get stockRows() { return stock; }, inventory };
 }
 
@@ -329,4 +329,48 @@ test('缺料清单：按行给缺口、可用批次与摘要', async () => {
   assert.equal(s.items[0].shortage, 21);
   assert.equal(s.items[0].batches.length, 2);
   assert.equal(s.items[1].materialCode, 'RM-002');
+});
+
+
+test('发料过账：UDI 码逐条记 ISSUE，单条失败不影响过账（U5）', async () => {
+  const calls: any[] = [];
+  const udi = {
+    issueByScan: async (p: any) => {
+      calls.push(p);
+      if (p.code === 'BAD') throw new Error('该单元尚未收货');
+      return { udiKey: p.code, gtin: '06901234567892', status: 'ISSUED', idempotent: false, eventId: calls.length };
+    },
+  };
+  const { svc, issues } = build({ udi });
+  const wo = await run(() => svc.create({ woNo: 'WO-U', productMaterialId: 1, warehouseId: 5, demandQty: 10 }));
+  await run(() => svc.kitCheck(wo.id));
+  await run(() => svc.release(wo.id));
+  await run(() => svc.issueStart(wo.id));
+  const r = await run(() => svc.issuePost(wo.id, {
+    udiCodes: [{ code: 'K1', lineNo: 1 }, { code: 'BAD', lineNo: 2 }],
+  }));
+  // 库存照常过账成功；UDI 单向失败只回报
+  assert.equal(r.posted.length, 2);
+  assert.equal(issues.rows.length, 2);
+  assert.equal(calls.length, 2);
+  assert.equal(r.udi.total, 2);
+  assert.equal(r.udi.created, 1);
+  assert.equal(r.udi.failed, 1);
+  assert.match(r.udi.results[1].reason, /尚未收货/);
+});
+
+test('发料扫码：带 UDI 码时联动记 ISSUE，并随校验结果返回（U5）', async () => {
+  const calls: any[] = [];
+  const udi = { issueByScan: async (p: any) => { calls.push(p); return { udiKey: 'K1', gtin: 'G', status: 'ISSUED', idempotent: false, eventId: 1 }; } };
+  const { svc } = build({ udi });
+  const wo = await run(() => svc.create({ woNo: 'WO-U2', productMaterialId: 1, warehouseId: 5, demandQty: 10 }));
+  await run(() => svc.kitCheck(wo.id));
+  await run(() => svc.release(wo.id));
+  await run(() => svc.issueStart(wo.id));
+  const res = await run(() => svc.issueScan(wo.id, { lineNo: 1, udiCode: '(01)06901234567892(10)L1', materialCode: 'RM-001', batchNo: 'B2' }));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].woNo, 'WO-U2');
+  assert.equal(calls[0].materialCode, 'RM-001');
+  assert.equal(res.udi.udiKey, 'K1');
+  assert.equal(res.lineNo, 1);
 });
