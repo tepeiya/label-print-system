@@ -25,6 +25,7 @@ import { JobsModule } from './jobs/jobs.module';
 import { GovernanceModule } from './governance/governance.module';
 import { HardwareModule } from './hardware/hardware.module';
 import { WmsModule } from './wms/wms.module';
+import { UdiModule } from './udi/udi.module';
 import { TenantRoutingModule } from './common/tenant-routing.module';
 import { SnakeNamingStrategy } from './snake-naming.strategy';
 import { JWT_SECRET, redisConnection } from './common/config';
@@ -55,6 +56,7 @@ const ENTITIES = Object.values(entities).filter((e) => typeof e === 'function');
     GovernanceModule,           // P8.3 企业治理：发布审批 / 防重 / 水印 / 数量策略
     HardwareModule,             // P8.5 硬件层：本地打印代理 / Windows Spooler / RFID / 喷码
     WmsModule,                  // WMS 阶段一：收货与上架（模块订阅 wms.inbound）
+    UdiModule,                  // UDI 医疗合规赋码：构造/解析/扫码复核/模板包
     TenantRoutingModule,        // P6.2 阶段 B：全局 Repository/事务租户路由（@Global）
   ],
 })

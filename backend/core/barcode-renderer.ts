@@ -163,6 +163,11 @@ function bwipRenderOptions(spec: BarcodeSpec, opts: RenderOpts = {}): any {
   }
 
   if (bcid === 'gs1-128') o.parsefnc = true;
+  // UDI / GS1：DataMatrix 走 bwip 原生 gs1datamatrix（HRI 带括号，内部自动落 FNC1）
+  // 说明：只在显式 gs1=true 时切换，普通 DataMatrix 行为不变（避免影响存量模板与快照）。
+  if ((spec as any).gs1 && (bcid === 'datamatrix' || bcid === 'datamatrixrectangular')) {
+    o.bcid = 'gs1datamatrix';
+  }
   if (spec.wideRatio && bcid === 'code39') o.ratio = spec.wideRatio;
   if (bcid === 'qrcode' || bcid === 'microqrcode') {
     o.eclevel = (spec as any).ecc || 'M';
@@ -183,6 +188,10 @@ function qrRenderOptions(spec: QrcodeSpec, opts: RenderOpts = {}): any {
     backgroundcolor: 'FFFFFF',
   };
   if (bcid === 'qrcode' || bcid === 'microqrcode') o.eclevel = spec.ecc || 'M';
+  // UDI / GS1：DataMatrix 走原生 gs1datamatrix（内容为带括号 HRI）
+  if ((spec as any).gs1 && (bcid === 'datamatrix' || bcid === 'datamatrixrectangular')) {
+    o.bcid = 'gs1datamatrix';
+  }
   if (bcid === 'pdf417') o.compact = false;
   return o;
 }

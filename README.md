@@ -393,3 +393,21 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 - **订阅门**：5 个 WMS 模块以 SQL 种子写入 `modules` 表，**存量租户默认不开通**（需手工 INSERT `tenant_modules` 验证）。
 - **测试**：新增 14 例（上架推荐规则 5 / PrintGateway 5 / 过账决策 4），全量 `npm test` 675 例、0 失败。
 - **诚实边界**：PDA 前端已落地独立 H5（`apps/pda` :5185，zxing-wasm 摄像头扫码 + 手动输入兜底，真机摄像头/扫码硬件仍待实机验收）；阶段一不做同仓移库位（过账已直接入库到推荐位）、不做策略引擎/波次；补打标签需 `WMS_SERVICE_TOKEN` 否则 503；过账为跨服务独立事务（非单一物理事务）。
+
+---
+
+## 10. 医疗 UDI 合规赋码（2026-11-23，里程碑 U1 已实施）
+
+> 商业化方向见对话决策：医疗 UDI（NMPA 2026 年第 21 号公告，全部二类 2027-06-01 前赋码、全部一类 2029-06-01 前）。
+> 实施记录与边界声明见 `docs/18-udi-implementation.md`。
+
+**做了什么**：UDI 数据构造器（GTIN 补位+校验位、GS1 日期、批号/序列号、DI/PI、HRI、元素串 FNC1）、双向解析
+（HRI 与原始元素串）、GS1 DataMatrix 渲染通道（bwip 原生 `gs1datamatrix`，`gs1: true` 开关）、扫码复核（字段级比对 + strict 整单校验）、批量构造（Excel 部分成功）、3 个标准模板包。
+
+**API**（`/api/v1/udi/...`）：`GET status` / `GET templates` / `GET templates/:code` / `POST encode` / `POST parse` / `POST scan-verify` / `POST batch`。
+
+**验证**：新增 41 例（构造+解析 29、打印回环 2、服务与模板自洽 10）；全量 `pnpm test` 732 例 / 725 通过 / 0 失败 / 7 跳过。
+**打印回环**已证：构造 → bwip 渲染 PNG → zxing 解码 → 反解出 DI/PI。
+
+**诚实边界**：不做 ISO/IEC 15415 质量等级（需硬件验证仪）；不自动上报国家 UDI 数据库（先做导出）；ZPL/TSPL 指令通道的 FNC1 需逐机型真机验收；不含医院端临床扫码。
+**订阅门**：模块 code 预留 `udi.compliance`，正式售卖时在 `modules` / `tenant_modules` 开通并挂 `@RequireModule`。

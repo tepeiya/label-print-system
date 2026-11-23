@@ -13,6 +13,12 @@ export interface BarcodeSpec {
   textPosition: 'bottom' | 'top';
   textFont?: { size: number; family: string };
   checksum?: boolean;
+  /**
+   * GS1 模式（UDI 赋码用）：content 必须是带括号的 HRI，如 (01)…(17)…(10)…(21)。
+   * 渲染器对 DataMatrix 走 bwip 原生 gs1datamatrix（自动处理 FNC1 与 AI 断句），
+   * 避免手拼 \u001D 在某些解码器/打印机上丢分隔符。
+   */
+  gs1?: boolean;
 }
 
 export interface QrcodeSpec {
@@ -22,6 +28,11 @@ export interface QrcodeSpec {
   ecc: 'L' | 'M' | 'Q' | 'H';
   moduleSizeMm: number;
   quietZoneMm: number;
+  /**
+   * GS1 模式（UDI 赋码用）：content 传带括号 HRI，DataMatrix 走原生 gs1datamatrix，
+   * 由 bwip 负责 FNC1 与 AI 断句（避免手拼 \u001D 在扫码枪/打印机上丢分隔符）。
+   */
+  gs1?: boolean;
 }
 
 /**
