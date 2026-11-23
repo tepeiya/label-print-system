@@ -128,20 +128,21 @@ pnpm test        → 817 tests / 810 pass / 0 fail / 7 skipped
 
 ## 8. 诚实边界（未验证项）
 
-### 8.1 真库 7 门未跑
-本轮开发环境为无 Docker、无 PostgreSQL 的 Linux 容器，`backend/test/integration/*` 需独立 jest 配置 + 真库连接。因此 **G1–G7 均未实证**：
+### 8.1 真库 7 门已实证（D1，2026-11-23）
+
+`test/integration/wms-issuing.int.test.ts` 已落地并被 `backend/scripts/db-acceptance.sh` 纳入一键验收：真 PostgreSQL 14 + 真 `InventoryService` / `InventoryGateway` / `IdempotencyService`（仅 stub print/audit），租户隔离（903 对 904）、仓 803、BOM 与两批库存全部真表。
 
 | 门 | 断言 | 现状 |
 |---|---|---|
-| G1 | BOM 展开行数与需求含损耗 | 仅单测（假网关） |
-| G2 | 齐套率行级/整体一致 | 仅单测 |
-| G3 | 扣库存 + `stock_moves` out 台账 + 记录唯一 | 仅单测（真 Gateway 未连库） |
-| G4 | 重跑不二次扣减 | 仅单测 |
-| G5 | 完全缺料无记录无状态变更 | 单测已锁 |
-| G6 | 退料回补 + 回 `ISSUING` + 幂等 | 仅单测 |
-| G7 | 跨租户不可见 4 张新表 | 依赖 §6.2 RLS 重跑，未实证 |
+| G1 | BOM 展开行数与需求含损耗 | ✅ 真库通过 |
+| G2 | 齐套率行级/整体一致（`overallMaxSets=0` 因组件无库存） | ✅ 真库通过 |
+| G3 | 扣库存 + `stock_moves` out 台账（`qty` 为负、`after=before+qty`） + 记录唯一 | ✅ 真库通过 |
+| G4 | 重跑不二次扣减 | ✅ 真库通过 |
+| G5 | 完全缺料行 SHORT 不落记录；部分库存 PARTIAL 按量发 | ✅ 真库通过 |
+| G6 | 退料回补 + 回 `ISSUING` + 幂等 | ✅ 真库通过 |
+| G7 | 跨租户不可见（应用层 404 + `labelflow_app` 角色 RLS 查不到） | ✅ 真库通过 |
 
-上真库后的第一件事应是按 `docs/16 §9.2` 补 `wms-issuing.int.test.ts`，把 7 门逐条跑绿再对外承诺。
+报告与逐门结果见 `docs/26-d1-acceptance.md` 与 `docs/acceptance/latest.json`。**未覆盖**：G8（收货侧 UDI 拦截，缺 `InboundService` 夹具）、应用进程切 `labelflow_app`（D2）。
 
 ### 8.2 跨服务事务
 发料 = 扣库存（Inventory 独立事务）+ 写发料记录（WMS 表）。中间崩溃可能出现"扣了库存没记录"，重跑时靠**先查记录再扣减**的幂等路径收敛，但**不保证**库存侧幂等键与 WMS 记录物理同事务。阶段二承诺为"无脏数据 + 重跑收敛"，不承诺最终一致的自动重试（BullMQ 属阶段三）。

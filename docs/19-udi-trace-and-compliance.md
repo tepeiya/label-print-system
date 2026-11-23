@@ -9,7 +9,7 @@
 |---|---|---|
 | ① PDA 扫码复核页 | `apps/pda/src/views/UdiVerify.vue` + 路由 `/udi/verify` + 首页入口 + `apiUdiScanVerify/apiUdiParse` | 完成，`vue-tsc + vite build` 通过 |
 | ② 真机适配 | `backend/src/udi/udi.printer-profiles.ts` + `GET /udi/printer-profiles` + 8 步校准清单 | 代码完成；3 款机型 status=POC（**未出真机样张**） |
-| ③ UDI 追溯 | `scripts/udi_p1_trace.sql`（3 表）、`entities/udi.entity.ts`、`udi.trace.calc.ts`、`udi.trace.service.ts`、`udi.trace.controller.ts` | 代码 + 单测完成；**未在真库跑过集成验证** |
+| ③ UDI 追溯 | `scripts/udi_p1_trace.sql`（3 表）、`entities/udi.entity.ts`、`udi.trace.calc.ts`、`udi.trace.service.ts`、`udi.trace.controller.ts` | 代码 + 单测完成（114 例定向单测）；真库级 UDI 链路仍待补，见 `docs/26 §4` |
 | ④ 合规留痕 | `GET /udi/report/print-audit`、`GET /udi/export/print-audit.csv`、`GET /udi/export/units.csv`、console「UDI 合规留痕」页 | 完成（CSV 带 BOM + 防公式注入） |
 
 测试：后端全量 **768 例 / 761 过 / 0 失败 / 7 跳过**（新增 36 例：追溯纯函数 23 + 追溯服务 13）；`pnpm typecheck` 零错误；PDA 与 console 均构建通过。
@@ -66,7 +66,7 @@ REGISTERED ──PRINT──▶ PRINTED ──RECEIVE──▶ RECEIVED ──IS
 
 ## 6. 本轮**不能**证明的部分（诚实边界）
 
-1. **无真库验证**：当前环境无 `docker`、无 `psql`，迁移与实体只做了类型/单测级验证，未连 PostgreSQL 跑过。上线前必须在有库环境执行以下 7 道门：
+1. **UDI 链路的真库验证仍不完整**（D1 已补 WMS/打印真库门，见 `docs/26`）：迁移已在真 PG 建过并通过 `db-verify`（77 表），但 `udi_events` 唯一键与 RLS 只有耦合在 G7 的 `wms_*` 侧证据，专属于 UDI 的用例仍是单测。上线前必须在有库环境执行以下 7 道门：
    - G1 `psql -f scripts/udi_p1_trace.sql` 可重复执行两次不报错
    - G2 重跑 `scripts/saas_p6_rls.sql` 后三张表有 `tenant_isolation` 策略
    - G3 `udi_key` 重复插入返回唯一冲突（幂等依赖）

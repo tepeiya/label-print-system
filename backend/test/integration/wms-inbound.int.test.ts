@@ -52,6 +52,27 @@ async function asTenant<T>(tenantId: number, fn: () => Promise<T>): Promise<T> {
   return tenantStorage.run(ctx(tenantId), fn);
 }
 
+/** 集成测试夹具（幂等）：两个租户（A 开通 wms.inbound / B 不开通）、仓库、库位、物料、上架规则 */
+async function seedFixtures(ds: DataSource) {
+  await ds.query(`INSERT INTO tenants (id,name,code,status) VALUES (901,'租户A','wms_test_a',1),(902,'租户B','wms_test_b',1)
+                  ON CONFLICT (id) DO NOTHING`);
+  await ds.query(`INSERT INTO tenant_modules (tenant_id,module_code,status,source) VALUES (901,'wms.inbound','active','manual')
+                  ON CONFLICT (tenant_id,module_code) DO NOTHING`);
+  await ds.query(`INSERT INTO warehouses (id,tenant_id,code,name) VALUES (801,901,'WH-A','A仓'),(802,902,'WH-B','B仓')
+                  ON CONFLICT (id) DO NOTHING`);
+  await ds.query(`INSERT INTO warehouse_locations (id,tenant_id,warehouse_id,code,name,zone) VALUES
+                    (8011,901,801,'A-01','A库位01','FAST'),(8012,901,801,'A-02','A库位02','SLOW'),
+                    (8021,902,802,'B-01','B库位01','FAST') ON CONFLICT (id) DO NOTHING`);
+  await ds.query(`INSERT INTO materials (id,tenant_id,code,name,unit) VALUES
+                    (9011,901,'MAT-A001','轴承6204','PCS'),(9012,901,'MAT-A002','齿轮','PCS'),
+                    (9021,902,'MAT-B001','B司物料','PCS') ON CONFLICT (id) DO NOTHING`);
+  const ruleCount = await ds.query(`SELECT count(*)::int AS n FROM wms_putaway_rules WHERE tenant_id = 901 AND warehouse_id = 801`);
+  if (!ruleCount[0].n) {
+    await ds.query(`INSERT INTO wms_putaway_rules (tenant_id,warehouse_id,priority,condition_json,action_json)
+                    VALUES (901,801,10,'{"abc":"A"}'::jsonb,'{"zoneCode":"FAST","sortBy":"DISTANCE"}'::jsonb)`);
+  }
+}
+
 // ---- 可控 Gateway 替身（唯一 mock 点）----
 class PrintGwStub {
   calls: any[] = [];
@@ -111,6 +132,9 @@ describe('WMS 阶段一 真 PG 集成测试（验收门 5 条）', () => {
       ds.getRepository(ModuleRecord), ds.getRepository(TenantModule),
       ds.getRepository(Plan), ds.getRepository(PlanModule), ds.getRepository(Subscription),
     );
+    // 自备夹具（原本由 scripts/wms-test-db-bootstrap.sh 用 docker exec 灌入）：
+    // 改成测试自己幂等插入，任何库跑完 db-init.sh 后即可直接跑本套件，不再依赖外部脚本。
+    await seedFixtures(ds);
   });
 
   afterAll(async () => {
@@ -137,7 +161,7 @@ describe('WMS 阶段一 真 PG 集成测试（验收门 5 条）', () => {
   }
 
   // ---------------------------------------------------------------- T1
-  it('T1 跨租户隔离 + RLS：A 建单 B 查不到；4 张 WMS 表均挂 tenant_isolation', async () => {
+  it('T1 跨租户隔离 + RLS：A 建单 B 查不到；全部 wms_* 表均挂 tenant_isolation', async () => {
     // ① 应用层隔离：租户 B 读 A 的单据 → 404
     const created = await createAndScan('IT-T1');
     await expect(asTenant(B, () => svc.getReceipt(created.id))).rejects.toThrow(/不存在/);
@@ -154,7 +178,8 @@ describe('WMS 阶段一 真 PG 集成测试（验收门 5 条）', () => {
       WHERE t.tablename LIKE 'wms_%' AND t.schemaname='public'
       ORDER BY t.tablename
     `);
-    expect(rows).toHaveLength(4);
+    // 不写死表数：阶段一 4 张 + 阶段二 4 张，以后新增 WMS 表自动纳入门禁
+    expect(rows.length).toBeGreaterThanOrEqual(4);
     for (const r of rows) {
       expect(r.rls).toBe(true);
       expect(r.policyname).toBe('tenant_isolation');

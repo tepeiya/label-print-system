@@ -41,3 +41,4 @@ backend/assets/tessdata/*.traineddata
 backend/assets/tessdata/*.traineddata.gz
 backend/*.traineddata
 dump.rdb
+docs/acceptance/.jest-integration.json

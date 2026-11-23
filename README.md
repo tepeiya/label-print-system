@@ -271,6 +271,7 @@ bash backend/scripts/db-init.sh --verify-only   # 只做缺表自检
 | 前端三应用（console / platform / mcp-server） | ✅ 完整实现 | `vue-tsc -b` 类型检查 |
 | 多租户隔离 | 🟡 应用层强制 tenant_id；RLS 策略已建角色 | D0 起可一键建库；RLS 实际连接角色切换在 D2 |
 | **交付化（D0）** | ✅ 装得上 | Dockerfile×2 + compose 编排出建库链 + `db-init.sh`（32 步 / 77 表自检）；真库实跑通过（`docs/25`） |
+| **交付化（D1）** | ✅ 验得出 | `backend/scripts/db-acceptance.sh` 一条命令跑 29 门（WMS G1–G7 / T1–T5 / 打印 P1–P4 / UDI-U5 组 / 全量 860 例），产物 `docs/acceptance/latest.json`：28 通过 1 显式跳过（G8）（`docs/26`） |
 
 ### 运行测试
 
