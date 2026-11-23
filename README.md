@@ -169,59 +169,90 @@ dots → mm  : mm   = dots * 25.4 / dpi
 
 ---
 
-## 4. 快速开始（开发态）
+## 4. 快速开始
 
-### 环境约定（与 `docs/10-dev-handover.md` 一致）
-
-| 服务 | 宿主端口 | 容器 / 内部端口 | 说明 |
-| --- | --- | --- | --- |
-| 后端 API | **3200** | 3200 | `http://localhost:3200/api/v1` |
-| PostgreSQL | **5433** | 5432 | 容器网内 `postgres:5432` |
-| Redis | **6380** | 6379 | 容器网内 `redis:6379` |
-| console 租户后台 | 5173 | — | Vite dev，代理 `/api` → 3200 |
-| platform 平台后台 | 5181 | — | Vite dev |
-| MCP Server | 3300 | — | Agent/MCP HTTP |
-| 老 web（弃用） | 5180 | 80 | 仅对照 |
-
-> 端口 `3000` 属其他项目，禁止占用。
-
-### 启动
+### 4.1 一键启动（推荐，Docker）
 
 ```bash
-# 一键全家桶（PG + Redis + API + Worker + 老 web）
-docker compose up -d
-
-# 或本地分进程
-cd backend && npm i && npm run start:dev          # API :3200
-cd apps/console && pnpm i && pnpm dev             # 租户后台 :5173（推荐）
-cd apps/platform && pnpm i && pnpm dev            # 平台后台 :5181
-cd apps/pda && pnpm i && pnpm dev                 # WMS 收货 PDA H5 :5185（手机同网段访问 http://<IP>:5185）
-# 老版原生前端（⚠️ 已弃用，仅作对照）：node web/serve.mjs 5180
+docker compose up -d --build
 ```
 
-> 数据库脚本 `synchronize: false`，建表 / 权限种子需手工执行 —— 见 §5。
+启动顺序由 compose 编排保证：`postgres` 健康 → `db-init` 按固定清单建库并自检 → `api`/`worker` 起来 → 三个前端等 API 健康后启动。
+
+| 入口 | 地址 | 说明 |
+| --- | --- | --- |
+| 租户后台 console | http://localhost:5173 | 日常使用入口 |
+| 平台后台 platform | http://localhost:5181 | SaaS 运营（租户/套餐/账单） |
+| 手持 PDA | http://localhost:5185 | 手机同网段访问 `http://<宿主IP>:5185` |
+| 后端 API | http://localhost:3200/api/v1 | 直连调试用 |
+| PostgreSQL | localhost:5433 | 宿主映射，容器内 `postgres:5432` |
+| Redis | localhost:6380 | 宿主映射，容器内 `redis:6379` |
+
+默认账号：`admin / admin123`（租户 `default`）；`operator / admin123`。
+
+首次冷启动会有 **45–70 秒**的加载时间（Nest 模块多、依赖重），期间 `api` 未监听属正常；`start_period` 已给到 120 秒。
+
+冒烟验证：
+
+```bash
+curl -s -X POST http://localhost:3200/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"admin123"}'
+# 期望 201 + {"code":0,...,"accessToken":"eyJ..."}
+```
+
+> 老前端 `web/` 已弃用，仅在需要行为对照时启动：`docker compose --profile legacy up -d web`（5180）。
+
+### 4.2 本地分进程（改代码时）
+
+```bash
+cd backend && pnpm i && pnpm start:dev     # API :3200（nest watch）
+cd apps/console && pnpm i && pnpm dev      # :5173，vite 代理 /api → 3200
+cd apps/platform && pnpm i && pnpm dev     # :5181
+cd apps/pda && pnpm i && pnpm dev          # :5185
+```
+
+> 本机需自带 PostgreSQL 与 Redis，并按 §5 建库。
+
+### 4.3 生产构建与上线前必改
+
+```bash
+cd backend && pnpm build          # tsc -p tsconfig.json → dist/src/main.js、dist/worker.js
+pnpm start:prod                   # node dist/src/main.js
+pnpm worker:prod                  # node dist/worker.js
+```
+
+必须改的三项，否则后端会**拒绝启动**（`src/common/config.guard.ts` 的 fail-fast）：
+
+1. `NODE_ENV=production`
+2. `JWT_SECRET` 换成强随机串（内置 `dev-secret` 会被拦）
+3. `DB_PASS` 不能是 `labelflow` / `postgres` / `password` / `123456` / `admin` 这类弱口令
+
+多租户隔离的数据库角色 `labelflow_app`（NOBYPASSRLS）由 `saas_p6_rls.sql` 创建，见 §5。
 
 ---
 
-## 5. 数据库脚本（手工执行，幂等）
+## 5. 数据库
 
-项目关闭了 TypeORM 的自动同步，所有 DDL 与权限种子都在 `backend/scripts/`。首次部署 / 升级按依赖顺序执行：
+`synchronize: false`，所有 DDL 由脚本执行。**唯一真源是 `backend/scripts/db-manifest.txt` 的顺序清单**，不要再照记忆或文件头注释手工排。
 
-| 脚本 | 用途 |
-| --- | --- |
-| `docs/03-database.sql` | 基础表（模板 / 用户 / 打印任务等） |
-| `udi_p1_trace.sql` | UDI 追溯三表（`udi_units/udi_packages/udi_events`） |
-| `wms_p1_inbound.sql` / `wms_p2_issuing.sql` / `wms_u5_material_gtin.sql` / `wms_u5_material_gtins.sql` | WMS 收货 / 发料 / 物料 GTIN / 多码（含 `pack_qty`） |
-| `saas_p0.sql` / `saas_p0_roles.sql` | 租户 / 模块 / RBAC 权限点种子 |
-| `saas_p2_platform.sql` / `saas_p3_billing.sql` | 平台运营 / 计费 |
-| `saas_p4_agent.sql` / `saas_p5_agent_tools.sql` | Agent / 工具权限 |
-| `saas_p6_*.sql` | 白标 / 独立库 / RLS / Prompt 库 / Prompt 版本历史 / 租户数据 |
-| `saas_p7_notifications.sql` | 通知 |
-| `saas_p8_governance.sql` / `saas_p8_hardware.sql` / `saas_p8_triggers.sql` | 治理 / 硬件 / 自动化触发 |
-| `inventory_*.sql` | 主数据 / 库存 / 库位 / 产品组 / 产品打印 / 自定义字段 / BOM / 呆滞预警 |
-| `seed.sql` / `seed-inventory-demo.sql` | 演示数据 |
+```bash
+# 一键建库（幂等，可重复跑；默认连 PG* 环境变量或 DATABASE_URL）
+bash backend/scripts/db-init.sh
+bash backend/scripts/db-init.sh --seed-demo     # 额外注入演示数据
+bash backend/scripts/db-init.sh --dry-run       # 只看执行顺序
+bash backend/scripts/db-init.sh --verify-only   # 只做缺表自检
+```
 
-> **加购模块**（`inventory` 基础模块之上）：`masterdata` / `bom` / `alert` 等需给目标租户开通 `tenant_modules` 后，模块门才放行、菜单才出现。示例：
+机制：
+
+- 顺序清单 `db-manifest.txt` 共 32 步（31 个脚本 + RLS 跑两遍）。实测踩到的两个坑已固化：`saas_p6_prompt_versions.sql` 要 GRANT 到 `labelflow_app`，所以 RLS 必须先跑一遍建角色；`inventory_masterdata.sql` 给 `stock_moves` 加库位列，必须排在 `inventory_stock_moves.sql` 之后。
+- `saas_p6_rls.sql` **跑两遍**：第一次建角色 + 给当时已存在的表挂策略，最后一次给后建的新表（WMS/UDI/多码）补挂。
+- 基础 DDL `docs/03-database.sql` 不幂等（19 张表无 `IF NOT EXISTS`），所以只在全新库执行一次；脚本会检测 `public.tenants` 是否存在来自动跳过。
+- 结束自动跑 `db-verify.sh`：对账 `db-expected-tables.txt`（77 张表），缺一张即失败。
+- 新增迁移脚本必须同时登记到 `db-manifest.txt`，否则自检会报缺表。
+
+> 加购模块（`inventory` 基础模块之上）：`masterdata` / `bom` / `alert` 等需给目标租户开通 `tenant_modules` 后，模块门才放行、菜单才出现：
 > ```sql
 > INSERT INTO tenant_modules (tenant_id, module_code, status, source)
 > VALUES (<租户ID>, 'alert', 'active', 'manual')
@@ -238,7 +269,8 @@ cd apps/pda && pnpm i && pnpm dev                 # WMS 收货 PDA H5 :5185（�
 | 渲染管线（变量 + 公式 + 流水号 → 元素 / 矢量 SVG / PDF） | ✅ 真实 | 单测 + 快照 |
 | 后端 NestJS 全模块 | ✅ 完整实现 | `pnpm typecheck` + 全量单测 |
 | 前端三应用（console / platform / mcp-server） | ✅ 完整实现 | `vue-tsc -b` 类型检查 |
-| 多租户隔离 | ✅ 守卫 + BaseRepository + RLS 代码 | 查询强制带 tenant_id |
+| 多租户隔离 | 🟡 应用层强制 tenant_id；RLS 策略已建角色 | D0 起可一键建库；RLS 实际连接角色切换在 D2 |
+| **交付化（D0）** | ✅ 装得上 | Dockerfile×2 + compose 编排出建库链 + `db-init.sh`（32 步 / 77 表自检）；真库实跑通过（`docs/25`） |
 
 ### 运行测试
 
@@ -246,7 +278,7 @@ cd apps/pda && pnpm i && pnpm dev                 # WMS 收货 PDA H5 :5185（�
 cd backend
 pnpm typecheck                 # tsc --noEmit
 pnpm test                      # node:test + tsx，覆盖 core/**/__tests__ 与 src/**/__tests__
-# 当前：约 661 例，654 通过 / 0 失败 / 7 跳过
+# 当前：860 例 / 853 通过 / 0 失败 / 7 跳过
 
 cd apps/console && pnpm vue-tsc -b   # 前端类型检查
 ```

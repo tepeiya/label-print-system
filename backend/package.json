@@ -5,13 +5,16 @@
   "packageManager": "pnpm@10.28.2",
   "scripts": {
     "start:dev": "nest start --watch",
-    "build": "nest build",
+    "build": "tsc -p tsconfig.json",
     "worker": "node --import tsx worker.ts",
     "test": "node --import tsx --test core/__tests__/*.test.ts src/**/__tests__/*.test.ts",
     "test:integration": "jest --config jest.integration.config.js --runInBand",
     "lint": "eslint src",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "migration": "psql $DB_URL -f ../docs/03-database.sql"
+    "migration": "psql $DB_URL -f ../docs/03-database.sql",
+    "start:prod": "node dist/src/main.js",
+    "worker:prod": "node dist/worker.js",
+    "clean": "rm -rf dist"
   },
   "dependencies": {
     "@bwip-js/node": "^4.0.0",

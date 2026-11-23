@@ -1,0 +1,9 @@
+# 前端镜像 build context = 仓库根，必须排除依赖与产物，否则 COPY 会很慢
+**/node_modules
+**/dist
+**/.git
+**/*.log
+web/vendor
+web/vendor-src
+docs
+tools

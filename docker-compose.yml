@@ -1,66 +1,153 @@
-# LabelFlow 一键启动（开发/演示）
-# 用法：docker compose up -d
+# LabelFlow 一键启动（演示 / 自托管）
+# 用法：
+#   docker compose up -d --build          # 首次：建库 → 起 API/Worker → 起三个前端
+#   docker compose down -v                # 清空数据（含数据库卷）
+#   docker compose logs -f api            # 看后端日志
 #
 # 端口约定（与 docs/10-dev-handover.md §10.1.2 一致）：
-#   宿主访问端口：后端 API 3200 / PostgreSQL 5433 / Redis 6380 / 老前端 web 5180
-#   其他应用（不在本 compose 中）：console 5173 / platform 5181 / MCP HTTP 3300
+#   后端 API 3200 / PostgreSQL 5433 / Redis 6380
+#   console 租户后台 5173 / platform 平台后台 5181 / pda 手持 5185
+#   老前端 web 5180 仅在 profiles=legacy 时启动（已弃用，只作行为对照）
 #   端口 3000 属其他项目，禁止占用。
-# 注意：容器内部仍使用镜像默认端口（PG 5432、Redis 6379），
-#       仅「宿主映射」与「容器内 API 监听端口」按上述约定设置；
-#       容器之间通过服务名互联（postgres:5432、redis:6379），不受宿主映射影响。
+#
+# 生产上线必改：把 NODE_ENV 改成 production，并设置强 JWT_SECRET 与非弱口令 DB 密码，
+# 否则后端会按 config.guard 拒绝启动（这是有意的 fail-fast）。
+
+x-api-build: &api-build
+  context: ./backend
+  dockerfile: Dockerfile
+
+x-db-env: &db-env
+  DB_HOST: postgres
+  DB_PORT: "5432"                 # 容器网络内 postgres:5432（宿主映射 5433 不影响容器互联）
+  DB_NAME: labelflow
+  DB_USER: labelflow
+  DB_PASS: ${DB_PASS:-labelflow}
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: labelflow
-      POSTGRES_PASSWORD: labelflow
+      POSTGRES_PASSWORD: ${DB_PASS:-labelflow}
       POSTGRES_DB: labelflow
-    ports: ["5433:5432"]        # 宿主 5433 -> 容器 5432（PG 镜像默认端口不变）
+    ports: ["5433:5432"]        # 宿主 5433 -> 容器 5432
     volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U labelflow"]
+      test: ["CMD-SHELL", "pg_isready -U labelflow -d labelflow"]
       interval: 5s
+      timeout: 3s
+      retries: 20
 
   redis:
     image: redis:7-alpine
-    ports: ["6380:6379"]        # 宿主 6380 -> 容器 6379（Redis 镜像默认端口不变）
+    ports: ["6380:6379"]        # 宿主 6380 -> 容器 6379
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # 一次性建库任务：按 backend/scripts/db-manifest.txt 的固定顺序执行全部 SQL（全部幂等），
+  # 结束后自检 77 张表是否齐全。api / worker 必须等它成功退出再启动。
+  db-init:
+    image: postgres:16-bookworm
+    depends_on:
+      postgres: { condition: service_healthy }
+    volumes:
+      - ./backend/scripts:/sql:ro
+      - ./docs/03-database.sql:/base/03-database.sql:ro
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: labelflow
+      PGPASSWORD: ${DB_PASS:-labelflow}
+      PGDATABASE: labelflow
+      SQL_DIR: /sql
+      BASE_DDL: /base/03-database.sql
+    command: ["bash", "/sql/db-init.sh", "--seed-demo"]
+    restart: "no"
 
   api:
-    build: ./backend
+    build: *api-build
+    image: labelflow/api:dev
     environment:
-      DB_HOST: postgres
-      DB_PORT: "5432"                 # 容器网络内 postgres:5432（宿主映射 5433 不影响容器互联）
-      DB_NAME: labelflow
-      DB_USER: labelflow
-      DB_PASS: labelflow
-      REDIS_URL: redis://redis:6379   # 容器网络内 redis:6379（宿主映射 6380 不影响容器互联）
-      JWT_SECRET: change-me-in-prod
-      PORT: "3200"                    # 容器内 API 监听端口（代码默认即 3200）
-    depends_on: [postgres, redis]
-    ports: ["3200:3200"]        # 宿主 3200 -> 容器 3200
+      <<: *db-env
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-prod}
+      PORT: "3200"
+      NODE_ENV: ${NODE_ENV:-development}
+    depends_on:
+      db-init: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    ports: ["3200:3200"]
+    healthcheck:
+      # 非 HTTP 探活：3200 端口能建立 TCP 连接即视为进程已起来
+      test: ["CMD", "node", "-e", "const n=require('net');const s=n.connect(3200,'127.0.0.1',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 120s       # Nest 首次冷启动约 45–70s（模块加载重），给足余量
+    restart: unless-stopped
 
   worker:
-    build: ./backend
-    command: npm run worker
+    build: *api-build
+    image: labelflow/api:dev
+    command: ["node", "dist/worker.js"]
     environment:
-      - REDIS_URL=redis://redis:6379
-      - DB_HOST=postgres
-      - DB_PORT=5432
-    depends_on: [postgres, redis]
+      <<: *db-env
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: ${NODE_ENV:-development}
+    depends_on:
+      db-init: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
 
-  # ⚠️ DEPRECATED（已弃用）：web 是老版原生 HTML5 前端，仅作行为对照，不再新增功能。
-  #    新前端为 Vue 3：apps/console（租户后台 :5173）、apps/platform（平台后台 :5181）；
-  #    待新前端功能完善后，本服务与 ./web 一并删除。
+  # 租户后台（Vue 3，nginx 反代 /api → api:3200）
+  console:
+    build:
+      context: .
+      dockerfile: deploy/frontend.Dockerfile
+      args: { APP: console }
+    image: labelflow/console:dev
+    depends_on:
+      api: { condition: service_healthy }
+    ports: ["5173:80"]
+    restart: unless-stopped
+
+  # 平台后台（SaaS 运营）
+  platform:
+    build:
+      context: .
+      dockerfile: deploy/frontend.Dockerfile
+      args: { APP: platform }
+    image: labelflow/platform:dev
+    depends_on:
+      api: { condition: service_healthy }
+    ports: ["5181:80"]
+    restart: unless-stopped
+
+  # 手持 PDA（手机同网段访问 http://<宿主IP>:5185）
+  pda:
+    build:
+      context: .
+      dockerfile: deploy/frontend.Dockerfile
+      args: { APP: pda }
+    image: labelflow/pda:dev
+    depends_on:
+      api: { condition: service_healthy }
+    ports: ["5185:80"]
+    restart: unless-stopped
+
+  # ⚠️ DEPRECATED：老版原生 HTML5 前端，仅作行为对照，默认不启动。
+  #    启用：docker compose --profile legacy up -d web
   web:
     image: nginx:alpine
+    profiles: ["legacy"]
     volumes: ["./web:/usr/share/nginx/html:ro"]
     ports: ["5180:80"]
-    depends_on: [api]
-    environment:
-      - API_BASE=http://api:3200/api/v1   # 容器内经服务名访问 api:3200
+    depends_on:
+      api: { condition: service_healthy }
 
 volumes:
   pgdata:

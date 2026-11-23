@@ -1,0 +1,44 @@
+# LabelFlow 建库执行顺序（唯一真源）
+#
+# 规则：
+#   - 每行一个 SQL 文件名（相对 SQL_DIR，默认 backend/scripts）；# 开头为注释
+#   - `@base`  = 基础 DDL（仓库内 docs/03-database.sql；镜像内 /app/docs/03-database.sql）
+#   - `@demo <文件名>` = 仅在 --seed-demo 时执行
+#   - 顺序不可随意调换，理由见行尾注释
+#
+# 变更规则：新增迁移脚本必须同时在此登记，否则 db-verify.sh 会报缺表。
+
+@base                                      # 基础表：模板/用户/打印任务/审计等 19 张
+seed.sql                                   # default 租户 + admin/operator（saas_p0_roles 依赖它，必须在其之前）
+saas_p0.sql                                # 租户/模块/订阅/RBAC 基础
+saas_p0_roles.sql                          # 角色与权限点种子（依赖 seed.sql 的 default 租户）
+saas_p2_platform.sql                       # 平台运营（平台用户/审计/额度）
+saas_p3_billing.sql                        # 套餐/账单/收款
+saas_p4_agent.sql                          # Agent + 仓库/物料/批次（inventory 依赖）
+saas_p5_agent_tools.sql                    # Agent 工具权限
+saas_p6_branding.sql                       # 白标/域名
+saas_p6_rls.sql                            # 第一遍：建 labelflow_app/labelflow_platform 角色 + 给已有表挂策略（后面脚本要 GRANT 到该角色）
+saas_p6_dedicated.sql                      # 独立库租户注册表
+saas_p6_prompts.sql                        # Prompt 库
+saas_p6_prompt_versions.sql                # Prompt 版本历史
+saas_p6_tenant_data.sql                    # 租户导出/导入约束
+saas_p7_notifications.sql                  # 通知
+saas_p8_triggers.sql                       # 自动化触发器（依赖 p7）
+saas_p8_governance.sql                     # 治理开关（依赖 triggers）
+saas_p8_hardware.sql                       # 硬件代理（依赖 governance）
+inventory_stock_moves.sql                  # 库存移动台账（依赖 warehouses/materials）—— 必须在 masterdata 之前（masterdata 给 stock_moves 加库位列）
+inventory_masterdata.sql                   # 物料主数据扩展 + 库位（依赖 saas_p4_agent / stock_moves）
+inventory_product_groups.sql               # 产品组（依赖 materials/printers）
+inventory_location_link.sql                # 库位绑定（依赖 product_groups）
+inventory_material_custom_fields.sql       # 物料自定义字段
+inventory_product_print.sql                # 产品打印配置（依赖 templates）
+inventory_bom.sql                          # BOM（依赖 materials）
+inventory_alert.sql                        # 呆滞预警（依赖 permissions/modules）
+wms_p1_inbound.sql                         # WMS 收货/上架
+wms_p2_issuing.sql                         # WMS 工单/发料/退料
+udi_p1_trace.sql                           # UDI 追溯三表（udi_units/udi_packages/udi_events）
+wms_u5_material_gtin.sql                   # materials 增 gtin / udi_required
+wms_u5_material_gtins.sql                  # 多码表 material_gtins（含 pack_qty），并回填旧 gtin
+saas_p6_rls.sql                            # 第二遍：必须放在所有建表之后重跑，给新表补挂隔离策略（脚本幂等）
+
+@demo seed-inventory-demo.sql              # 演示数据（物料/库位/批次/BOM），仅 --seed-demo
