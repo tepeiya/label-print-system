@@ -210,6 +210,8 @@ cd apps/pda && pnpm i && pnpm dev                 # WMS 收货 PDA H5 :5185（�
 | 脚本 | 用途 |
 | --- | --- |
 | `docs/03-database.sql` | 基础表（模板 / 用户 / 打印任务等） |
+| `udi_p1_trace.sql` | UDI 追溯三表（`udi_units/udi_packages/udi_events`） |
+| `wms_p1_inbound.sql` / `wms_p2_issuing.sql` / `wms_u5_material_gtin.sql` / `wms_u5_material_gtins.sql` | WMS 收货 / 发料 / 物料 GTIN / 多码（含 `pack_qty`） |
 | `saas_p0.sql` / `saas_p0_roles.sql` | 租户 / 模块 / RBAC 权限点种子 |
 | `saas_p2_platform.sql` / `saas_p3_billing.sql` | 平台运营 / 计费 |
 | `saas_p4_agent.sql` / `saas_p5_agent_tools.sql` | Agent / 工具权限 |
