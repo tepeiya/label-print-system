@@ -1,8 +1,18 @@
-// UDI 模块（医疗合规赋码）：纯数据与判定，无库依赖，先于 UDI 追溯落地。
-// 后续里程碑（udi.trace 表/导出/真机）在本模块内扩展，不新建顶层模块。
+// UDI 模块（医疗合规赋码）：码构造/解析/扫码复核（无库）+ 追溯单元/包装/事件/留痕报表（有库）。
+// 表结构见 scripts/udi_p1_trace.sql；实体见 entities/udi.entity.ts。
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '../common/tenant-typeorm.module';
 import { UdiController } from './udi.controller';
+import { UdiTraceController } from './udi.trace.controller';
 import { UdiService } from './udi.service';
+import { UdiTraceService } from './udi.trace.service';
+import { UdiUnit, UdiPackage, UdiEvent } from './entities/udi.entity';
+import { AuditModule } from '../audit/audit.module';
 
-@Module({ controllers: [UdiController], providers: [UdiService], exports: [UdiService] })
+@Module({
+  imports: [TypeOrmModule.forFeature([UdiUnit, UdiPackage, UdiEvent]), AuditModule],
+  controllers: [UdiController, UdiTraceController],
+  providers: [UdiService, UdiTraceService],
+  exports: [UdiService, UdiTraceService],
+})
 export class UdiModule {}

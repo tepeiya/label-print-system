@@ -25,3 +25,5 @@ export { GovernanceSetting, TemplateGovernance, TemplateReview, PrintDedupe } fr
 export { HardwareAgent, HardwareAgentJob, RfidWriteLog } from '../hardware/hardware.entity';
 // WMS 阶段一（DDL: scripts/wms_p1_inbound.sql）
 export { WmsReceipt, WmsReceiptLine, WmsPutawayTask, WmsPutawayRule } from '../wms/inbound/entities/wms.entity';
+// UDI 医疗追溯（DDL: scripts/udi_p1_trace.sql）
+export { UdiUnit, UdiPackage, UdiEvent } from '../udi/entities/udi.entity';

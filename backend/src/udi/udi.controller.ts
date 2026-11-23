@@ -11,6 +11,7 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { UdiService, ScanExpectation } from './udi.service';
 import { UdiInput } from './udi.calc';
+import { printerAdapterPayload, printerProfileById } from './udi.printer-profiles';
 
 @Controller('udi')
 export class UdiController {
@@ -32,10 +33,18 @@ export class UdiController {
       notIncluded: [
         'ISO/IEC 15415 打印质量等级判定（需硬件验证仪）',
         '国家 UDI 数据库自动上报（先做导出，接口待客户确认）',
-        '真机型号兼容矩阵（需现场验收，见 docs/18 §6）',
+        '真机合格样张验收（矩阵与校准清单已提供，机型 status=POC 待现场签字，见 docs/18 §6）',
       ],
     };
   }
+
+  /** 真机适配矩阵 + 现场校准清单（实施/销售直接给客户看） */
+  @Get('printer-profiles')
+  printerProfiles() { return printerAdapterPayload(); }
+
+  /** 单机型参数 */
+  @Get('printer-profiles/:id')
+  printerProfile(@Param('id') id: string) { return printerProfileById(id) ?? { error: '未收录该机型' }; }
 
   /** UDI 模板包清单 */
   @Get('templates')

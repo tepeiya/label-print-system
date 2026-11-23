@@ -396,10 +396,10 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 
 ---
 
-## 10. 医疗 UDI 合规赋码（2026-11-23，里程碑 U1 已实施）
+## 10. 医疗 UDI 合规赋码（2026-11-23，里程碑 U1–U4 已实施）
 
 > 商业化方向见对话决策：医疗 UDI（NMPA 2026 年第 21 号公告，全部二类 2027-06-01 前赋码、全部一类 2029-06-01 前）。
-> 实施记录与边界声明见 `docs/18-udi-implementation.md`。
+> 实施记录与边界声明见 `docs/18-udi-implementation.md`（U1）与 `docs/19-udi-trace-and-compliance.md`（U2–U4）。
 
 **做了什么**：UDI 数据构造器（GTIN 补位+校验位、GS1 日期、批号/序列号、DI/PI、HRI、元素串 FNC1）、双向解析
 （HRI 与原始元素串）、GS1 DataMatrix 渲染通道（bwip 原生 `gs1datamatrix`，`gs1: true` 开关）、扫码复核（字段级比对 + strict 整单校验）、批量构造（Excel 部分成功）、3 个标准模板包。
@@ -409,5 +409,14 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 **验证**：新增 41 例（构造+解析 29、打印回环 2、服务与模板自洽 10）；全量 `pnpm test` 732 例 / 725 通过 / 0 失败 / 7 跳过。
 **打印回环**已证：构造 → bwip 渲染 PNG → zxing 解码 → 反解出 DI/PI。
 
-**诚实边界**：不做 ISO/IEC 15415 质量等级（需硬件验证仪）；不自动上报国家 UDI 数据库（先做导出）；ZPL/TSPL 指令通道的 FNC1 需逐机型真机验收；不含医院端临床扫码。
+**U2–U4 追加（2026-11-23）**：
+- **PDA 扫码复核页** `apps/pda` → `/udi/verify`（摄像头扫 GS1 DataMatrix，逐字段比对 GTIN/批号/序列号/有效期，通过/失败蜂鸣+震动，最近 10 条实录取样）。
+- **UDI 追溯**：`udi_units` / `udi_packages` / `udi_events` 三表（`scripts/udi_p1_trace.sql`），一码追溯 `GET /udi/trace/:code`（正向生产/打印/收货 + 反向发料/出库/退料，含托盘→中包→单品层级）；状态机禁止"未收货先发料"。
+- **合规留痕**：`GET /udi/report/print-audit`（按天/按模板统计成功与失败，重打计次、单元去重）+ `GET /udi/export/print-audit.csv`、`GET /udi/export/units.csv`（UTF-8 BOM、防 CSV 公式注入）。
+- **真机适配**：`GET /udi/printer-profiles`（Zebra ZD421 / 汉印 N41·SL42 / GODEX RT700i·DT4x 参数矩阵 + 8 步现场校准清单 + 能做/不承诺口径），三款均 `status=POC` 待现场签字。
+- **前端入口**：console 新增「UDI 追溯」「UDI 合规留痕」两页（菜单暂挂 `print` 模块门，商业化时换 `udi.compliance`）。
+
+**验证（U1–U4 合计）**：后端全量 `pnpm test` **768 例 / 761 通过 / 0 失败 / 7 跳过**，`pnpm typecheck` 零错误；`apps/pda` 与 `apps/console` 均 `vue-tsc + vite build` 通过。
+
+**诚实边界**：不做 ISO/IEC 15415 质量等级（需硬件验证仪）；不自动上报国家 UDI 数据库（先做导出）；ZPL/TSPL 指令通道的 FNC1 需逐机型真机验收；不含医院端临床扫码；**三张追溯表尚未在真 PostgreSQL 上跑过集成验证**（当前环境无 psql/docker），上线前须执行 `scripts/udi_p1_trace_verify.sql` 的 7 道门（见 `docs/19 §6`）。
 **订阅门**：模块 code 预留 `udi.compliance`，正式售卖时在 `modules` / `tenant_modules` 开通并挂 `@RequireModule`。

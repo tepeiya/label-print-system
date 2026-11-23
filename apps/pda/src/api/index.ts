@@ -244,3 +244,38 @@ export const apiCreateReceipt = (body: {
   remark?: string;
   lines: { sku: string; batchNo?: string; qtyExpected: number; remark?: string }[];
 }) => post<Receipt>('/wms/receipts', body);
+
+// ---------- UDI 医疗合规：扫码复核 ----------
+export interface UdiUdiFields {
+  gtin: string | null;
+  expiry: string | null;
+  production: string | null;
+  lot: string | null;
+  serial: string | null;
+}
+export interface UdiParsed {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+  hri: string;
+  udi: UdiUdiFields;
+  di: string;
+  pi: string;
+  fields: Array<{ ai: string; title: string; value: string; group: string }>;
+}
+export interface UdiScanVerdict {
+  ok: boolean;
+  codeOk: boolean;
+  match: boolean;
+  message: string;
+  mismatches: Array<{ field: string; expected: string; actual: string | null }>;
+  parsed: UdiParsed;
+}
+
+export const apiUdiScanVerify = (body: {
+  code: string;
+  expect: { gtin?: string; expiry?: string; lot?: string; serial?: string };
+  strict?: boolean;
+}) => post<UdiScanVerdict>('/udi/scan-verify', body);
+
+export const apiUdiParse = (code: string) => post<UdiParsed>('/udi/parse', { code });

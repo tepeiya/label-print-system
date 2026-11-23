@@ -596,3 +596,46 @@ export const apiPromptRollback = (name: string, version: number): Promise<AgentP
   http.post(`/agent-prompts/${encodeURIComponent(name)}/rollback`, { version });
 
 export default http;
+
+// ========== 医疗 UDI：追溯 / 留痕报表（U2/U4）==========
+export interface UdiUnitRow {
+  id: number; udiKey: string; gtin: string; lot: string | null; serial: string | null;
+  expiry: string | null; production: string | null; status: string;
+  packageSscc: string | null; workOrderNo: string | null; templateCode: string | null;
+  printedAt: string | null; createdAt: string;
+}
+export interface UdiTraceEvent {
+  id: number; eventType: string; statusBefore: string | null; statusAfter: string | null;
+  refType: string | null; refNo: string | null; occurredAt: string; detail?: any;
+}
+export interface UdiTraceResult {
+  found: 'unit' | 'package';
+  unit: UdiUnitRow | null;
+  package: any;
+  timeline: UdiTraceEvent[];
+  hierarchy: any;
+  reverse: { issuedCount: number; shippedCount: number; refs: Array<any> } | null;
+}
+export interface UdiPrintAudit {
+  since: string | null; until: string | null; totalEvents: number;
+  totals: { printed: number; failed: number; units: number };
+  byDay: Array<{ day: string; printed: number; failed: number; units: number }>;
+  byTemplate: Array<{ templateCode: string; printed: number; failed: number }>;
+}
+
+export const apiUdiTrace = (code: string): Promise<UdiTraceResult> =>
+  http.get(`/udi/trace/${encodeURIComponent(code)}`);
+export const apiUdiUnits = (params?: any): Promise<{ total: number; items: UdiUnitRow[] }> =>
+  http.get('/udi/units', { params });
+export const apiUdiPrintAudit = (params?: any): Promise<UdiPrintAudit> =>
+  http.get('/udi/report/print-audit', { params });
+export const apiUdiPrinterProfiles = (): Promise<any> => http.get('/udi/printer-profiles');
+
+/** CSV 下载走浏览器（拦截器会把文件流当 JSON 拆坏），token 拼进 URL（JwtAuthGuard 支持 query.token） */
+export const udiExportUrl = (path: string, params: Record<string, any> = {}) => {
+  const qs = new URLSearchParams({
+    ...params,
+    token: localStorage.getItem('labelflow_access') || '',
+  }).toString();
+  return `/api/v1${path}?${qs}`;
+};

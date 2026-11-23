@@ -8,7 +8,7 @@
     <div class="pda-body">
       <div class="card" style="background:linear-gradient(135deg,#1e3a8a,#0f172a)">
         <div class="card-t">租户 {{ auth.tenantCode || 'default' }}</div>
-        <div class="card-v">WMS 收货上架 · 阶段一</div>
+        <div class="card-v">WMS 收货上架 · UDI 复核</div>
         <div class="muted" style="margin-top:6px">扫码收货 → 上架确认 → 补打标签</div>
       </div>
 
@@ -22,6 +22,11 @@
           <span class="ic">🏬</span>
           <span class="nm">上架任务</span>
           <span class="ds">库位推荐确认、完成上架</span>
+        </button>
+        <button class="menu-tile" @click="router.push('/udi/verify')">
+          <span class="ic">🧬</span>
+          <span class="nm">UDI 复核</span>
+          <span class="ds">扫 GS1 DataMatrix，比对 DI/PI 与批号序列号</span>
         </button>
       </div>
 

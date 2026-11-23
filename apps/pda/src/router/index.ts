@@ -6,6 +6,7 @@ import ReceiptList from '@/views/ReceiptList.vue';
 import ReceiveScan from '@/views/ReceiveScan.vue';
 import PutawayList from '@/views/PutawayList.vue';
 import PutawayDetail from '@/views/PutawayDetail.vue';
+import UdiVerify from '@/views/UdiVerify.vue';
 
 const router = createRouter({
   history: createWebHistory(),
@@ -16,6 +17,7 @@ const router = createRouter({
     { path: '/receipts/:id/scan', name: 'receive-scan', component: ReceiveScan, meta: { title: '扫码收货' } },
     { path: '/putaway', name: 'putaway', component: PutawayList, meta: { title: '上架任务' } },
     { path: '/putaway/:id', name: 'putaway-detail', component: PutawayDetail, meta: { title: '上架确认' } },
+    { path: '/udi/verify', name: 'udi-verify', component: UdiVerify, meta: { title: 'UDI 扫码复核' } },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 });
