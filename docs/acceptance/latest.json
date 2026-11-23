@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-11-23T15:41:36.950Z",
+  "generatedAt": "2026-11-23T16:19:57.496Z",
   "env": {
     "node": "v22.23.4",
     "db": "labelflow_test@127.0.0.1:5432"
   },
   "summary": {
-    "total": 29,
-    "pass": 28,
+    "total": 32,
+    "pass": 31,
     "fail": 0,
     "skip": 1
   },
@@ -16,7 +16,7 @@
       "name": "数据库可连（labelflow_test）",
       "status": "pass",
       "detail": "PostgreSQL 14.24 (Ubuntu 14.24-0ubuntu0.22.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0, 64-bit",
-      "durationMs": 75
+      "durationMs": 63
     },
     {
       "id": "ENV2",
@@ -29,7 +29,7 @@
       "name": "建库表数量自检",
       "status": "pass",
       "detail": "PASS: 期望 77 张表，实际 77 张，全部命中",
-      "durationMs": 804
+      "durationMs": 751
     },
     {
       "id": "G8",
@@ -41,79 +41,97 @@
       "id": "G1",
       "name": "G1 BOM 展开：行数与需求量含损耗（100 件 × 2、×1.05、×1）",
       "status": "pass",
-      "durationMs": 67
+      "durationMs": 72
     },
     {
       "id": "G2",
       "name": "G2 齐套：行级与整体一致，缺料行被标出",
       "status": "pass",
-      "durationMs": 62
+      "durationMs": 67
     },
     {
       "id": "G3",
       "name": "G3 过账真扣库存 + stock_moves 台账 + 发料记录唯一",
       "status": "pass",
-      "durationMs": 119
+      "durationMs": 116
     },
     {
       "id": "G4",
       "name": "G4 重跑不二次扣减（幂等）：库存与台账不变，行报「已发满/无新扣减」",
       "status": "pass",
-      "durationMs": 111
+      "durationMs": 126
     },
     {
       "id": "G5",
       "name": "G5 缺料：完全无可用批次的行走 SHORT 且不落记录；有部分库存的行按量发 PARTIAL",
       "status": "pass",
-      "durationMs": 97
+      "durationMs": 103
     },
     {
       "id": "G6",
       "name": "G6 退料回补 + 工单回 ISSUING + 退料记录可追溯",
       "status": "pass",
-      "durationMs": 139
+      "durationMs": 144
     },
     {
       "id": "G7",
       "name": "G7 跨租户不可见：应用层 404 且 labelflow_app 角色 RLS 下查不到",
       "status": "pass",
-      "durationMs": 69
+      "durationMs": 70
+    },
+    {
+      "id": "R1",
+      "name": "R1 无租户 GUC：业务表看不见任何行（策略默认拒绝）",
+      "status": "pass",
+      "durationMs": 5
+    },
+    {
+      "id": "R2",
+      "name": "R2 带 GUC：只见本租户行，另一租户行确实存在（对照）",
+      "status": "pass",
+      "durationMs": 50
+    },
+    {
+      "id": "R3",
+      "name": "R3 平台表不隔离：tenants 对 app 角色可读（登录链路依赖）",
+      "status": "pass",
+      "durationMs": 8
     },
     {
       "id": "P1",
       "name": "真实 200 往返：返回 jobId/status，Bearer token 正确，请求体不含 tenantId",
       "status": "pass",
-      "durationMs": 29
+      "durationMs": 27
     },
     {
       "id": "P2",
       "name": "真实 500 往返：返回 status=failed + errorCode，不抛异常（供过账记 failed）",
       "status": "pass",
-      "durationMs": 13
+      "durationMs": 5
     },
     {
       "id": "P3",
       "name": "真实 409/幂等往返：映射 idempotent=true",
       "status": "pass",
-      "durationMs": 3
+      "durationMs": 2
     },
     {
       "id": "P4",
       "name": "真实超时（>3s）：抛不可达、只发一次请求（不重试）——打印侧幂等兜底",
       "status": "pass",
-      "durationMs": 3016
+      "durationMs": 3015
     },
     {
       "id": "T1",
       "name": "T1 跨租户隔离 + RLS：A 建单 B 查不到；全部 wms_* 表均挂 tenant_isolation",
       "status": "pass",
-      "durationMs": 43
+      "durationMs": 44
     },
     {
       "id": "T2",
       "name": "T2 重复过账拒绝：同单过账两次，第 2 次拒、库存不翻倍",
       "status": "pass",
-      "durationMs": 23
+      "durationMs": 26
     },
     {
       "id": "T3",
@@ -125,7 +143,7 @@
       "id": "T4",
       "name": "T4 过账中途失败：库存变更抛错 → 行状态/任务无脏数据（非单一事务的真实后果）",
       "status": "pass",
-      "durationMs": 27
+      "durationMs": 29
     },
     {
       "id": "T5",
@@ -137,14 +155,14 @@
       "id": "P5",
       "name": "真实 entity 能被 TypeORM 解析并连库初始化（不再报 Column type undefined）",
       "status": "pass",
-      "durationMs": 85
+      "durationMs": 130
     },
     {
       "id": "UDI-UNIT",
       "name": "UDI/GTIN/拆箱 定向单测（7 文件）",
       "status": "pass",
       "detail": "pass=114 fail=0",
-      "durationMs": 56798
+      "durationMs": 52334
     },
     {
       "id": "U1",
@@ -184,10 +202,10 @@
     },
     {
       "id": "UNIT-ALL",
-      "name": "全量单测回归（860 例）",
+      "name": "全量单测回归（866 例）",
       "status": "pass",
-      "detail": "pass=853 fail=0 skip=7",
-      "durationMs": 278356
+      "detail": "pass=859 fail=0 skip=7",
+      "durationMs": 263938
     }
   ],
   "declaredButMissing": []

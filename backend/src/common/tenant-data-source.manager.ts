@@ -276,7 +276,12 @@ export class TenantDataSourceManager implements OnModuleInit {
           username: process.env.DB_RLS_USER as string,
           password: process.env.DB_RLS_PASSWORD || process.env.DB_RLS_USER || '',
           database: process.env.DB_NAME || 'labelflow',
-          entities: [],                 // 只跑带参原生 SQL，不重复挂实体元数据
+          // D2：RLS 强制模式要在该连接上跑 Repository（em.getRepository），必须挂同一套实体元数据。
+          // 与主 DS 共用同一份实体类数组，不产生第二套定义；元数据仍是同一份类型信息。
+          entities: (this.dataSource.options.entities as any) ?? [],
+          // D2：列名必须跟主 DS 同一套命名策略（snake_case），否则 entity 属性 createdAt 会被当成列名，
+          // 直接报 column "X.createdAt" does not exist（RLS 连接上跑 Repository 才发现）
+          ...(this.dataSource.options.namingStrategy ? { namingStrategy: this.dataSource.options.namingStrategy } : {}),
           synchronize: false,
           migrationsRun: false,
           logging: false,

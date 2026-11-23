@@ -28,6 +28,7 @@ import { WmsModule } from './wms/wms.module';
 import { IssuingModule } from './wms/issuing/issuing.module';
 import { UdiModule } from './udi/udi.module';
 import { TenantRoutingModule } from './common/tenant-routing.module';
+import { HealthController } from './common/health.controller';
 import { SnakeNamingStrategy } from './snake-naming.strategy';
 import { JWT_SECRET, redisConnection } from './common/config';
 
@@ -61,5 +62,6 @@ const ENTITIES = Object.values(entities).filter((e) => typeof e === 'function');
     UdiModule,                  // UDI 医疗合规赋码：构造/解析/扫码复核/模板包
     TenantRoutingModule,        // P6.2 阶段 B：全局 Repository/事务租户路由（@Global）
   ],
+  controllers: [HealthController],
 })
 export class AppModule {}

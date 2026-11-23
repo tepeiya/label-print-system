@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: backend
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+# ---------------------------------------------------------------- 1. 静态检查
+  static:
+    name: static (typecheck + lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      # 类型门：必须零错误（tsc 同时覆盖 src 与 worker 入口）
+      - run: pnpm typecheck
+      # 语法门：只挡真正的解析错误与未定义变量（ESLint 的 no-undef / parsing-error 类），
+      # 历史代码里有 23 处 no-unused-vars 等风格问题，不在本门里阻断（见 docs/27 §4）。
+      - run: npx eslint src --quiet --rule '{"@typescript-eslint/no-unused-vars":"off","no-unassigned-vars":"off","no-control-regex":"off","@typescript-eslint/ban-ts-comment":"off","no-useless-assignment":"off"}'
+
+# ---------------------------------------------------------------- 2. 单测
+  unit:
+    name: unit (node --test, 860 例)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      # 单测不依赖 DB（用内存仓库/纯函数），失败时上传 TAP 方便定位
+      - run: pnpm test -- --test-reporter=tap 2>&1 | tee unit.tap
+      - name: 摘要
+        if: always()
+        run: grep -E '# (tests|pass|fail|skipped)' unit.tap | tail -4
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-tap
+          path: backend/unit.tap
+
+# ---------------------------------------------------------------- 3. 真库集成
+  integration:
+    name: integration (真 PG + Redis)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: labelflow
+          POSTGRES_PASSWORD: labelflow
+          POSTGRES_DB: labelflow
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U labelflow" --health-interval 10s
+          --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:6
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 10s
+          --health-timeout 5s --health-retries 10
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_NAME: labelflow
+      DB_USER: labelflow
+      DB_PASS: labelflow
+      DATABASE_URL: postgres://labelflow:labelflow@127.0.0.1:5432/labelflow
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: 装 psql 客户端
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      # 建库：按 scripts/db-manifest.txt 顺序跑 32 步（全幂等），再自检 77 张表
+      - name: 建库 + 自检
+        run: bash scripts/db-init.sh && bash scripts/db-verify.sh
+      # 真库集成门（WMS G1–G7 / T1–T5 / 打印网关）
+      - name: 集成测试
+        run: npx jest --config jest.integration.config.js --runInBand
+      - name: 一键验收（产出 JSON 报告）
+        if: always()
+        run: node scripts/acceptance-run.mjs
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-report
+          path: docs/acceptance/

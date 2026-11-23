@@ -31,6 +31,8 @@ const ENV = {
   DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASS,
   DATABASE_URL: process.env.DATABASE_URL || `postgres://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}`,
   NODE_ENV: 'test',
+  DB_RLS_USER: process.env.DB_RLS_USER || 'labelflow_app',
+  DB_RLS_PASSWORD: process.env.DB_RLS_PASSWORD || 'labelflow_app',
 };
 
 /** 门位定义：id → 说明 + 期望来源（测试名正则或 suite 文件名） */
@@ -55,6 +57,10 @@ const GATE_DEFS = [
   { id: 'P3', name: '打印网关 409 → idempotent 映射', src: 'print-gateway-http' },
   { id: 'P4', name: '打印网关超时 → 不可达且不重试', src: 'print-gateway-http' },
   { id: 'P5', name: '真 entity 能被 TypeORM 解析并连库初始化', src: 'metadata-probe' },
+  // D2：RLS 真兜底（labelflow_app 角色）
+  { id: 'R1', name: 'RLS 无 GUC → 业务表 0 行', src: 'rls-enforce' },
+  { id: 'R2', name: 'RLS 带 GUC → 只见本租户行 + WITH CHECK 拒越权写', src: 'rls-enforce' },
+  { id: 'R3', name: '平台表（tenants）不隔离，登录链路可读', src: 'rls-enforce' },
   // 收货侧 UDI 拦截（docs/21 §68 建议门）：无 InboundService 服务级夹具，本报告固定 skip
   { id: 'G8', name: '收货侧 UDI 拦截（udi_required 物料必须带码）', src: 'skip:no-fixture' },
   // UDI 门（docs/19 §6）与 U5 系列——由单测覆盖（真库集成未单列）

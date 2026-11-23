@@ -5,6 +5,7 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
+import { currentTraceId, log } from './trace.middleware';
 
 /**
  * 全局异常过滤：把异常归一化为 { code, message, data: null }
@@ -14,14 +15,28 @@ import {
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost) {
-    console.error('[Unhandled Exception]', exception);
     const res = host.switchToHttp().getResponse();
     const isHttp = exception instanceof HttpException;
     const status = isHttp ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
+
+    // D2：结构化日志 + traceId，替代 console.error（多行堆栈拆成单行字段，容器里可 grep）。
+    // 4xx 是客户端错，用 warn 且不打堆栈 —— 否则正常业务拒绝（401/403/429）会把日志冲成 error 墙。
+    const traceId = currentTraceId();
+    const err = exception as any;
+    const logFn = status >= 500 ? log.error : log.warn;
+    logFn('exception', {
+      traceId,
+      name: err?.name,
+      message: err?.message,
+      status,
+      stack: status >= 500 ? String(err?.stack || '').split('\n').slice(0, 4).join(' | ') : undefined,
+    });
     const bizCode = (exception as any)?.bizCode;
     let message = isHttp ? exception.message : '服务器内部错误';
 
     const body: Record<string, any> = { code: bizCode ?? status, message, data: null };
+    // 400 及以上把 traceId 透给前端：用户截图报错时运维能直接定位
+    if (traceId && status >= 400) body.requestId = traceId;
     // class-validator 的报错是 string[]（每条一个字段的中文说明），
     // 原样返回 message: ["name ...","content ..."] 前端不好展示，拼成一句并把明细放进 errors
     const resp = isHttp && typeof (exception as any).getResponse === 'function'

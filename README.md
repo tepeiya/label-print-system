@@ -269,8 +269,9 @@ bash backend/scripts/db-init.sh --verify-only   # 只做缺表自检
 | 渲染管线（变量 + 公式 + 流水号 → 元素 / 矢量 SVG / PDF） | ✅ 真实 | 单测 + 快照 |
 | 后端 NestJS 全模块 | ✅ 完整实现 | `pnpm typecheck` + 全量单测 |
 | 前端三应用（console / platform / mcp-server） | ✅ 完整实现 | `vue-tsc -b` 类型检查 |
-| 多租户隔离 | 🟡 应用层强制 tenant_id；RLS 策略已建角色 | D0 起可一键建库；RLS 实际连接角色切换在 D2 |
+| 多租户隔离 | ✅ 应用层 + RLS 兜底（可开关） | `DB_RLS_ENFORCE=1` 时 Repository 走 RLS 角色短事务（R1–R3 真库门全绿）；`createQueryBuilder` 路径仍走主连接（`docs/27 §2.3`）|
 | **交付化（D0）** | ✅ 装得上 | Dockerfile×2 + compose 编排出建库链 + `db-init.sh`（32 步 / 77 表自检）；真库实跑通过（`docs/25`） |
+| **交付化（D2）** | ✅ 运维接管 | `/health` 三层探针 + Redis 限流（登录严档）+ traceId 结构化日志 + 优雅停机 + CI 三 job + RLS 主链路开关（`DB_RLS_ENFORCE`）；真库 R1–R3 门全绿（`docs/27`） |
 | **交付化（D1）** | ✅ 验得出 | `backend/scripts/db-acceptance.sh` 一条命令跑 29 门（WMS G1–G7 / T1–T5 / 打印 P1–P4 / UDI-U5 组 / 全量 860 例），产物 `docs/acceptance/latest.json`：28 通过 1 显式跳过（G8）（`docs/26`） |
 
 ### 运行测试

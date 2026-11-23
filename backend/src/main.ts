@@ -23,6 +23,10 @@ import { Role } from './entities/saas.entity';
 import { PORT } from './common/config';
 // B2.2 上线前加固：启动期配置强校验（生产带 dev 密钥/弱口令直接拒绝启动）
 import { readConfigSnapshot, assertProductionConfig } from './common/config.guard';
+// D2 上线加固：traceId + 结构化日志 / 全局限流 / 健康探针 / 优雅停机
+import { traceMiddleware, accessLogMiddleware, log } from './common/trace.middleware';
+import { rateLimitMiddleware } from './common/rate-limit.middleware';
+import { HealthController } from './common/health.controller';
 
 async function seedDefaultTenantAndAdmin(dataSource: DataSource) {
   const tenantRepo = dataSource.getRepository(Tenant);
@@ -74,6 +78,13 @@ async function bootstrap() {
   }
 
   const app = await NestFactory.create(AppModule);
+  // 中间件顺序（express 层，先挂先生效）：
+  //   trace(生成 traceId 并进 ALS) → 限流 → 访问日志 → Nest 路由
+  // trace 必须最先，否则限流/日志里没有 traceId。
+  app.use(traceMiddleware());
+  app.use(rateLimitMiddleware());
+  app.use(accessLogMiddleware());
+
   const reflector = app.get(Reflector);
   const jwt = app.get(JwtService);
 
@@ -109,7 +120,51 @@ async function bootstrap() {
   // 首次启动种入默认租户、管理员与 admin 角色（幂等）
   await seedDefaultTenantAndAdmin(app.get(DataSource));
 
+  // 裸 /health 探针（不带 /api/v1 前缀，compose/nginx/k8s 探针习惯这个路径）。
+  // 直接挂在 express 实例上，不经过拦截器，返回体是原始 JSON（便于 curl 一眼看）。
+  const health = app.get(HealthController);
+  const http = app.getHttpAdapter().getInstance();
+  http.get('/health/live', (_req: any, res: any) => res.json(health.live()));
+  http.get('/health/ready', async (_req: any, res: any) => res.json(await health.ready(res)));
+  http.get('/health', async (_req: any, res: any) => res.json(await health.summary()));
+
   await app.listen(PORT, '0.0.0.0');
-  console.log(`LabelFlow API 已启动: http://0.0.0.0:${PORT}`);
+  log.info('api_started', { port: PORT, pid: process.pid, node: process.version, env: process.env.NODE_ENV || 'dev' });
+
+  // 优雅停机（docs/24 §D2）：SIGTERM 先停止收新连接 → 等在途请求与连接池收尾 → 超时强杀。
+  // app.enableShutdownHooks() 已注册 onApplicationShutdown（TenantDataSourceManager / BullMQ 会释放池）。
+  const shutdown = async (signal: string) => {
+    const timeoutMs = +(process.env.SHUTDOWN_TIMEOUT_MS || 20000);
+    log.info('shutdown_begin', { signal, timeoutMs });
+    const force = setTimeout(() => {
+      log.error('shutdown_forced', { signal, timeoutMs });
+      process.exit(1);
+    }, timeoutMs);
+    force.unref();
+    try {
+      await app.close();
+      log.info('shutdown_ok', { signal });
+      clearTimeout(force);
+      process.exit(0);
+    } catch (e: any) {
+      log.error('shutdown_failed', { signal, error: e?.message });
+      process.exit(1);
+    }
+  };
+  // enableShutdownHooks() 自带一套 SIGTERM/SIGINT listener（会调 app.close()），
+  // 我们再注册一套就会 app.close() 两次 → pg 报 "Called end on pool more than once"。
+  // 统一由下面的自研 handler 负责（它内部只调一次 app.close() + 超时强杀 + 日志）。
+  process.removeAllListeners('SIGTERM');
+  process.removeAllListeners('SIGINT');
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+
+  // 兜底：未捕获异常/未处理的 Promise 拒绝必须留证据（否则容器里只看到进程被 OOM/重启）
+  process.on('uncaughtException', (err) => {
+    log.error('uncaught_exception', { error: err?.message, stack: String(err?.stack || '').split('\n').slice(0, 5).join(' | ') });
+  });
+  process.on('unhandledRejection', (reason: any) => {
+    log.error('unhandled_rejection', { error: reason?.message ?? String(reason) });
+  });
 }
 bootstrap();
