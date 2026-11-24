@@ -2,6 +2,7 @@
 
 > 目标（`docs/24 §D1`）：**一条命令跑完所有验收门，输出机器可读报告**，把此前文档里"仅单测、未实证"的门逐条改判。
 > 结论：29 条门中 **28 通过 / 0 失败 / 1 显式跳过（G8）**，产物 `docs/acceptance/latest.json`。
+> **2026-11-24 更新**：G8 已补真库夹具并转绿（见 §4.1），当前全量 39 门 **39 通过 / 0 失败 / 0 跳过**。
 
 ## 1. 怎么跑
 
@@ -29,7 +30,7 @@ DB_PORT=5432 DB_NAME=labelflow_test ./scripts/db-acceptance.sh
 | 打印网关 | P1–P4 + entity 探针 | `print-gateway-http` / `metadata-probe`（真 HTTP + 真库） | 5/5 ✅ |
 | UDI / GTIN / 拆箱 | U1、U2、U5、U5.1、U5.2、U5.3 | `src/udi/__tests__/*.test.ts` 定向 114 例 | 6/6 ✅（该组有 fail 才转红） |
 | 全量回归 | UNIT-ALL | `npm test`（node --test） | ✅ |
-| 收货侧 UDI 拦截 | **G8** | — | ⏭️ skip（见 §4） |
+| 收货侧 UDI 拦截 | **G8** | — | ✅ pass（2026-11-24 补齐，见 §4.1） |
 
 ## 3. 本轮实际修掉的缺陷（都是"跑起来才暴露"的）
 
@@ -45,7 +46,27 @@ DB_PORT=5432 DB_NAME=labelflow_test ./scripts/db-acceptance.sh
 
 ## 4. 明确没做到的（诚实边界）
 
-- **G8 收货侧 UDI 拦截**：`InboundService` 有 6 个 Repository 依赖、项目里没有它的测试夹具，本轮未写（`docs/21 §68` / `docs/22 §3` 早已记此缺口）。报告里以 `skip` 明示，不冒充通过。补齐点在 D4 真机联调。
+- ~~**G8 收货侧 UDI 拦截**：`InboundService` 有 6 个 Repository 依赖、项目里没有它的测试夹具，本轮未写~~ → **已补齐，见 §4.1**。
+
+### 4.1 G8 补齐（2026-11-24）
+
+原来卡在"没有 `InboundService` 的服务级夹具"；实际上 `wms-inbound.int.test.ts` 早已有六个 Repository（receipts / lines / tasks / rules / materials / locations）+ 打印与库存 Gateway 替身，只差：
+
+- `InventoryGwStub` 补 `resolveMaterialGtinRows()`——真查 `material_gtins`（收货折箱必须走这张表）；
+- 新增 `UdiStub.receiveByScan()` 作为第 10 个依赖（可选注入），用来验证"码确实交给了 UDI 建档"；
+- 夹具加 `MAT-A003`（`udi_required=true`、主码 `06901234567892`）+ 箱码 `06901234567885`（箱规 24）。
+
+`G8` 用例（`wms-inbound.int.test.ts` 第 6 例）断言五段：
+
+1. **无码** → 拒收（`/udi_required|UDI 码/`），`qtyReceived` 保持 0，审计落 `wms.receive.udi.gtin_block`，UDI 建档 0 次；
+2. **码的 GTIN 与物料不符**（`06901234567908`）→ 拒收；
+3. **正确 UNIT 码** → 通过，收 10 件，`UdiStub` 收到 `qty=10 / receiptNo=IT-G8-1`，审计落 `wms.receive.udi`；
+4. **箱码 2 箱** → `pack={packLevel:CARTON, packQty:24, packCount:2, units:48}`，`qtyReceived=48`，UDI 建档拿到 `qty=48 / packLevel=CARTON`（与 D4 发料侧同一折算口径）；
+5. 拦截与放行都留审计，现场可查"为什么扫不进去"。
+
+报告侧：`GATE_DEFS` 的 G8 从 `skip:no-fixture` 改为 `src:'wms-inbound'`，删掉 [1] 段里那条硬编码 skip——现在 G8 的去留由真库用例决定，不再靠人记得改。
+
+> 仍未覆盖：`postReceipt` 之后 UDI 与库存的双向对账（收货建档条数 == 入库件数），需要真实 `UdiTraceService`（非替身）。这条没做，也没进任何门。
 - **docker 真 build / 真 up**：本环境无 docker daemon，D0 已用本地 PG/Redis/nginx 做等价实证并列 `BLOCKED`，D1 不重复。
 - **RLS 主链路**：G7 只用 `labelflow_app` 角色在测试内直连验证策略生效；应用进程仍连超管 `labelflow`（`docs/10 §10.22.4` 的 H5 未修），切换属 D2。
 - **UDI 追溯的真库链路**：U1/U2/U5 门由单测覆盖，未单独写真库用例；`udi_events` 的 `(tenant_id, idem_key)` 唯一键与 RLS 仍只有 DDL 级证据。

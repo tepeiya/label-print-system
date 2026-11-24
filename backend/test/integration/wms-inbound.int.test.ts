@@ -12,6 +12,8 @@
  *   T3 打印降级：打印 Gateway 抛 500/超时 → 过账成功、审计 failed、补打成功
  *   T4 过账中途失败：库存变更抛错 → 行状态/任务无脏数据（暴露非单一事务后果）
  *   T5 订阅门：未开通 wms.inbound 的租户被 ModuleGuard 拦截（真实查库）
+ *   G8 收货侧 UDI 拦截：udi_required 物料无码/码不符 → 拒；正确码 → 收；箱码按件数折（与发料同口径）
+ *      （G8 曾因"InboundService 缺夹具"长期 skip，本套件夹具齐备后补齐；udi 用替身，校验其收到的参数）
  *
  * 前提：测试库已按 scripts/wms-test-db-bootstrap.sh 初始化。
  * 运行：pnpm test:integration（DB_PORT 默认 5434）
@@ -66,6 +68,13 @@ async function seedFixtures(ds: DataSource) {
   await ds.query(`INSERT INTO materials (id,tenant_id,code,name,unit) VALUES
                     (9011,901,'MAT-A001','轴承6204','PCS'),(9012,901,'MAT-A002','齿轮','PCS'),
                     (9021,902,'MAT-B001','B司物料','PCS') ON CONFLICT (id) DO NOTHING`);
+  // G8 夹具：udi_required 物料（主码 06901234567892）+ 箱码（06901234567885，箱规 24）
+  await ds.query(`INSERT INTO materials (id,tenant_id,code,name,unit,gtin,udi_required) VALUES
+                    (9013,901,'MAT-A003','一次性注射器 5ml','PCS','06901234567892',true)
+                  ON CONFLICT (id) DO NOTHING`);
+  await ds.query(`INSERT INTO material_gtins (tenant_id,material_id,gtin,pack_level,pack_qty,is_primary) VALUES
+                    (901,9013,'06901234567892','UNIT',1,true),(901,9013,'06901234567885','CARTON',24,false)
+                  ON CONFLICT DO NOTHING`);
   const ruleCount = await ds.query(`SELECT count(*)::int AS n FROM wms_putaway_rules WHERE tenant_id = 901 AND warehouse_id = 801`);
   if (!ruleCount[0].n) {
     await ds.query(`INSERT INTO wms_putaway_rules (tenant_id,warehouse_id,priority,condition_json,action_json)
@@ -87,6 +96,16 @@ class PrintGwStub {
 class InventoryGwStub {
   calls: any[] = [];
   failNext = false;
+  /** 真查 material_gtins（收发货共用的包码表）；与真实 InventoryGateway 同义，只是不经过仓储层代理 */
+  constructor(private ds?: DataSource) {}
+  async resolveMaterialGtinRows(p: { tenantId: number; materialId: number }) {
+    const rows = await this.ds!.query(
+      `SELECT gtin, pack_level AS "packLevel", pack_qty AS "packQty", is_primary AS "isPrimary"
+         FROM material_gtins WHERE tenant_id = $1 AND material_id = $2 ORDER BY is_primary DESC, id`,
+      [p.tenantId, p.materialId],
+    );
+    return rows.map((r: any) => ({ ...r, packQty: String(r.packQty) }));
+  }
   async increaseStock(p: any) {
     this.calls.push(p);
     if (this.failNext) { this.failNext = false; throw new Error('STOCK_WRITE_FAILED'); }
@@ -94,6 +113,13 @@ class InventoryGwStub {
   }
   async transferStock(p: any) { return { movementId: `mv_t_${p.idempotencyKey}` }; }
   async queryAvailable() { return { qty: 0 }; }
+}
+class UdiStub {
+  calls: any[] = [];
+  async receiveByScan(p: any) {
+    this.calls.push(p);
+    return { udiKey: `${p.code}|${p.receiptNo}`, gtin: String(p.code).replace(/[()]/g, '').slice(0, 14), idempotent: false, qty: p.qty };
+  }
 }
 class AuditStub {
   rows: any[] = [];
@@ -107,6 +133,7 @@ describe('WMS 阶段一 真 PG 集成测试（验收门 5 条）', () => {
   let printGw: PrintGwStub;
   let invGw: InventoryGwStub;
   let audit: AuditStub;
+  let udi: UdiStub;
   let modulesSvc: ModulesService;
 
   beforeAll(async () => {
@@ -125,9 +152,10 @@ describe('WMS 阶段一 真 PG 集成测试（验收门 5 条）', () => {
     const materials = ds.getRepository(Material);
     const locations = ds.getRepository(WarehouseLocation);
     printGw = new PrintGwStub();
-    invGw = new InventoryGwStub();
+    invGw = new InventoryGwStub(ds);
     audit = new AuditStub();
-    svc = new InboundService(receipts, lines, tasks, rules, materials, locations, printGw as any, invGw as any, audit as any);
+    udi = new UdiStub();
+    svc = new InboundService(receipts, lines, tasks, rules, materials, locations, printGw as any, invGw as any, audit as any, udi as any);
     modulesSvc = new ModulesService(
       ds.getRepository(ModuleRecord), ds.getRepository(TenantModule),
       ds.getRepository(Plan), ds.getRepository(PlanModule), ds.getRepository(Subscription),
@@ -265,5 +293,56 @@ describe('WMS 阶段一 真 PG 集成测试（验收门 5 条）', () => {
     catch (e: any) { bBlocked = e.bizCode === 4031 || /未开通|4031/.test(e.message); }
     expect(bBlocked).toBe(true);
     await expect(guard.canActivate(fakeCtx(A))).resolves.toBe(true);
+  });
+
+  // ---------------------------------------------------------------- G8
+  // 收货侧 UDI 拦截（udi_required 物料必须带码）。长期 skip 的原因是"InboundService 缺服务级夹具"，
+  // 本套件已有六 repo + 可查包装表的 InventoryGateway 替身 + UDI 替身，故在此补齐。
+  it('G8 收货侧 UDI 拦截：无码/码不符拒收，正确码放行，箱码按件数折', async () => {
+    // ① 无码：udi_required 物料 → 拒收，且不落任何收货数量
+    const r1 = await asTenant(A, () => svc.createReceipt({
+      receiptNo: 'IT-G8-1', sourceType: 'MANUAL', warehouseId: 801,
+      lines: [{ sku: 'MAT-A003', batchNo: 'B-G8', qtyExpected: 100 }],
+    }));
+    await expect(asTenant(A, () => svc.receiveScan(r1.id, { sku: 'MAT-A003', batchNo: 'B-G8', qty: 10 })))
+      .rejects.toThrow(/udi_required|UDI 码/);
+    const l1 = await asTenant(A, () => svc.getReceipt(r1.id));
+    expect(Number(l1.lines[0].qtyReceived)).toBe(0);
+    // 审计里留下拦截证据，便于现场排查"为什么扫不进去"
+    expect(audit.rows.filter((r) => r.action === 'wms.receive.udi.gtin_block').length).toBeGreaterThanOrEqual(1);
+    expect(udi.calls).toHaveLength(0);
+
+    // ② 有码但 GTIN 与物料不符 → 拒收
+    await expect(asTenant(A, () => svc.receiveScan(r1.id, {
+      sku: 'MAT-A003', batchNo: 'B-G8', qty: 10, udiCode: '(01)06901234567908(10)B-G8',
+    }))).rejects.toThrow(/GTIN|不符|udi_required/);
+
+    // ③ 正确 UNIT 码 → 放行，并把码交给 UDI 建档（参数与行号/数量一致）
+    const unitCode = '(01)06901234567892(10)B-G8(17)271231(21)SN0001';
+    const okScan = await asTenant(A, () => svc.receiveScan(r1.id, {
+      sku: 'MAT-A003', batchNo: 'B-G8', qty: 10, udiCode: unitCode,
+    }));
+    expect(okScan.ok).toBe(true);
+    expect(Number(okScan.line.qtyReceived)).toBe(10);
+    expect(udi.calls).toHaveLength(1);
+    expect(udi.calls[0].qty).toBe(10);
+    expect(udi.calls[0].receiptNo).toBe('IT-G8-1');
+    expect(audit.rows.filter((r) => r.action === 'wms.receive.udi').length).toBeGreaterThanOrEqual(1);
+
+    // ④ 箱码：2 箱 × 24 = 48 件（与发料侧 D4 同一折算口径）
+    const r2 = await asTenant(A, () => svc.createReceipt({
+      receiptNo: 'IT-G8-2', sourceType: 'MANUAL', warehouseId: 801,
+      lines: [{ sku: 'MAT-A003', batchNo: 'B-G8', qtyExpected: 200 }],
+    }));
+    const boxScan = await asTenant(A, () => svc.receiveScan(r2.id, {
+      sku: 'MAT-A003', batchNo: 'B-G8', qty: 2, udiCode: '(01)06901234567885(10)B-G8',
+    }));
+    expect(boxScan.ok).toBe(true);
+    expect(boxScan.pack).toMatchObject({ packLevel: 'CARTON', packCount: 2, units: 48 });
+    expect(String(boxScan.pack.packQty)).toBe('24');
+    expect(Number(boxScan.line.qtyReceived)).toBe(48);
+    expect(udi.calls[1].qty).toBe(48);
+    expect(udi.calls[1].packLevel).toBe('CARTON');
+
   });
 });

@@ -1,7 +1,7 @@
 # D5 验收记录 · 能演示能报价（演示环境 + 能力清单 + U6 国家 UDI 导出）
 
 > 日期 2026-11-24。对应 `docs/24-delivery-plan.md` §2.1 的 D5 三门。
-> 本轮（D4+D5）结束时全量验收：**39 门 → 38 pass / 0 fail / 1 skip**（skip 为历史 G8 收货侧 UDI 拦截，缺 `InboundService` 夹具；见 `docs/acceptance/latest.json`）。
+> 本轮（D4+D5）结束时全量验收：**39 门 → 39 pass / 0 fail / 0 skip**（历史 skip 的 G8 收货侧 UDI 拦截已于 2026-11-24 补齐，见 `docs/26 §4.1`；报告 `docs/acceptance/latest.json`）。
 
 ## 1. 三门结果
 
@@ -116,6 +116,7 @@ xml  records 50 fields 700
 | 13 | 一条命令起演示环境 + 医疗样板数据 | D5-1 | `demo-up.sh` 实测 |
 | 14 | 国家 UDI 台账导出 Excel/XML + 字段映射表 | D5-3 / U6 | 50 行 × 14 列实测 |
 | 15 | 全量单测 872 例回归 | UNIT-ALL | 0 fail |
+| 16 | 收货侧 UDI 强制拦截（`udi_required` 必须带码、码不符拒收、箱码折件数） | G8 | 真库 6 例（`docs/26 §4.1`） |
 
 ### 4.2 不承诺（明确不做的，或没有证据的）
 
@@ -124,7 +125,7 @@ xml  records 50 fields 700
 | 1 | 真机打印出纸（Zebra / 汉印 / GODEX 各一张） | D3 未做，**等打印机与 Windows 打印代理**；`docs/24 §4` 写明"没有真机标签，客户不会签" |
 | 2 | Windows 打印代理 | 未实现（需 Windows 机器 + 驱动） |
 | 3 | PDF / 浏览器预览兜底 | 未做（D3 内） |
-| 4 | 收货侧 UDI 强制拦截的端到端证据 | `G8` 至今 skip（缺 `InboundService` 夹具），代码在、门未过 |
+| 4 | ~~收货侧 UDI 强制拦截的端到端证据~~ | **已补齐**：G8 转绿（无码/码不符拒收、正确码放行、箱码折件数），`docs/26 §4.1` |
 | 5 | 国家 UDI 平台自动上报 | 冻结（`docs/24 §3`），只做导出 |
 | 6 | 官方 XML schema 直通 | 只做映射导出，真实平台格式需客户提供模板后适配 |
 | 7 | CI 在 GitHub 上真跑 | workflow 文件在 `deploy/ci/`，当前凭据无 `workflow` scope，无法落到 `.github/workflows/`（`docs/27 §4`） |

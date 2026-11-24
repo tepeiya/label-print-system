@@ -70,8 +70,8 @@ const GATE_DEFS = [
   // D5：能演示能报价（docs/29）
   { id: 'DEMO-1', name: '一条命令起演示环境并注入样板数据（20 物料/2 工单/50 UDI）', src: 'demo:data-only' },
   { id: 'U6', name: '国家 UDI 导出 Excel/XML + 字段映射表可被解析', src: 'direct:export' },
-  // 收货侧 UDI 拦截（docs/21 §68 建议门）：无 InboundService 服务级夹具，本报告固定 skip
-  { id: 'G8', name: '收货侧 UDI 拦截（udi_required 物料必须带码）', src: 'skip:no-fixture' },
+  // 收货侧 UDI 拦截（docs/21 §68 建议门）：已补 InboundService 真库夹具，见 wms-inbound.int.test.ts
+  { id: 'G8', name: '收货侧 UDI 拦截（udi_required 物料必须带码）', src: 'wms-inbound' },
   // UDI 门（docs/19 §6）与 U5 系列——由单测覆盖（真库集成未单列）
   { id: 'U1', name: 'UDI 构造/解析 + GS1 DataMatrix 回环', src: 'unit:udi' },
   { id: 'U2', name: '追溯正反向 + 合规留痕', src: 'unit:udi' },
@@ -127,11 +127,6 @@ log('\n[1/4] 库结构自检（db-verify.sh）');
   });
   if (m) log(`      表数量 ${m[1]}/${m[2]}`);
 }
-
-// G8：收货分支缺 InboundService 夹具（docs/21 §68），显式记为 skip 而非假装通过
-pushGate('G8', '收货侧 UDI 拦截（udi_required 物料必须带码）', 'skip', {
-  detail: '无 InboundService 服务级夹具，docs/21 §68 / docs/22 §3 已记录，留待 D4 真机联调',
-});
 
 // ---------------------------------------------------------------- 2. 真库集成
 log('\n[2/4] 真库集成测试（jest --runInBand）');

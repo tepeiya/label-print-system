@@ -132,13 +132,13 @@ D5 是销售动作，不是开发动作。
 | 阶段 | 状态 | 验收记录 |
 |---|---|---|
 | D0 装得上 | ✅ 完成（`f2a3789`） | `docs/25-d0-acceptance.md`（docker 真跑 BLOCKED，等价实证通过） |
-| D1 真库验收 | ✅ 完成（`e712495`） | `docs/26-d1-acceptance.md`（G1–G7 全绿，G8 skip） |
+| D1 真库验收 | ✅ 完成（`e712495`；G8 于 2026-11-24 补齐） | `docs/26-d1-acceptance.md`（G1–G7 + G8 全绿，见 §4.1） |
 | D2 运维底线 | ✅ 完成（`0e809df`） | `docs/27-d2-hardening.md`（R1–R3 全绿；CI 需 workflow scope） |
 | D3 打印真机 | ⏭️ 暂缓 | 用户 2026-11-24：暂无打印机，先做 D4/D5 |
 | D4 流程闭合 | ✅ 完成 | `docs/28-d4-flow-closure.md`（D4-1…D4-3 真库五门全绿） |
 | D5 演示与报价 | ✅ 完成 | `docs/29-d5-demo-capability.md`（DEMO-1 / U6 门通过，能力清单 §4） |
 
-最新全量验收：**39 门 → 38 pass / 0 fail / 1 skip（G8）**，`docs/acceptance/latest.json`。
+最新全量验收：**39 门 → 39 pass / 0 fail / 0 skip**（G8 收货侧 UDI 拦截已补真库夹具），`docs/acceptance/latest.json`。
 
 ## 5. 执行规则
 
