@@ -63,7 +63,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
-import { apiUdiPrintAudit, apiUdiPrinterProfiles, udiExportUrl, type UdiPrintAudit } from '@/api';
+import { apiUdiPrintAudit, apiUdiPrinterProfiles, downloadCsvUrl, udiExportUrl, type UdiPrintAudit } from '@/api';
 
 const range = ref<[string, string] | null>(null);
 const templateCode = ref('');
@@ -92,7 +92,8 @@ function exportAudit() {
   if (range.value?.[0]) params.since = range.value[0];
   if (range.value?.[1]) params.until = `${range.value[1]}T23:59:59`;
   if (templateCode.value) params.templateCode = templateCode.value;
-  window.open(udiExportUrl('/udi/export/print-audit.csv', params), '_blank');
+  downloadCsvUrl(udiExportUrl('/udi/export/print-audit.csv', params), 'udi-print-audit.csv')
+    .catch((e) => ElMessage.error(e?.message || '导出失败'));
 }
 
 onMounted(async () => {

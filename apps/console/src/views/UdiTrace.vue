@@ -123,7 +123,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
-import { apiUdiTrace, apiUdiUnits, udiExportUrl, type UdiTraceResult, type UdiUnitRow } from '@/api';
+import { apiUdiTrace, apiUdiUnits, downloadCsvUrl, udiExportUrl, type UdiTraceResult, type UdiUnitRow } from '@/api';
 
 const STATUSES = ['REGISTERED', 'PRINTED', 'RECEIVED', 'ISSUED', 'SHIPPED', 'VOID'];
 
@@ -178,7 +178,8 @@ function onPage(p: number) {
 function exportUnits() {
   const params: any = {};
   for (const k of ['gtin', 'lot', 'workOrderNo', 'status']) if (q[k]) params[k] = q[k];
-  window.open(udiExportUrl('/udi/export/units.csv', params), '_blank');
+  downloadCsvUrl(udiExportUrl('/udi/export/units.csv', params), 'udi-units.csv')
+    .catch((e) => ElMessage.error(e?.message || '导出失败'));
 }
 
 function fmt(v?: string | null) {

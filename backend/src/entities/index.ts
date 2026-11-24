@@ -26,7 +26,7 @@ export { HardwareAgent, HardwareAgentJob, RfidWriteLog } from '../hardware/hardw
 // WMS 阶段一（DDL: scripts/wms_p1_inbound.sql）
 export { WmsReceipt, WmsReceiptLine, WmsPutawayTask, WmsPutawayRule } from '../wms/inbound/entities/wms.entity';
 // UDI 医疗追溯（DDL: scripts/udi_p1_trace.sql）
-export { UdiUnit, UdiPackage, UdiEvent } from '../udi/entities/udi.entity';
+export { UdiUnit, UdiPackage, UdiEvent, UdiDiMaster, UdiSubmission } from '../udi/entities/udi.entity';
 // WMS 阶段二（DDL: scripts/wms_p2_issuing.sql）
 export { WmsWorkOrder, WmsWoLine, WmsIssueRecord, WmsWoReturn } from '../wms/issuing/entities/wo.entity';
 // 平台端知识库 + AI 助手（DDL: scripts/kb_p1_articles.sql；无 tenant_id，平台身份守卫）

@@ -72,3 +72,55 @@ export class UdiEvent {
   @Column({ name: 'occurred_at', type: 'timestamptz' }) occurredAt: Date;
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' }) createdAt: Date;
 }
+
+/** DI 主数据台账（DDL: scripts/udi_p3_compliance.sql）——一物一 DI，含包装层级与上下级关系 */
+@Entity('udi_di_master')
+@Unique('uq_udi_di_master', ['tenantId', 'di'])
+@Index('ix_udi_di_master_level', ['tenantId', 'packageLevel', 'status'])
+export class UdiDiMaster {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ name: 'tenant_id', type: 'bigint' }) tenantId: number;
+  /** GTIN-14（含校验位） */
+  @Column({ type: 'varchar', length: 14 }) di: string;
+  @Column({ type: 'varchar', length: 128 }) name: string;
+  @Column({ type: 'varchar', length: 128, nullable: true }) spec: string | null;
+  @Column({ type: 'varchar', length: 128, nullable: true }) model: string | null;
+  @Column({ name: 'registration_no', type: 'varchar', length: 64, nullable: true }) registrationNo: string | null;
+  /** 分类目录编码，形如 02-04-01 */
+  @Column({ name: 'catalog_code', type: 'varchar', length: 32, nullable: true }) catalogCode: string | null;
+  @Column({ type: 'varchar', length: 32, nullable: true }) gmdn: string | null;
+  @Column({ type: 'varchar', length: 32, nullable: true }) emdn: string | null;
+  @Column({ name: 'issuing_agency', type: 'varchar', length: 16, default: 'GS1' }) issuingAgency: string;
+  @Column({ name: 'is_sterile', type: 'boolean', default: false }) isSterile: boolean;
+  @Column({ name: 'is_single_use', type: 'boolean', default: false }) isSingleUse: boolean;
+  /** UNIT(最小销售单元) / CARTON(中包装) / PALLET(托盘) */
+  @Column({ name: 'package_level', type: 'varchar', length: 16, default: 'UNIT' }) packageLevel: string;
+  @Column({ name: 'qty_in_package', type: 'numeric', precision: 14, scale: 3, nullable: true }) qtyInPackage: string | null;
+  @Column({ name: 'parent_di', type: 'varchar', length: 14, nullable: true }) parentDi: string | null;
+  @Column({ type: 'varchar', length: 16, default: 'active' }) status: string;
+  @Column({ type: 'varchar', length: 300, nullable: true }) remark: string | null;
+  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' }) createdAt: Date;
+  @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' }) updatedAt: Date;
+}
+
+/** 申报提交记录——校验/生成文件/接口提交共用一条账 */
+@Entity('udi_submissions')
+@Index('ix_udi_submissions_tenant', ['tenantId', 'createdAt'])
+export class UdiSubmission {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ name: 'tenant_id', type: 'bigint' }) tenantId: number;
+  /** NMPA / EUDAMED / GUDID / FILE */
+  @Column({ type: 'varchar', length: 16 }) channel: string;
+  /** validate 只校验 / file 生成文件 / api 接口直传 */
+  @Column({ type: 'varchar', length: 16, default: 'validate' }) mode: string;
+  @Column({ type: 'jsonb', default: () => "'[]'" }) dis: string[];
+  @Column({ type: 'jsonb', nullable: true }) payload: Record<string, any> | null;
+  @Column({ type: 'jsonb', nullable: true }) issues: any[] | null;
+  @Column({ type: 'varchar', length: 16, default: 'draft' }) status: string;
+  @Column({ name: 'remote_code', type: 'varchar', length: 64, nullable: true }) remoteCode: string | null;
+  @Column({ name: 'remote_msg', type: 'text', nullable: true }) remoteMsg: string | null;
+  @Column({ type: 'int', default: 0 }) attempts: number;
+  @Column({ name: 'submitted_at', type: 'timestamptz', nullable: true }) submittedAt: Date | null;
+  @Column({ name: 'created_by', type: 'bigint', nullable: true }) createdBy: number | null;
+  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' }) createdAt: Date;
+}

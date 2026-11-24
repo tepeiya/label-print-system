@@ -49,6 +49,8 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'UDI 追溯', icon: 'Position', module: 'udi.compliance' } },
       { path: 'udi-compliance', component: () => import('@/views/UdiCompliance.vue'),
         meta: { title: 'UDI 合规留痕', icon: 'DocumentChecked', module: 'udi.compliance' } },
+      { path: 'udi-registry', component: () => import('@/views/UdiRegistry.vue'),
+        meta: { title: 'UDI 合规申报', icon: 'Tickets', module: 'udi.compliance' } },
       // BOM 齐套率：bom 模块（依赖 inventory 自动展开），读权限用 bom:kit:read。
       { path: 'bom', component: () => import('@/views/BomKit.vue'),
         meta: { title: 'BOM 齐套率', icon: 'Connection', module: 'bom', permission: 'bom:kit:read' } },

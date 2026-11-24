@@ -639,6 +639,23 @@ export const apiUdiPrintAudit = (params?: any): Promise<UdiPrintAudit> =>
 export const apiUdiPrinterProfiles = (): Promise<any> => http.get('/udi/printer-profiles');
 
 /** CSV 下载走浏览器（拦截器会把文件流当 JSON 拆坏），token 拼进 URL（JwtAuthGuard 支持 query.token） */
+/**
+ * 下载 CSV：后端所有响应都被统一信封包成 { code, data }，
+ * 浏览器直开 .csv 链接只会看到一段 JSON，所以这里 fetch 出 data 文本再落盘。
+ */
+export async function downloadCsvUrl(url: string, fallbackName = 'export.csv') {
+  const res = await fetch(url);
+  const json: any = await res.json().catch(() => null);
+  const text = typeof json?.data === 'string' ? json.data : String(json?.data?.content ?? '');
+  if (!text) throw new Error(json?.message || '导出失败');
+  const blob = new Blob([`\ufeff${text}`], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fallbackName;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 export const udiExportUrl = (path: string, params: Record<string, any> = {}) => {
   const qs = new URLSearchParams({
     ...params,

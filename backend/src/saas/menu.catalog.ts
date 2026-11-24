@@ -76,6 +76,7 @@ export const MENU_CATALOG: MenuNode[] = [
     children: [
       { key: 'udi-trace', name: 'UDI 追溯', icon: 'Position', path: '/udi-trace', module: 'udi.compliance' },
       { key: 'udi-compliance', name: 'UDI 合规留痕', icon: 'DocumentChecked', path: '/udi-compliance', module: 'udi.compliance' },
+      { key: 'udi-registry', name: 'UDI 合规申报', icon: 'Tickets', path: '/udi-registry', module: 'udi.compliance' },
     ],
   },
   // AI 工作台：BASIC 也含 ai 模块（历史种子，见 docs/10 §10.15.5 第 1 条）。
