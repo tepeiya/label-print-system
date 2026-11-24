@@ -129,6 +129,35 @@ export function validateBarcode(sym: string, content: string): BarcodeValidation
   }
 }
 
+// ----------------------------- 静区（quiet zone） -----------------------------
+/**
+ * 静区按码制规范的最小模块数（X 单位）：
+ *  - 一维码：ISO/IEC 15416 + GS1 General Spec，左右各 ≥10X（Code128/EAN/UPC/ITF 通用口径）；
+ *  - DataMatrix：ISO/IEC 16022 ≥1X（四边），MaxiCode 同为 1X；
+ *  - QR / MicroQR：ISO/IEC 18004 ≥4 模块；
+ *  - Aztec：ISO/IEC 24778 ≥4 模块；
+ *  - PDF417：ISO/IEC 15438 ≥2X。
+ * 实测 bwip-js 对**所有**二维码制默认都不加静区（pad0 即码本体紧贴边），必须显式给 padding。
+ */
+export function quietZoneModules(sym: string): number {
+  const s = String(sym || '').toUpperCase();
+  if (!is2d(s)) return 10;
+  if (/PDF417/.test(s)) return 2;
+  if (/AZTEC/.test(s)) return 4;
+  if (/QR|MICRO/.test(s)) return 4;
+  return 1; // DataMatrix / MaxiCode
+}
+
+/**
+ * bwip padding 换算：padding 单位是该码制在 scale=1 时的基础单位。
+ * 实测一维码 1 模块 = 1 单位、二维码 1 模块 = 2 单位（模块被双倍采样以保证清晰）。
+ * spec.quietZoneMm 显式给出时以其为准（按名义模块宽换算），否则用规范默认。
+ */
+function quietZonePad(qzMm: number | undefined, moduleMm: number, modules: number, unitsPerModule: number): number {
+  if (qzMm && qzMm > 0 && moduleMm > 0) return Math.max(1, Math.round(qzMm / moduleMm) * unitsPerModule);
+  return Math.max(1, modules * unitsPerModule);
+}
+
 // ----------------------------- bwip 参数 -----------------------------
 interface RenderOpts {
   svg?: boolean;
@@ -147,9 +176,9 @@ function bwipRenderOptions(spec: BarcodeSpec, opts: RenderOpts = {}): any {
     bcid,
     text: content,
     scale: opts.svg ? 3 : Math.max(1, mmToPx(mm, dpi)),
-    // 静区：bwip 的 padding 单位与 scale 一致（模块数）
-    paddingwidth: 8,
-    paddingheight: 4,
+    // 静区：一维码左右 ≥10X（上下给 2 模块，避免条码顶/底切边）；bwip padding 单位 = 模块数
+    paddingwidth: quietZonePad((spec as any).quietZoneMm, mm, quietZoneModules(spec.sym), 1),
+    paddingheight: twoD ? 0 : 2,
     backgroundcolor: 'FFFFFF',
     ...(twoD ? {} : { height: Math.max(1, spec.heightMm ?? 9) }),
   };
@@ -183,8 +212,9 @@ function qrRenderOptions(spec: QrcodeSpec, opts: RenderOpts = {}): any {
     bcid,
     text: String(spec.content ?? ''),
     scale: opts.svg ? 3 : Math.max(1, mmToPx(mm, dpi)),
-    paddingwidth: 0,
-    paddingheight: 0,
+    // 静区：四边按码制规范（DataMatrix 1X / QR、Aztec 4X / PDF417 2X）；2D 每模块 2 个基础单位
+    paddingwidth: quietZonePad(spec.quietZoneMm, mm, quietZoneModules(spec.sym), 2),
+    paddingheight: quietZonePad(spec.quietZoneMm, mm, quietZoneModules(spec.sym), 2),
     backgroundcolor: 'FFFFFF',
   };
   if (bcid === 'qrcode' || bcid === 'microqrcode') o.eclevel = spec.ecc || 'M';

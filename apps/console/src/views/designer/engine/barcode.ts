@@ -79,33 +79,60 @@ function toSvg(opts: BwipOptions): string | null {
   }
 }
 
-/** 从 SVG viewBox 推算物理尺寸（mm） */
-function svgMetrics(svgStr: string, moduleMm: number) {
+/**
+ * 静区模块数（与后端 core/barcode-renderer.ts 同口径）：
+ * 一维 10X、DataMatrix/MaxiCode 1X、QR/Aztec 4X、PDF417 2X。
+ * 实测 bwip 对所有码制默认都不加静区，必须显式 padding，否则码紧贴边、现场扫不出。
+ */
+function quietZoneModules(sym: string): number {
+  const s = String(sym || '').toUpperCase();
+  if (!is2dSym(s)) return 10;
+  if (/PDF417/.test(s)) return 2;
+  if (/AZTEC/.test(s)) return 4;
+  if (/QR|MICRO/.test(s)) return 4;
+  return 1;
+}
+
+/** bwip padding 单位 = scale=1 时的基础单位；一维 1 模块=1 单位，二维 1 模块=2 单位 */
+function qzPad(modules: number, unitsPerModule: number): number {
+  return Math.max(1, modules * unitsPerModule);
+}
+
+/** 从 SVG viewBox 推算物理尺寸（mm）；二维的模块在 bwip 里按 2 基础单位采样 */
+function svgMetrics(svgStr: string, moduleMm: number, twoD: boolean) {
   const m = /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(svgStr || '');
   const w = m ? parseFloat(m[1]) : 100;
   const h = m ? parseFloat(m[2]) : 40;
-  const modules = Math.max(1, w / BWIP_SVG_SCALE);
-  return { naturalWmm: modules * moduleMm, naturalHmm: (h / BWIP_SVG_SCALE) * moduleMm };
+  const unitsPerModule = twoD ? 2 : 1;
+  const modules = Math.max(1, w / (BWIP_SVG_SCALE * unitsPerModule));
+  return {
+    naturalWmm: modules * moduleMm,
+    naturalHmm: twoD ? (h / (BWIP_SVG_SCALE * unitsPerModule)) * moduleMm : undefined,
+    modules: Math.round(modules),
+  };
 }
 
 /** 一维码 SVG；失败退化为「不可扫但保布局」的占位条纹（与原生版同一兜底） */
 export function makeBarcodeSvg(spec: BarcodeLikeOptions | undefined, content: unknown): SvgResult {
   const s = spec || {};
-  const key = `${s.sym}|${content}|${s.moduleWidthMm}|${s.heightMm}|${s.wideRatio}|${s.showText}`;
+  const key = `${s.sym}|${content}|${s.moduleWidthMm}|${s.heightMm}|${s.wideRatio}|${s.showText}|${s.quietZoneMm}`;
   const hit = CACHE.bc.get(key);
   if (hit) return hit;
 
   const bcid = bcidOf(s.sym);
   const moduleWidth = s.moduleWidthMm ?? 0.25;
   const heightMm = s.heightMm ?? 9;
-  const barHeightPx = Math.max(20, Math.round((heightMm * PXMM) / moduleWidth));
   const opts: BwipOptions = {
     bcid,
     text: String(content ?? ''),
     scale: BWIP_SVG_SCALE,
-    height: Math.round((heightMm / moduleWidth) * BWIP_SVG_SCALE) || barHeightPx,
-    paddingwidth: 8,
-    paddingheight: 4,
+    // height 单位是 mm（不是模块数）：此前传 (heightMm/moduleWidthMm)*scale 会把条码放大约十几倍
+    height: heightMm,
+    // 静区：一维左右 ≥10X，上下 2 模块
+    paddingwidth: s.quietZoneMm && s.quietZoneMm > 0
+      ? Math.max(1, Math.round(s.quietZoneMm / moduleWidth))
+      : qzPad(quietZoneModules(s.sym || ''), 1),
+    paddingheight: 2,
     backgroundcolor: 'FFFFFF',
     includetext: false,
   };
@@ -114,7 +141,7 @@ export function makeBarcodeSvg(spec: BarcodeLikeOptions | undefined, content: un
 
   const svgStr = toSvg(opts);
   if (svgStr) {
-    const out: SvgResult = { svgStr, ...svgMetrics(svgStr, moduleWidth) };
+    const out: SvgResult = { svgStr, ...svgMetrics(svgStr, moduleWidth, false), naturalHmm: heightMm };
     CACHE.bc.set(key, out);
     return out;
   }
@@ -152,8 +179,13 @@ export function makeQrSvg(spec: BarcodeLikeOptions | undefined, content: unknown
     bcid,
     text: String(content ?? ''),
     scale: BWIP_SVG_SCALE,
-    paddingwidth: 0,
-    paddingheight: 0,
+    // 静区：四边按码制规范（DataMatrix 1X / QR、Aztec 4X / PDF417 2X）；2D 每模块 2 基础单位
+    paddingwidth: s.quietZoneMm && s.quietZoneMm > 0
+      ? Math.max(1, Math.round((s.quietZoneMm / moduleSize) * 2))
+      : qzPad(quietZoneModules(s.sym || ''), 2),
+    paddingheight: s.quietZoneMm && s.quietZoneMm > 0
+      ? Math.max(1, Math.round((s.quietZoneMm / moduleSize) * 2))
+      : qzPad(quietZoneModules(s.sym || ''), 2),
     backgroundcolor: 'FFFFFF',
   };
   if (bcid === 'qrcode' || bcid === 'microqrcode') opts.eclevel = s.ecc || 'M';
@@ -161,10 +193,10 @@ export function makeQrSvg(spec: BarcodeLikeOptions | undefined, content: unknown
 
   const svgStr = toSvg(opts);
   if (svgStr) {
-    const metrics = svgMetrics(svgStr, moduleSize);
+    const metrics = svgMetrics(svgStr, moduleSize, true);
     const out: SvgResult = {
       svgStr,
-      modules: Math.round(metrics.naturalWmm / moduleSize),
+      modules: metrics.modules,
       naturalWmm: metrics.naturalWmm,
     };
     CACHE.qr.set(key, out);

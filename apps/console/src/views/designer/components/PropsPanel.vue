@@ -228,13 +228,13 @@
         <span v-if="bcWarn" class="f-hint f-hint-warn">⚠ {{ bcWarn }}</span>
         <FRow>
           <FLabel text="模块宽 mm" />
-          <FNum :model-value="bc!.moduleWidthMm ?? 0.25" :step="0.01" :min="0.05" @update:model-value="setBarcode({ moduleWidthMm: r2v($event) })" />
+          <FNum :model-value="bc!.moduleWidthMm ?? 0.25" :step="0.01" :min="0.15" @update:model-value="setBarcode({ moduleWidthMm: r2v($event) })" />
           <FLabel text="宽窄比" />
           <FNum :model-value="bc!.wideRatio ?? 2.5" :step="0.1" :min="1.5" @update:model-value="setBarcode({ wideRatio: r2v($event) })" />
         </FRow>
         <FRow>
           <FLabel text="条码高 mm" />
-          <FNum :model-value="bc!.heightMm ?? 9" :step="0.5" :min="2" @update:model-value="setBarcode({ heightMm: r2v($event) })" />
+          <FNum :model-value="bc!.heightMm ?? 9" :step="0.5" :min="6" @update:model-value="setBarcode({ heightMm: r2v($event) })" />
           <FLabel text="静区 mm" />
           <FNum :model-value="bc!.quietZoneMm ?? 2" :step="0.5" :min="0" @update:model-value="setBarcode({ quietZoneMm: r2v($event) })" />
         </FRow>
@@ -275,12 +275,13 @@
         </FField>
         <span v-if="qrLen" class="f-hint">内容 {{ qrLen }} 字符（软换行只是显示，数据里不换行）</span>
         <span v-if="qrNotice" class="f-hint f-hint-warn">⚠ {{ qrNotice }}</span>
+        <span v-if="qrWarn" class="f-hint f-hint-warn">⚠ {{ qrWarn }}</span>
         <span class="f-hint" :class="{ 'f-hint-bad': !qrCheck.ok }">
           {{ qrCheck.ok ? (qrCheck.note ? `✓ ${qrCheck.note}` : '') : `✗ ${qrCheck.error}` }}
         </span>
         <FRow>
           <FLabel text="模块 mm" />
-          <FNum :model-value="qr!.moduleSizeMm ?? 0.4" :step="0.02" :min="0.1" @update:model-value="setQr({ moduleSizeMm: r2v($event) })" />
+          <FNum :model-value="qr!.moduleSizeMm ?? 0.4" :step="0.02" :min="0.25" @update:model-value="setQr({ moduleSizeMm: r2v($event) })" />
           <FLabel text="静区 mm" />
           <FNum :model-value="qr!.quietZoneMm ?? 2" :step="0.5" :min="0" @update:model-value="setQr({ quietZoneMm: r2v($event) })" />
         </FRow>
@@ -395,7 +396,7 @@ import {
   FORMULA_FUNCTIONS, buildContext, evalFormula, interpolate, sampleRowOf,
 } from '../engine/context';
 
-import { barcodeNaturalWidth, validateBarcodeText } from '../engine/barcode';
+import { barcodeNaturalWidth, makeQrSvg, validateBarcodeText } from '../engine/barcode';
 import { planElementVariable } from '../engine/element-variable';
 import { useElementVariable } from '../useElementVariable';
 import { r2 } from '../engine/util';
@@ -521,10 +522,37 @@ onBeforeUnmount(() => clearTimeout(qrNoticeTimer));
 
 const bcWarn = computed(() => {
   if (!el.value || el.value.type !== 'barcode') return '';
+  const msgs: string[] = [];
+  const xdim = bc.value?.moduleWidthMm ?? 0.25;
+  // 与后端 barcode-guard 同一口径：<0.19mm 打印前自检会直接拦下
+  if (xdim < 0.19) msgs.push(`模块宽 ${xdim}mm 低于可扫下限 0.19mm，打印前自检会拦截（发不出去）`);
+  else if (xdim < 0.25) msgs.push(`模块宽 ${xdim}mm 偏小，GS1 建议 ≥0.25mm、医疗 UDI ≥0.495mm`);
+  const h = bc.value?.heightMm ?? 9;
+  if (h < 6) msgs.push(`条高 ${h}mm 低于 6mm，扫描枪容错窗口不足`);
   const nat = barcodeNaturalWidth(bc.value, interpolate(bc.value?.content ?? '', previewCtx));
-  return nat != null && nat > (el.value.w ?? 0) + 0.01
-    ? `条码自然宽度 ${nat.toFixed(1)}mm 大于元素宽度 ${el.value.w}mm，可能被压缩变形（建议加宽元素或减小模块宽）`
-    : '';
+  if (nat != null && nat > (el.value.w ?? 0) + 0.01) {
+    const realX = xdim * ((el.value.w ?? 0) / nat);
+    msgs.push(`自然宽 ${nat.toFixed(1)}mm 超出元素宽 ${el.value.w}mm，压扁后实际模块约 ${realX.toFixed(3)}mm（建议加宽元素或减小模块宽）`);
+  }
+  return msgs.join('；');
+});
+
+/** 二维：元素框小于自然尺寸时模块被等比缩小，实际密度可能跌出可扫范围 */
+const qrWarn = computed(() => {
+  if (!el.value || el.value.type !== 'qrcode') return '';
+  const size = qr.value?.moduleSizeMm ?? 0.4;
+  const content = interpolate(qr.value?.content ?? '', previewCtx);
+  if (!content || /\{\{/.test(content)) return '';
+  const msgs: string[] = [];
+  if (size < 0.3) msgs.push(`模块 ${size}mm 低于可扫下限 0.30mm，打印前自检会拦截（发不出去）`);
+  else if (size < 0.495) msgs.push(`模块 ${size}mm 偏小，医疗 UDI 要求 ≥0.495mm`);
+  const nat = makeQrSvg(qr.value, content).naturalWmm;
+  const box = Math.min(el.value.w ?? 0, el.value.h ?? 0);
+  if (nat > 0 && box > 0 && box + 0.01 < nat) {
+    const realModule = size * (box / nat);
+    msgs.push(`元素框 ${box}mm 小于自然尺寸 ${nat.toFixed(1)}mm，实际模块约 ${realModule.toFixed(3)}mm`);
+  }
+  return msgs.join('；');
 });
 
 const formulaError = computed(() => {

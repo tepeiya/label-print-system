@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, OnModuleInit } from '@nestjs/common';
 // 代理版 TypeOrmModule：forFeature 注入的 Repository 按 TenantCtx.dataSourceKey 路由
 import { TypeOrmModule } from '../common/tenant-typeorm.module';
 import { BullModule } from '@nestjs/bullmq';
@@ -12,6 +12,7 @@ import { MaxicodeController } from './maxicode.controller';
 import { PrintProcessor } from './print.processor';
 import { RenderService } from './render.service';
 import { PrintEvents } from './events.event';
+import { warmupBarcodeGuard } from './barcode-guard';
 import { SerialModule } from '../serial/serial.module';
 import { AuditModule } from '../audit/audit.module';
 import { BillingModule } from '../billing/billing.module';
@@ -34,4 +35,9 @@ import { GovernanceModule } from '../governance/governance.module';
   controllers: [PrintController, PrintPreviewController, PrintCommandsController, PrintEventsController, SymbologyController, PrintExportController, PrintVerifyController, MaxicodeController],
   exports: [PrintService, RenderService, PrintEvents],
 })
-export class PrintModule {}
+export class PrintModule implements OnModuleInit {
+  // 后台预热 zxing WASM（首次 ~18s），避免第一单打印被自检拖慢；不阻塞启动
+  onModuleInit() {
+    void warmupBarcodeGuard();
+  }
+}

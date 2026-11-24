@@ -9,6 +9,8 @@ import { Template } from '../entities/template.entity';
 import { RenderService } from './render.service';
 import { PrinterProviderRegistry } from '../../printer/printer-provider.interface';
 import { PrintEvents } from './events.event';
+// P0-2：打印前条码自检（密度闸门 + 真解码比对），避免「内容对但扫不出」的整批废标
+import { guardRenderedBarcodes, summarizeGuard } from './barcode-guard';
 // P8.1：把打印结果转成触发器事件，入 BullMQ 让其它进程也能消费
 import { TRIGGER_JOB, TRIGGER_QUEUE, printProgressToTrigger } from '../jobs/trigger.calc';
 import * as crypto from 'crypto';
@@ -65,6 +67,8 @@ export class PrintProcessor extends WorkerHost {
       : undefined;
 
     let done = 0, failed = 0, processed = 0;
+    // 每单只自检首张（同模板同数据；zxing 首次 WASM 初始化 ~20s，逐张校验会把开销乘上份数）
+    let guarded = false;
     for (let idx = 0; idx < totalLabels; idx++) {
       const seqNo = idx + 1;
       if (wanted && !wanted.includes(seqNo)) continue;
@@ -90,6 +94,34 @@ export class PrintProcessor extends WorkerHost {
           idx,
           content.variables ?? [],
         );
+
+        if (!guarded) {
+          guarded = true;
+          const g = await guardRenderedBarcodes(rendered, printer?.dpi ?? content.page?.dpi ?? 300);
+          if (!g.ok) {
+            const msg = summarizeGuard(g);
+            console.warn(`[print] job ${jobId} 条码自检未通过，整单未下发：${msg}`);
+            await this.logs.save({
+              tenantId, jobId,
+              templateId: params.templateId ?? data.templateId ?? 0,
+              printerId, seqNo,
+              dataSnapshot: row,
+              status: 'failed',
+              errorMsg: msg.slice(0, 500),
+              ...(params.reprintOf ? { reprintOf: params.reprintOf } : {}),
+            } as any);
+            await this.jobs.update(jobId, {
+              done: 0, failed: totalLabels, total: processed, status: 'failed', finishedAt: new Date(),
+            });
+            this.events.publish(tenantId, {
+              type: 'completed', tenantId, jobId, done: 0, failed: totalLabels, total: processed,
+              status: 'failed', at: Date.now(),
+            });
+            return { done: 0, failed: totalLabels, processed, blockedBy: 'barcode-guard' };
+          }
+          const warns = g.issues.filter((i) => !i.blocking);
+          if (warns.length) console.warn(`[print] job ${jobId} 条码自检告警：${warns.map((i) => `[${i.sym}] ${i.message}`).join('；')}`);
+        }
 
         let payload: any;
         if (protocol === 'zpl') {
