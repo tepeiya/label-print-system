@@ -54,7 +54,7 @@ export class PlatformAdminService implements OnModuleInit {
 
   listTenants() { return this.provisionSvc.listTenants(); }
   provision(dto: any) { return this.provisionSvc.provision(dto); }
-  addModule(tenantId: number, moduleCode: string, source: 'addon' | 'manual' | 'gift' = 'addon') {
+  addModule(tenantId: number, moduleCode: string, source: 'addon' | 'manual' | 'gift' | 'trial' = 'addon') {
     return this.provisionSvc.addModule(tenantId, moduleCode, source);
   }
   disableModule(tenantId: number, moduleCode: string) { return this.provisionSvc.disableModule(tenantId, moduleCode); }

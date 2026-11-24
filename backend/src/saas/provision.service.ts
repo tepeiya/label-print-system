@@ -206,23 +206,29 @@ export class ProvisionService {
   }
 
   /** 加购单模块（D1：套餐外单独开通 source='addon'），同样自动补依赖 */
-  async addModule(tenantId: number, moduleCode: string, source: 'addon' | 'manual' | 'gift' = 'addon') {
+  /**
+   * 加购模块（自动补齐依赖）。
+   * source='trial' 表示「只给试用」：写入 status='trial'（ModulesService 认 active/trial 为可用），
+   * 到期不自动失效（tenant_modules 无到期字段），收回由运营在租户详情里停用。
+   */
+  async addModule(tenantId: number, moduleCode: string, source: 'addon' | 'manual' | 'gift' | 'trial' = 'addon') {
     await this.mustGetTenant(tenantId);
     const catalog = await this.modules.listCatalog();
     if (!catalog.some((c) => c.code === moduleCode)) {
       throw new NotFoundException(`模块 "${moduleCode}" 不在模块目录里`);
     }
     const codes = expandWithDependencies([moduleCode], catalog);
+    const status = source === 'trial' ? 'trial' : 'active';
     const repo = this.dataSource.getRepository(TenantModule);
     const existing = await repo.find({ where: { tenantId, moduleCode: In(codes) } });
     const existingCodes = new Set(existing.map((e) => e.moduleCode));
 
     for (const c of codes) {
       if (existingCodes.has(c)) continue;
-      await repo.insert({ tenantId, moduleCode: c, status: 'active', source });
+      await repo.insert({ tenantId, moduleCode: c, status, source });
     }
     this.modules.invalidate(tenantId);
-    return { tenantId, added: codes.filter((c) => !existingCodes.has(c)), requested: moduleCode };
+    return { tenantId, added: codes.filter((c) => !existingCodes.has(c)), requested: moduleCode, status };
   }
 
   /** 停用模块：被依赖则拒绝（§11.3.4「请先停用 BOM」） */

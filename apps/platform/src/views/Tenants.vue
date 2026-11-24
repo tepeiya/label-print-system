@@ -139,6 +139,7 @@
             <el-option label="addon — 单独加购" value="addon" />
             <el-option label="manual — 人工开通" value="manual" />
             <el-option label="gift — 赠送" value="gift" />
+            <el-option label="trial — 试用（到期人工收回）" value="trial" />
           </el-select>
         </el-form-item>
         <el-form-item v-if="ad.moduleCode" label="">
@@ -293,7 +294,10 @@ const depText = (code: string) => (moduleMap.value.get(code)?.dependsOn ?? []).j
 /** 加购提示：把后端会自动补齐的前置模块说清楚（D1） */
 const addHint = computed(() => {
   const deps = depText(ad.moduleCode);
-  return `开通后会按依赖自动补齐前置模块${deps ? `：${deps}` : '（无前置依赖）'}。`;
+  const base = `开通后会按依赖自动补齐前置模块${deps ? `：${deps}` : '（无前置依赖）'}。`;
+  return ad.source === 'trial'
+    ? `${base}试用会写成 trial 状态（可用），但不会自动到期——到期请在「租户详情」里停用。`
+    : base;
 });
 
 // ---------------------------------------------------------------- 停用 / 恢复 / 退订
@@ -447,7 +451,8 @@ async function doAddModule() {
   ad.saving = true;
   try {
     const res = await apiAddTenantModule(ad.tenant.id, ad.moduleCode, ad.source);
-    ElMessage.success(res.added.length ? `已开通：${res.added.join('、')}` : '模块已在开通状态');
+    const tag = res.status === 'trial' ? '（试用）' : '';
+    ElMessage.success(res.added.length ? `已开通${tag}：${res.added.join('、')}` : '模块已在开通状态');
     ad.show = false;
     await load();
   } catch {

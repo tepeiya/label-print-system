@@ -62,15 +62,15 @@ export class ProvisionTenantDto {
   dataSourceKey?: string;
 }
 
-/** 加购单模块（D1：自动补齐前置模块） */
+/** 加购单模块（D1：自动补齐前置模块）；source=trial 表示只给试用（status 落 trial，不自动到期） */
 export class AddModuleDto {
   @IsString()
   @Length(1, 40, { message: 'moduleCode 必填' })
   moduleCode!: string;
 
   @IsOptional()
-  @IsIn(['addon', 'manual', 'gift'])
-  source?: 'addon' | 'manual' | 'gift';
+  @IsIn(['addon', 'manual', 'gift', 'trial'])
+  source?: 'addon' | 'manual' | 'gift' | 'trial';
 }
 
 /** 功能开关（/platform/feature-flags） */

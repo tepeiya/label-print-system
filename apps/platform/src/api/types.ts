@@ -27,7 +27,7 @@ export interface PlatformLoginResult {
 export type SubscriptionStatus = 'active' | 'trial' | 'canceled';
 
 /** 模块来源：套餐自带 / 单独加购 / 人工赠送 / 试用 / 手工开 */
-export type ModuleSource = 'addon' | 'manual' | 'gift';
+export type ModuleSource = 'addon' | 'manual' | 'gift' | 'trial';
 
 /** 租户列表行（GET /platform/tenants） */
 export interface PlatformTenant {
@@ -168,6 +168,8 @@ export interface AddModuleResult {
   tenantId: number;
   added: string[];
   requested: string;
+  /** 写入的模块状态：trial（试用）或 active（正式开通） */
+  status?: 'active' | 'trial';
 }
 
 /** DELETE /platform/tenants/:id/modules/:code */

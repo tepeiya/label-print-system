@@ -74,6 +74,17 @@ test('platform 加购：moduleCode 缺失 → 400', async () => {
   );
 });
 
+test('platform 加购：source 允许 trial（给试用），非法来源仍拒', async () => {
+  const ok: any = await pipe.transform(
+    { moduleCode: 'udi.compliance', source: 'trial' }, { type: 'body', metatype: AddModuleDto },
+  );
+  assert.equal(ok.source, 'trial');
+  await assert.rejects(
+    () => pipe.transform({ moduleCode: 'print', source: 'borrow' }, { type: 'body', metatype: AddModuleDto }),
+    (err: any) => err.getStatus() === 400,
+  );
+});
+
 test('template/import：schemaVersion 0 的旧包（带多余字段）能过 DTO', async () => {
   const out: any = await pipe.transform(
     { schemaVersion: 0, name: '旧包', category: '默认', tags: [], content: { page: {}, elements: [] }, extra: 1 },
