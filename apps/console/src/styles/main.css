@@ -5,6 +5,25 @@
   --lf-brand: var(--el-color-primary, #1a73e8);
   --lf-page-bg: #f5f7fa;
   --lf-sidebar-bg: #001529;
+
+  /* 设计 token：颜色/圆角/间距/字号，新页面直接用，避免每页各写一套 */
+  --lf-text-1: #1f2329;
+  --lf-text-2: #646a73;
+  --lf-text-3: #8f959e;
+  --lf-border: #e4e7ed;
+  --lf-border-light: #edeff2;
+  --lf-bg-card: #ffffff;
+  --lf-bg-soft: #f5f7fa;
+  --lf-danger: #f56c6c;
+  --lf-success: #67c23a;
+  --lf-warning: #e6a23c;
+  --lf-radius: 8px;
+  --lf-radius-sm: 6px;
+  --lf-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  --lf-shadow-hover: 0 4px 12px rgba(31, 35, 41, 0.08);
+  --lf-gap: 12px;
+  --lf-font-xs: 12px;
+  --lf-font-sm: 13px;
 }
 html, body, #app { height: 100%; margin: 0; padding: 0; }
 body {
@@ -43,8 +62,44 @@ body {
 /* 通用 */
 .page-header { display: flex; align-items: center; margin-bottom: 16px; }
 .page-header h2 { margin: 0; flex: 1; font-size: 18px; }
-.card { background: #fff; border-radius: 4px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.card { background: var(--lf-bg-card); border-radius: var(--lf-radius); padding: 16px; box-shadow: var(--lf-shadow); border: 1px solid var(--lf-border-light); }
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
-.stat-card { padding: 16px; background: #fff; border-radius: 4px; }
+.stat-card { padding: 16px; background: var(--lf-bg-card); border-radius: var(--lf-radius); border: 1px solid var(--lf-border-light); box-shadow: var(--lf-shadow); }
 .stat-card .label { color: #888; font-size: 13px; }
 .stat-card .value { font-size: 24px; font-weight: 600; color: #303133; margin-top: 4px; }
+
+/* ========== 统一视觉（全站生效，只覆盖不改变布局逻辑） ========== */
+
+/* 卡片：统一圆角与阴影 */
+.el-card { border-radius: var(--lf-radius); border-color: var(--lf-border-light); }
+.el-card.shadow-never { box-shadow: var(--lf-shadow); }
+
+/* 表格：表头底色 + 行高与字号统一，避免各页 small/default 混用导致密度跳变 */
+.el-table th.el-table__cell { background: var(--lf-bg-soft) !important; color: var(--lf-text-1); font-weight: 600; }
+.el-table { --el-table-border-color: var(--lf-border-light); --el-table-row-hover-bg-color: var(--lf-bg-soft); }
+.el-table .cell { line-height: 20px; }
+.el-table--small .cell { padding: 0 10px; }
+
+/* 页面标题：h2 与标签卡统一行高与基线 */
+.page-header h2, .page-head h2 { font-size: 20px; font-weight: 600; color: var(--lf-text-1); }
+.page-head { display: flex; align-items: center; margin-bottom: 16px; gap: 10px; flex-wrap: wrap; }
+.page-head h2 { margin: 0; flex: 1; }
+.page-head .head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* 筛选区：给新页面用，旧页面的 scoped .filters 不受影响 */
+.lf-filters { display: flex; gap: var(--lf-gap); align-items: center; flex-wrap: wrap; margin-bottom: var(--lf-gap); }
+.lf-hint { color: var(--lf-text-3); font-size: var(--lf-font-xs); }
+
+/* 统计卡：统一标签/数值层级 */
+.lf-stat { display: flex; flex-direction: column; gap: 4px; }
+.lf-stat-label { color: var(--lf-text-3); font-size: var(--lf-font-xs); }
+.lf-stat-value { font-size: 24px; font-weight: 600; color: var(--lf-text-1); }
+
+/* 空态：统一留白，避免各页 el-empty 高度不一 */
+.el-empty { padding: 24px 0; }
+.el-empty__description p { color: var(--lf-text-3); font-size: var(--lf-font-sm); }
+
+/* 内容区滚动条收窄，表格横向滚动时不至于压住最后一行 */
+.layout-content::-webkit-scrollbar { width: 8px; height: 8px; }
+.layout-content::-webkit-scrollbar-thumb { background: #d9dde3; border-radius: 4px; }
+.layout-content::-webkit-scrollbar-thumb:hover { background: #c5cad1; }

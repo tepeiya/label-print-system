@@ -34,7 +34,7 @@
           <el-table-column prop="catalogCode" label="分类目录" width="100" />
           <el-table-column label="层级" width="110">
             <template #default="{ row }">
-              <el-tag size="small" :type="row.packageLevel === 'UNIT' ? '' : 'warning'">
+              <el-tag size="small" :type="row.packageLevel === 'UNIT' ? undefined : 'warning'">
                 {{ row.packageLevel }}{{ row.qtyInPackage ? ` × ${Number(row.qtyInPackage)}` : '' }}
               </el-tag>
             </template>
