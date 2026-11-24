@@ -43,3 +43,5 @@ saas_p6_rls.sql                            # 第二遍：必须放在所有建�
 
 @demo seed-inventory-demo.sql              # 演示数据（水果/生鲜玩具数据：物料/库位/批次/BOM），仅 --seed-demo
 @demo seed-demo-hospital.sql               # 演示数据（医疗 UDI 场景：20 医用耗材/2 工单/50 UDI 码/一物料多码），仅 --seed-demo
+kb_p1_articles.sql                          # 平台端知识库表 kb_articles / kb_assistant_logs（无 tenant_id，平台身份守卫）
+kb_seed_articles.sql                        # 知识库种子内容（16 篇：功能说明+使用教程，按 slug 幂等 upsert）

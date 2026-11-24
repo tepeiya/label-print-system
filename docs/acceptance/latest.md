@@ -1,48 +1,48 @@
 # D1 真库验收报告
 
-生成时间：2026-11-24T01:53:42.958Z
+生成时间：2026-11-24T02:45:32.122Z
 环境：Node v22.23.4 / labelflow_test@127.0.0.1:5432
 
 **结果：39 通过 / 0 失败 / 0 跳过（共 39 条）**
 
 | 门 | 说明 | 结果 | 耗时 | 备注 |
 |---|---|---|---|---|
-| ENV | 数据库可连（labelflow_test） | ✅ | 43ms | PostgreSQL 14.24 (Ubuntu 14.24-0ubuntu0.22.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3 |
+| ENV | 数据库可连（labelflow_test） | ✅ | 61ms | PostgreSQL 14.24 (Ubuntu 14.24-0ubuntu0.22.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3 |
 | ENV2 | Redis 可连 | ✅ | -ms | PONG |
-| DB | 建库表数量自检 | ✅ | 652ms | PASS: 期望 77 张表，实际 77 张，全部命中 |
-| G1 | G1 BOM 展开：行数与需求量含损耗（100 件 × 2、×1.05、×1） | ✅ | 64ms |  |
-| G2 | G2 齐套：行级与整体一致，缺料行被标出 | ✅ | 69ms |  |
-| G3 | G3 过账真扣库存 + stock_moves 台账 + 发料记录唯一 | ✅ | 130ms |  |
-| G4 | G4 重跑不二次扣减（幂等）：库存与台账不变，行报「已发满/无新扣减」 | ✅ | 121ms |  |
-| G5 | G5 缺料：完全无可用批次的行走 SHORT 且不落记录；有部分库存的行按量发 PARTIAL | ✅ | 99ms |  |
-| G6 | G6 退料回补 + 工单回 ISSUING + 退料记录可追溯 | ✅ | 151ms |  |
-| G7 | G7 跨租户不可见：应用层 404 且 labelflow_app 角色 RLS 下查不到 | ✅ | 76ms |  |
-| D4-1 | D4-1 发料扫箱码：2 箱 × 24 = 48 件扣减（与收货折箱同口径） | ✅ | 98ms |  |
-| D4-1b | D4-1b 扫未登记箱码：不拦截、按剩余量发，并给出 packWarning | ✅ | 76ms |  |
-| D4-2 | D4-2 退货幂等：重复提交同内容走回放，库存不二次回补 | ✅ | 153ms |  |
-| D4-2b | D4-2b 退料必须带原因；超发量退料被拒 | ✅ | 101ms |  |
-| D4-3 | D4-3 全链状态：CREATED → RELEASED → ISSUING → ISSUED → CLOSED | ✅ | 76ms |  |
-| R1 | R1 无租户 GUC：业务表看不见任何行（策略默认拒绝） | ✅ | 5ms |  |
-| R2 | R2 带 GUC：只见本租户行，另一租户行确实存在（对照） | ✅ | 55ms |  |
+| DB | 建库表数量自检 | ✅ | 575ms | PASS: 期望 79 张表，实际 79 张，全部命中 |
+| G1 | G1 BOM 展开：行数与需求量含损耗（100 件 × 2、×1.05、×1） | ✅ | 72ms |  |
+| G2 | G2 齐套：行级与整体一致，缺料行被标出 | ✅ | 57ms |  |
+| G3 | G3 过账真扣库存 + stock_moves 台账 + 发料记录唯一 | ✅ | 110ms |  |
+| G4 | G4 重跑不二次扣减（幂等）：库存与台账不变，行报「已发满/无新扣减」 | ✅ | 100ms |  |
+| G5 | G5 缺料：完全无可用批次的行走 SHORT 且不落记录；有部分库存的行按量发 PARTIAL | ✅ | 92ms |  |
+| G6 | G6 退料回补 + 工单回 ISSUING + 退料记录可追溯 | ✅ | 137ms |  |
+| G7 | G7 跨租户不可见：应用层 404 且 labelflow_app 角色 RLS 下查不到 | ✅ | 75ms |  |
+| R1 | R1 无租户 GUC：业务表看不见任何行（策略默认拒绝） | ✅ | 8ms |  |
+| R2 | R2 带 GUC：只见本租户行，另一租户行确实存在（对照） | ✅ | 62ms |  |
 | R3 | R3 平台表不隔离：tenants 对 app 角色可读（登录链路依赖） | ✅ | 1ms |  |
-| P1 | 真实 200 往返：返回 jobId/status，Bearer token 正确，请求体不含 tenantId | ✅ | 25ms |  |
-| P2 | 真实 500 往返：返回 status=failed + errorCode，不抛异常（供过账记 failed） | ✅ | 11ms |  |
-| P3 | 真实 409/幂等往返：映射 idempotent=true | ✅ | 4ms |  |
-| P4 | 真实超时（>3s）：抛不可达、只发一次请求（不重试）——打印侧幂等兜底 | ✅ | 3019ms |  |
-| P5 | 真实 entity 能被 TypeORM 解析并连库初始化（不再报 Column type undefined） | ✅ | 69ms |  |
-| T1 | T1 跨租户隔离 + RLS：A 建单 B 查不到；全部 wms_* 表均挂 tenant_isolation | ✅ | 220ms |  |
-| T2 | T2 重复过账拒绝：同单过账两次，第 2 次拒、库存不翻倍 | ✅ | 92ms |  |
-| T3 | T3 打印降级：打印抛 500/超时 → 过账成功、审计 failed、补打成功 | ✅ | 69ms |  |
-| T4 | T4 过账中途失败：库存变更抛错 → 行状态/任务无脏数据（非单一事务的真实后果） | ✅ | 29ms |  |
-| T5 | T5 订阅门：未开通 wms.inbound 的租户被 ModuleGuard 拦截（真实查库） | ✅ | 6ms |  |
+| T1 | T1 跨租户隔离 + RLS：A 建单 B 查不到；全部 wms_* 表均挂 tenant_isolation | ✅ | 42ms |  |
+| T2 | T2 重复过账拒绝：同单过账两次，第 2 次拒、库存不翻倍 | ✅ | 27ms |  |
+| T3 | T3 打印降级：打印抛 500/超时 → 过账成功、审计 failed、补打成功 | ✅ | 42ms |  |
+| T4 | T4 过账中途失败：库存变更抛错 → 行状态/任务无脏数据（非单一事务的真实后果） | ✅ | 24ms |  |
+| T5 | T5 订阅门：未开通 wms.inbound 的租户被 ModuleGuard 拦截（真实查库） | ✅ | 5ms |  |
 | G8 | G8 收货侧 UDI 拦截：无码/码不符拒收，正确码放行，箱码按件数折 | ✅ | 31ms |  |
-| UDI-UNIT | UDI/GTIN/拆箱 定向单测（8 文件） | ✅ | 36195ms | pass=120 fail=0 |
+| P1 | 真实 200 往返：返回 jobId/status，Bearer token 正确，请求体不含 tenantId | ✅ | 30ms |  |
+| P2 | 真实 500 往返：返回 status=failed + errorCode，不抛异常（供过账记 failed） | ✅ | 5ms |  |
+| P3 | 真实 409/幂等往返：映射 idempotent=true | ✅ | 3ms |  |
+| P4 | 真实超时（>3s）：抛不可达、只发一次请求（不重试）——打印侧幂等兜底 | ✅ | 3012ms |  |
+| D4-1 | D4-1 发料扫箱码：2 箱 × 24 = 48 件扣减（与收货折箱同口径） | ✅ | 84ms |  |
+| D4-1b | D4-1b 扫未登记箱码：不拦截、按剩余量发，并给出 packWarning | ✅ | 60ms |  |
+| D4-2 | D4-2 退货幂等：重复提交同内容走回放，库存不二次回补 | ✅ | 148ms |  |
+| D4-2b | D4-2b 退料必须带原因；超发量退料被拒 | ✅ | 99ms |  |
+| D4-3 | D4-3 全链状态：CREATED → RELEASED → ISSUING → ISSUED → CLOSED | ✅ | 69ms |  |
+| P5 | 真实 entity 能被 TypeORM 解析并连库初始化（不再报 Column type undefined） | ✅ | 45ms |  |
+| UDI-UNIT | UDI/GTIN/拆箱 定向单测（8 文件） | ✅ | 23107ms | pass=120 fail=0 |
 | U1 | UDI 构造/解析 + GS1 DataMatrix 回环 | ✅ | -ms | 口由 UDI-UNIT 汇总覆盖（pass=120 fail=0） |
 | U2 | 追溯正反向 + 合规留痕 | ✅ | -ms | 口由 UDI-UNIT 汇总覆盖（pass=120 fail=0） |
 | U5 | 扫码收货/发料旁路（receiveByScan/issueByScan） | ✅ | -ms | 口由 UDI-UNIT 汇总覆盖（pass=120 fail=0） |
 | U5.1 | GTIN 校验：只收 13/14 位 | ✅ | -ms | 口由 UDI-UNIT 汇总覆盖（pass=120 fail=0） |
 | U5.2 | 一物料多码整组匹配 | ✅ | -ms | 口由 UDI-UNIT 汇总覆盖（pass=120 fail=0） |
 | U5.3 | 拆箱换算：包数×每包件数 | ✅ | -ms | 口由 UDI-UNIT 汇总覆盖（pass=120 fail=0） |
-| U6 | 国家 UDI 导出 Excel/XML + 字段映射表 | ✅ | 573ms | pass=6 fail=0（字段映射 14 项、xlsx 双 sheet 回读、xml 转义） |
-| DEMO-1 | 一条命令起演示环境并注入样板数据 | ✅ | 4750ms | demo-up exit=0 · 物料 25 / 工单 2 / UDI 50 |
-| UNIT-ALL | 全量单测回归（872 例） | ✅ | 160872ms | pass=865 fail=0 skip=7 |
+| U6 | 国家 UDI 导出 Excel/XML + 字段映射表 | ✅ | 521ms | pass=6 fail=0（字段映射 14 项、xlsx 双 sheet 回读、xml 转义） |
+| DEMO-1 | 一条命令起演示环境并注入样板数据 | ✅ | 4777ms | demo-up exit=0 · 物料 25 / 工单 2 / UDI 50 |
+| UNIT-ALL | 全量单测回归（885 例） | ✅ | 144616ms | pass=878 fail=0 skip=7 |

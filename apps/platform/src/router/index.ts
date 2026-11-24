@@ -1,11 +1,16 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
 import { useAuthStore } from '@/store/auth';
 
-/** 左侧固定菜单项（页面只有 6 个，静态声明即可；平台身份不做模块裁剪菜单） */
+/** 左侧固定菜单项（静态声明即可；平台身份不做模块裁剪菜单） */
 export interface PlatformMenuItem {
   path: string;
   title: string;
   icon: string;
+  /**
+   * 非路由项：点击时执行动作而不是跳转。
+   * 目前只有「AI 助手」——它是一个悬浮组件，没有自己的页面，layout 里单独渲染成底部按钮。
+   */
+  action?: 'assistant';
 }
 
 export const PLATFORM_MENUS: PlatformMenuItem[] = [
@@ -15,6 +20,8 @@ export const PLATFORM_MENUS: PlatformMenuItem[] = [
   { path: '/usage', title: '用量看板', icon: 'DataBoard' },
   { path: '/tenant-data', title: '数据保留与导出', icon: 'Files' },
   { path: '/audit', title: '平台审计', icon: 'Document' },
+  { path: '/knowledge', title: '知识库', icon: 'Reading' },
+  { path: '#ai', title: 'AI 助手', icon: 'ChatDotRound', action: 'assistant' },
 ];
 
 /**
@@ -34,6 +41,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'usage', component: () => import('@/views/Usage.vue') },
       { path: 'tenant-data', component: () => import('@/views/TenantData.vue') },
       { path: 'audit', component: () => import('@/views/Audit.vue') },
+      { path: 'knowledge', component: () => import('@/views/Knowledge.vue') },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/tenants' },

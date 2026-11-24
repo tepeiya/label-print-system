@@ -75,3 +75,5 @@ wms_receipts
 wms_wo_lines
 wms_wo_returns
 wms_work_orders
+kb_articles
+kb_assistant_logs

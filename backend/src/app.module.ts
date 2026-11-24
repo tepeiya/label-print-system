@@ -27,6 +27,7 @@ import { HardwareModule } from './hardware/hardware.module';
 import { WmsModule } from './wms/wms.module';
 import { IssuingModule } from './wms/issuing/issuing.module';
 import { UdiModule } from './udi/udi.module';
+import { KbModule } from './kb/kb.module';
 import { TenantRoutingModule } from './common/tenant-routing.module';
 import { HealthController } from './common/health.controller';
 import { SnakeNamingStrategy } from './snake-naming.strategy';
@@ -60,6 +61,7 @@ const ENTITIES = Object.values(entities).filter((e) => typeof e === 'function');
     WmsModule,                  // WMS 阶段一：收货与上架（模块订阅 wms.inbound）
     IssuingModule,              // WMS 阶段二：工单发料与齐套（模块订阅 wms.issuing）
     UdiModule,                  // UDI 医疗合规赋码：构造/解析/扫码复核/模板包
+    KbModule,                   // 平台端知识库 + AI 助手（无 tenant_id，PlatformJwtGuard 把关）
     TenantRoutingModule,        // P6.2 阶段 B：全局 Repository/事务租户路由（@Global）
   ],
   controllers: [HealthController],

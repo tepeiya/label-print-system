@@ -29,3 +29,5 @@ export { WmsReceipt, WmsReceiptLine, WmsPutawayTask, WmsPutawayRule } from '../w
 export { UdiUnit, UdiPackage, UdiEvent } from '../udi/entities/udi.entity';
 // WMS 阶段二（DDL: scripts/wms_p2_issuing.sql）
 export { WmsWorkOrder, WmsWoLine, WmsIssueRecord, WmsWoReturn } from '../wms/issuing/entities/wo.entity';
+// 平台端知识库 + AI 助手（DDL: scripts/kb_p1_articles.sql；无 tenant_id，平台身份守卫）
+export { KbArticle, KbAssistantLog } from '../kb/kb.entity';

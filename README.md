@@ -272,9 +272,10 @@ bash backend/scripts/db-init.sh --verify-only   # 只做缺表自检
 | 多租户隔离 | ✅ 应用层 + RLS 兜底（可开关） | `DB_RLS_ENFORCE=1` 时 Repository 走 RLS 角色短事务（R1–R3 真库门全绿）；`createQueryBuilder` 路径仍走主连接（`docs/27 §2.3`）|
 | **交付化（D0）** | ✅ 装得上 | Dockerfile×2 + compose 编排出建库链 + `db-init.sh`（32 步 / 77 表自检）；真库实跑通过（`docs/25`） |
 | **交付化（D2）** | ✅ 运维接管 | `/health` 三层探针 + Redis 限流（登录严档）+ traceId 结构化日志 + 优雅停机 + CI 三 job + RLS 主链路开关（`DB_RLS_ENFORCE`）；真库 R1–R3 门全绿（`docs/27`） |
-| **交付化（D1）** | ✅ 验得出 | `backend/scripts/db-acceptance.sh` 一条命令跑全套门（WMS G1–G7 / T1–T5 / 打印 P1–P5 / UDI-U5 组 / 全量 872 例），产物 `docs/acceptance/latest.json`：当前 39 门 39 通过 0 失败 0 跳过（含 G8 收货侧 UDI 拦截，见 `docs/26 §4.1`） |
+| **交付化（D1）** | ✅ 验得出 | `backend/scripts/db-acceptance.sh` 一条命令跑全套门（WMS G1–G7 / T1–T5 / 打印 P1–P5 / UDI-U5 组 / 全量 885 例），产物 `docs/acceptance/latest.json`：当前 39 门 39 通过 0 失败 0 跳过（含 G8 收货侧 UDI 拦截，见 `docs/26 §4.1`） |
 | **交付化（D4）** | ✅ 流程闭合 | PDA 发料页（列表/详情 + 六步流程 + 扫码 + 退料）+ 发料侧包码折算（与收货同口径）+ 退料 RETURN 幂等；真库 D4-1…D4-3 五门全绿（`docs/28`）；D3 真机打印待打印机就位 |
 | **交付化（D5）** | ✅ 能演示能报价 | `backend/scripts/demo-up.sh` 一条命令起演示环境（33 脚本建库 + 医疗样板：20 物料/2 工单/50 UDI）；U6 国家 UDI 导出 xlsx/xml + 14 项字段映射；《能力清单（可承诺/不承诺）》见 `docs/29` |
+| **交付化（D6）** | ✅ 运营能自助答疑 | 平台端「知识库」16 篇（8 类目）+ 右下角 AI 助手悬浮球（可关、菜单可再调出）；回答只用知识库内容，模型配置按 租户→平台→环境变量→无 四级回退，无模型时降级原文整理；`/kb/*` 由平台身份守卫（租户 token 401）；真库 11 项验证 + `kb.calc` 13 例单测（`docs/30`） |
 
 ### 运行测试
 
@@ -282,7 +283,7 @@ bash backend/scripts/db-init.sh --verify-only   # 只做缺表自检
 cd backend
 pnpm typecheck                 # tsc --noEmit
 pnpm test                      # node:test + tsx，覆盖 core/**/__tests__ 与 src/**/__tests__
-# 当前：860 例 / 853 通过 / 0 失败 / 7 跳过
+# 当前：885 例 / 878 通过 / 0 失败 / 7 跳过
 
 cd apps/console && pnpm vue-tsc -b   # 前端类型检查
 ```
