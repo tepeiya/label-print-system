@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    LabelFlow 本地打印代理（Windows）。
+
+    为什么用 net8.0 而不是 net8.0-windows：
+      代理真正用到的 Windows 能力只有 winspool.drv 的 P/Invoke 与 System.Drawing.Printing，
+      两者在 net8.0 目标下就能引用 —— 这样代码在 Linux 上也能 dotnet build 做语法校验，
+      真正跑起来（DllImport 解析）才要求 Windows。托盘/服务包装交给 install 脚本，不塞进本项目。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>LabelFlow.PrintAgent</AssemblyName>
+    <RootNamespace>LabelFlow.PrintAgent</RootNamespace>
+    <!-- 单文件分发：见 README 的 dotnet publish 命令 -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- System.Drawing.Printing / winspool 都是 Windows-only，Linux 上只做语法校验，忽略平台告警 -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- PNG 帧走 GDI 打印；DPAPI 保护本地 secret。两个包只在 Windows 运行时生效 -->
+    <PackageReference Include="System.Drawing.Common" Version="8.0.7" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>

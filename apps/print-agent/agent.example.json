@@ -1,0 +1,18 @@
+{
+  "ServerBaseUrl": "https://labelflow.example.com",
+  "TenantId": 3,
+  "Username": "print-agent",
+  "Password": "",
+  "AgentId": "pack-line-1",
+  "AgentName": "包装线1 本地打印代理",
+  "DriverNames": [
+    "ZDesigner ZD421-203dpi ZPL"
+  ],
+  "PollIntervalMs": 2000,
+  "HeartbeatIntervalMs": 25000,
+  "DataDir": "C:\\ProgramData\\LabelFlow",
+  "PullLimit": 1,
+  "SignatureEnabled": false,
+  "DryRun": false,
+  "LogEnvelope": true
+}
