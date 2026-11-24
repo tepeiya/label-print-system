@@ -5,15 +5,18 @@
 //   1) 模板设计器 / 打印页：POST /udi/encode 拿 HRI + 元素串 + DataMatrix 规格
 //   2) PDA 现场：POST /udi/scan-verify 扫一枪就知道"是不是这一批/这一件"
 //   3) Excel 批量建标签：POST /udi/batch 逐行返回，部分成功
-// 订阅门：模块 code 待定（udi.compliance），当前未挂 @RequireModule，避免未开通租户被误拦；
-//   商业化开通时在 modules/tenant_modules 加行并挂守卫即可（见 docs/18 §5）。
+// 订阅门：module code = udi.compliance（独立加购模块，不随任何套餐自动开通）。
+//   2026-11-24 已接闸：未开通租户一律 4031，报错文案用中文名「医疗 UDI 合规套件」；
+//   演示租户由 scripts/udi_module_gate.sql 以 trial 状态授予，收回只需改 status。
 // =============================================================================
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { RequireModule } from '../common/module.guard';
 import { UdiService, ScanExpectation } from './udi.service';
 import { UdiInput } from './udi.calc';
 import { printerAdapterPayload, printerProfileById } from './udi.printer-profiles';
 
 @Controller('udi')
+@RequireModule('udi.compliance')
 export class UdiController {
   constructor(private svc: UdiService) {}
 

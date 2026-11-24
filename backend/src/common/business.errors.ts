@@ -32,13 +32,15 @@ export class BusinessException extends HttpException {
   }
 }
 
-/** L2 模块订阅未通过 */
+/** L2 模块订阅未通过（displayName 给面向用户的中文名，别让人看 udi.compliance 这种 code） */
 export class ModuleNotSubscribedException extends BusinessException {
-  constructor(moduleCodes: string[], plan?: string | null) {
+  constructor(moduleCodes: string[], plan?: string | null, displayName?: string | null) {
     super(
       BizCode.MODULE_NOT_SUBSCRIBED,
-      `当前订阅未开通模块: ${moduleCodes.join(' / ')}`,
-      { modules: moduleCodes, plan: plan ?? null, action: 'upgrade' },
+      displayName
+        ? `当前未开通「${displayName}」，请联系销售开通`
+        : `当前订阅未开通模块: ${moduleCodes.join(' / ')}`,
+      { modules: moduleCodes, plan: plan ?? null, action: 'upgrade', displayName: displayName ?? null },
     );
   }
 }

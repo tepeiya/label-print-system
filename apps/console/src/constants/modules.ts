@@ -18,6 +18,7 @@ export const MODULE_LABELS: Record<string, string> = {
   bom: '齐套率',
   alert: '呆滞/效期预警',
   agent: '智能体接入',
+  'udi.compliance': '医疗 UDI 合规套件',
 };
 
 export const moduleName = (code: string): string => MODULE_LABELS[code] ?? code;

@@ -20,7 +20,7 @@ test('订阅页永远可见，哪怕没有任何模块和权限', () => {
 });
 
 test('模块订阅 + 权限点都齐时，返回完整菜单', () => {
-  const modules = ['print', 'templates', 'datasource', 'users', 'audit', 'backup'];
+  const modules = ['print', 'templates', 'datasource', 'users', 'audit', 'backup', 'udi.compliance'];
   const permissions = [
     'print:stats:read', 'print:job:read', 'template:write', 'template:read',
     'datasource:read', 'sys:user:read', 'audit:read', 'backup:read',
@@ -28,7 +28,7 @@ test('模块订阅 + 权限点都齐时，返回完整菜单', () => {
   const tree = buildMenus(modules, permissions);
   assert.deepEqual(keys(tree), ['dashboard', 'print', 'template-center', 'data', 'udi', 'system', 'subscription']);
   assert.deepEqual(childKeys(tree, 'print'), ['print-jobs', 'printers']);
-  // 医疗 UDI 两个入口挂 print 模块门（udi.compliance 还未种模块行，见 docs/19 §3）
+  // 医疗 UDI 走独立加购模块 udi.compliance（不随 print 套餐）
   assert.deepEqual(childKeys(tree, 'udi'), ['udi-trace', 'udi-compliance']);
   assert.deepEqual(childKeys(tree, 'template-center'), ['designer', 'templates']);
   assert.deepEqual(childKeys(tree, 'system'), ['users', 'audit', 'backups']);
@@ -53,12 +53,21 @@ test('AI 工作台分组：只有 ai:models:manage 时只出现「AI 模型配�
   assert.equal(tree.find((n) => n.key === 'ai-hub')?.children?.[0].path, '/ai-models');
 });
 
-test('只订阅 print + print:job:read 时，设计器和模板库不可见，数据源/系统管理整组消失', () => {
+test('只订阅 print + print:job:read 时，设计器和模板库不可见，数据源/系统管理/UDI 整组消失', () => {
   const tree = buildMenus(['print'], ['print:job:read']);
-  assert.deepEqual(keys(tree), ['print', 'udi', 'subscription']);
+  assert.deepEqual(keys(tree), ['print', 'subscription']);
   assert.deepEqual(childKeys(tree, 'print'), ['print-jobs', 'printers']);
-  // 医疗 UDI 两个入口挂 print 模块门（udi.compliance 还未种模块行，见 docs/19 §3）
-  assert.deepEqual(childKeys(tree, 'udi'), ['udi-trace', 'udi-compliance']);
+});
+
+test('医疗 UDI 是独立加购模块：订阅 udi.compliance 才出现，print 不连带', () => {
+  const noUdi = buildMenus(['print', 'templates'], ['*']);
+  assert.ok(!keys(noUdi).includes('udi'), '未买 UDI 套件时整组不可见');
+
+  const withUdi = buildMenus(['print', 'udi.compliance'], ['print:job:read']);
+  assert.deepEqual(childKeys(withUdi, 'udi'), ['udi-trace', 'udi-compliance']);
+  const group = withUdi.find((n) => n.key === 'udi');
+  assert.equal(group?.module, 'udi.compliance');
+  assert.ok(group?.children?.every((c) => c.module === 'udi.compliance'));
 });
 
 test('权限点决定叶子：有 templates 模块但没有 template:write 时设计器被过滤', () => {
@@ -68,19 +77,19 @@ test('权限点决定叶子：有 templates 模块但没有 template:write 时�
 
 test('模块门决定叶子：有 template:read 权限但未订阅 templates 模块时，模板中心整组消失', () => {
   const tree = buildMenus(['print'], ['print:job:read', 'template:read']);
-  assert.deepEqual(keys(tree), ['print', 'udi', 'subscription']);
+  assert.deepEqual(keys(tree), ['print', 'subscription']);
   assert.equal(tree.find((n) => n.key === 'template-center'), undefined);
 });
 
 test('通配权限 print:* 放行该模块下的读入口', () => {
   const tree = buildMenus(['print'], ['print:*']);
-  assert.deepEqual(keys(tree), ['dashboard', 'print', 'udi', 'subscription']);
+  assert.deepEqual(keys(tree), ['dashboard', 'print', 'subscription']);
   assert.deepEqual(childKeys(tree, 'print'), ['print-jobs', 'printers', 'print']);
 });
 
 test('* 全局通配：权限维度假设成立，但模块门仍然限制未订阅的模块', () => {
   const tree = buildMenus(['print'], ['*']);
-  assert.deepEqual(keys(tree), ['dashboard', 'print', 'udi', 'subscription']);
+  assert.deepEqual(keys(tree), ['dashboard', 'print', 'subscription']);
   assert.deepEqual(childKeys(tree, 'print'), ['print-jobs', 'printers', 'print']);
 });
 

@@ -66,17 +66,16 @@ export const MENU_CATALOG: MenuNode[] = [
       { key: 'bom', name: 'BOM 齐套率', icon: 'Connection', path: '/bom', module: 'bom', permission: 'bom:kit:read' },
     ],
   },
-  // 医疗 UDI（U2 追溯 + U4 留痕报表）：模块门暂挂 print（核心模块，始终可见）。
-  // 原因：udi.compliance 还没种子模块行，若在此声明会导致未开通租户整组不可见；
-  // 开通售卖时把 module 换成 udi.compliance + 在 modules/tenant_modules 补行即可。
+  // 医疗 UDI（U2 追溯 + U4 留痕报表）：订阅 gate = udi.compliance（独立加购套件）。
+  // 未开通租户整组不可见；开通走 tenant_modules（演示租户由 scripts/udi_module_gate.sql 给 trial）。
   {
     key: 'udi',
     name: '医疗 UDI',
     icon: 'FirstAidKit',
-    module: 'print',
+    module: 'udi.compliance',
     children: [
-      { key: 'udi-trace', name: 'UDI 追溯', icon: 'Position', path: '/udi-trace', module: 'print' },
-      { key: 'udi-compliance', name: 'UDI 合规留痕', icon: 'DocumentChecked', path: '/udi-compliance', module: 'print' },
+      { key: 'udi-trace', name: 'UDI 追溯', icon: 'Position', path: '/udi-trace', module: 'udi.compliance' },
+      { key: 'udi-compliance', name: 'UDI 合规留痕', icon: 'DocumentChecked', path: '/udi-compliance', module: 'udi.compliance' },
     ],
   },
   // AI 工作台：BASIC 也含 ai 模块（历史种子，见 docs/10 §10.15.5 第 1 条）。

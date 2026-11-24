@@ -1,15 +1,18 @@
 // =============================================================================
 // UdiTraceController —— UDI 追溯/留痕 API（UDI 里程碑 U2）
 // 全部挂在 /udi 下（与 encode/parse/scan-verify 同一控制器前缀不冲突）。
+// 订阅门：与 UdiController 一致，未开通 udi.compliance 的租户 4031。
 // =============================================================================
 import {
   Body, Controller, Get, Header, Param, Post, Query, UseGuards,
 } from '@nestjs/common';
 import { TenantGuard } from '../common/tenant.guard';
+import { RequireModule } from '../common/module.guard';
 import { UdiTraceService } from './udi.trace.service';
 
 @Controller('udi')
 @UseGuards(TenantGuard)
+@RequireModule('udi.compliance')
 export class UdiTraceController {
   constructor(private svc: UdiTraceService) {}
 

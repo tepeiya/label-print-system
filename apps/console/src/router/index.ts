@@ -43,13 +43,12 @@ const routes: RouteRecordRaw[] = [
       // 呆滞/效期预警：alert 模块（依赖 inventory 自动展开），读权限用 alert:event:read。
       { path: 'alerts', component: () => import('@/views/Alerts.vue'),
         meta: { title: '呆滞/效期预警', icon: 'Bell', module: 'alert', permission: 'alert:event:read' } },
-      // 医疗 UDI（U2/U4）：追溯查询与合规留痕。
-      // 模块门暂用 print（核心模块，始终订阅）——UDI 尚未种 modules 行，用 udi.compliance 会导致整组菜单不可见；
-      // 商业化开通时把 module 换成 udi.compliance 并补 seed（见 docs/18 §5）。
+      // 医疗 UDI（U2/U4）：追溯查询与合规留痕。模块门 = udi.compliance（独立加购套件），
+      // 未开通租户直接进路由会被守卫带到「未开通」提示，菜单侧整组也不出现。
       { path: 'udi-trace', component: () => import('@/views/UdiTrace.vue'),
-        meta: { title: 'UDI 追溯', icon: 'Position', module: 'print' } },
+        meta: { title: 'UDI 追溯', icon: 'Position', module: 'udi.compliance' } },
       { path: 'udi-compliance', component: () => import('@/views/UdiCompliance.vue'),
-        meta: { title: 'UDI 合规留痕', icon: 'DocumentChecked', module: 'print' } },
+        meta: { title: 'UDI 合规留痕', icon: 'DocumentChecked', module: 'udi.compliance' } },
       // BOM 齐套率：bom 模块（依赖 inventory 自动展开），读权限用 bom:kit:read。
       { path: 'bom', component: () => import('@/views/BomKit.vue'),
         meta: { title: 'BOM 齐套率', icon: 'Connection', module: 'bom', permission: 'bom:kit:read' } },

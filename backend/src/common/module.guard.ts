@@ -13,6 +13,11 @@ import { ModuleNotSubscribedException } from './business.errors';
 
 export const MODULE_KEY = 'modules';
 
+/** 面向用户的中文模块名：报错里不要出现 udi.compliance 这种 code */
+const MODULE_DISPLAY_NAMES: Record<string, string> = {
+  'udi.compliance': '医疗 UDI 合规套件',
+};
+
 /** 声明路由/控制器所需模块，多模块满足其一即可 */
 export const RequireModule = (...codes: string[]) => SetMetadata(MODULE_KEY, codes);
 
@@ -38,7 +43,8 @@ export class ModuleGuard implements CanActivate {
     const hit = codes.some((c) => enabled.includes(c));
     if (!hit) {
       const plan = await this.modulesSvc.getPlan(tenantId).catch(() => null);
-      throw new ModuleNotSubscribedException(Array.from(new Set(codes)), plan?.code ?? null);
+      const displayName = MODULE_DISPLAY_NAMES[codes[0]] ?? null;
+      throw new ModuleNotSubscribedException(Array.from(new Set(codes)), plan?.code ?? null, displayName);
     }
     return true;
   }

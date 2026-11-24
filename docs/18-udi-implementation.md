@@ -58,10 +58,16 @@ curl -X POST http://localhost:3200/api/v1/udi/encode -H 'Authorization: Bearer <
 3. **不宣称真机兼容**：当前只验证了位图通道（bwip + zxing）。ZPL/TSPL 指令通道对 GS1 DataMatrix 的 FNC1 处理需逐机型验收（见 §6）。
 4. **不含医院端临床扫码核验**：另一条产品线，不在本套件范围。
 
-## 5. 商业化接入（下一步）
+## 5. 商业化接入（2026-11-24 已接闸）
 
-- 模块 code 建议 `udi.compliance`（与 `wms.*` 同构）：`modules` 种一行 + `tenant_modules` 按租户开通，控制器加 `@RequireModule('udi.compliance')`。当前**故意未挂**，避免未开通租户被误拦；正式售卖前加。
-- 报价口径：套件 ￥28,000–48,000 + 实施 ￥10,000–20,000 + 年费 ￥6,000–12,000（避开 ￥999 价格锚，锚点是"合规闭环"而非"打印软件"）。
+- 模块 code `udi.compliance`（与 `wms.*` 同构）：`scripts/udi_module_gate.sql` 种 `modules` 一行（`is_core=FALSE`）+ 演示租户 `tenant_modules` trial 授权；**不写入任何 `plan_modules`**，因此没有任何套餐会自动带出 UDI。
+- 两个控制器（`udi.controller` / `udi.trace.controller`）已挂 `@RequireModule('udi.compliance')`；`ModuleGuard` 加了中文名映射，未开通返回 `4031` +「当前未开通「医疗 UDI 合规套件」，请联系销售开通」，不暴露 `udi.compliance` 这种 code。
+- 菜单「医疗 UDI」整组 + console 路由 `udi-trace` / `udi-compliance` 的 `module` 已改为 `udi.compliance`：未开通租户菜单整组消失，直接敲 URL 会落到 `/blocked?kind=module` 引导页（文案表 `constants/modules.ts` 已补中文名）。
+- 授权/收回操作（运营后台或 SQL）：
+  - 签套件：`INSERT INTO tenant_modules (tenant_id, module_code, status, source) VALUES (<tid>, 'udi.compliance', 'active', 'purchase');`
+  - 给试用：`status='trial', source='trial'`；收回改 `status='disabled'/'expired'`，`ModulesService` 60s 缓存自动生效。
+- 实测（`labelflow_test`）：trial 状态下 `/udi/status` 200、菜单含 udi；把 status 改 `disabled` 后 403/4031 + 中文提示、菜单消失。
+- 报价口径不变：套件 ￥28,000–48,000 + 实施 ￥10,000–20,000 + 年费 ￥6,000–12,000（避开 ￥999 价格锚，锚点是"合规闭环"而非"打印软件"）。**不做月度小订阅**——3 万套件卖不动。
 
 ## 6. 后续里程碑（按客户签约价值排序）
 

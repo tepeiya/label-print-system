@@ -47,3 +47,4 @@ kb_p1_articles.sql                          # 平台端知识库表 kb_articles 
 kb_seed_articles.sql                        # 知识库种子内容（16 篇：功能说明+使用教程，按 slug 幂等 upsert）
 
 kb_tenant_scope.sql                          # 租户端知识库：kb_articles 加 scope 列 + 13 篇租户 FAQ（scope=tenant）
+udi_module_gate.sql                         # UDI 独立加购模块 udi.compliance（不随套餐；演示租户给 trial）
