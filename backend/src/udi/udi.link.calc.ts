@@ -50,6 +50,11 @@ export function issueIdemKey(woNo: string, lineNo: number | string, udiKey: stri
   return cap(`ISSUE:${woNo}:${lineNo}:${udiKey}`);
 }
 
+/** 出库幂等键：同一发货单 + 单元只记一次 SHIP（重复扫码/重复过账回放，不重复置 SHIPPED） */
+export function shipIdemKey(shipmentNo: string, udiKey: string): string {
+  return cap(`SHIP:${shipmentNo}:${udiKey}`);
+}
+
 export interface Guard {
   ok: boolean;
   reason?: string;
@@ -79,6 +84,16 @@ export function checkUnitForIssue(status: string): Guard {
   }
 }
 
+/** 出库状态守卫：已收货/已发料/已出库都可出库（已出库的重复扫码由事件键幂等兜底） */
+export function checkUnitForShip(status: string): Guard {
+  switch (status) {
+    case 'RECEIVED': case 'ISSUED': case 'SHIPPED': return { ok: true };
+    case 'REGISTERED': case 'PRINTED': return { ok: false, reason: '该单元尚未收货，无形可出（请先入库收货）' };
+    case 'VOID': return { ok: false, reason: '该单元已作废，不可出库' };
+    default: return { ok: false, reason: `未知单元状态：${status}` };
+  }
+}
+
 /** RECEIVE 事件 detail：保留 WMS 侧定位信息，便于对账 */
 export function receiveDetail(p: { receiptNo?: string; lineNo?: number; skuCode?: string; qty?: number; packCount?: number; packQty?: number; packLevel?: string }) {
   return {
@@ -99,6 +114,18 @@ export function issueDetail(p: { woNo?: string; lineNo?: number | string; materi
     lineNo: p.lineNo ?? null,
     materialCode: p.materialCode ?? null,
     qty: p.qty ?? null,
+  };
+}
+
+/** SHIP 事件 detail：发货单 + 承运商/运单，可与 wms_shipments 互查「这批码发给了谁」 */
+export function shipDetail(p: { shipmentNo?: string; customerName?: string | null; carrier?: string | null; trackingNo?: string | null; lineNo?: number }) {
+  return {
+    source: 'wms.shipment',
+    shipmentNo: p.shipmentNo ?? null,
+    customerName: p.customerName ?? null,
+    carrier: p.carrier ?? null,
+    trackingNo: p.trackingNo ?? null,
+    lineNo: p.lineNo ?? null,
   };
 }
 

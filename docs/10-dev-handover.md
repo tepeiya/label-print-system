@@ -2898,3 +2898,16 @@ MaxiCode/HIBC/PZN 已有 bwip 位图通道 + 能力表登记（§10.29.2），GS
 - 口径护栏：盘盈/退货只能加、盘亏/报废只能减，其他调整方向自由；部分行失败落 `PARTIAL`，成功行不回滚、失败行可重试；已过账单不可作废，须另开反方向单冲回。
 - 细节与验收表见 `docs/34-stock-adjustment.md`。
 
+
+
+### 10.41 成品发运：wms.outbound 落地（2026-11-25，已实施）
+
+> 承接商业评估里发现的最大空洞：`wms.outbound` 只有 modules 表里一行、没有代码；`SHIPPED` 状态在 UDI 状态机里定义着，却没有任何入口能产生 SHIP 事件。
+
+- 新两条表 `wms_shipments` / `wms_shipment_lines`（DDL `backend/scripts/wms_p3_outbound.sql`，排在 `saas_p6_rls.sql` 之前；期望表清单已加两项）。
+- 单据号 `SH-YYYYMMDD-NNNN`，状态机 `CREATED → PICKING → PICKED → SHIPPED → SIGNED / CANCELLED`；过账走 `InventoryGateway.decreaseStock`（幂等键 `ship:{单号}:{行号}`），台账 reason 前缀带单号。
+- 三条口径：拣货不动物理库存（本项目无同仓移库）；过账按实拣量扣、差额落 `SHORT`，没拣的行按计划量直发；库存动过就禁止作废。
+- UDI 联动补齐入口：`UdiTraceService.shipByScan`（单品码，GS1 原文或 `gtin|lot|serial|expiry` 键均可）/ `shipPackage`（SSCC 整包递归）；失败只落 `udi_result` 不阻塞库存。
+- 前端：console `/wms-shipments`（列表/建单/FIFO 推荐/拣货/过账/签收/作废）；PDA `/shipments` + `/shipments/:id`（扫码定位行 → 拣货 → 出库 → 签收）。
+- 真库实测：SH-20261125-0001 扣 400+100、库存 2400→2000 / 900→800、行 1 `SHORT` 缺 100；2 个 UDI 码 `RECEIVED→SHIPPED`；1 箱 SSCC 内 2 单元整包 `SHIPPED`；重复过账与已出库作废均 400。
+- 细节、API 表与遗留清单见 `docs/35-wms-outbound.md`。

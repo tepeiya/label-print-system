@@ -60,6 +60,8 @@ export const MENU_CATALOG: MenuNode[] = [
       // 放在库存分组内，是因为它们和库存共用同一套账（WMS 变更一律经 InventoryGateway → InventoryService）。
       { key: 'wms-receipts', name: 'WMS 收货与上架', icon: 'Box', path: '/wms-receipts', module: 'wms.inbound' },
       { key: 'wms-issuing', name: 'WMS 工单发料', icon: 'Box', path: '/wms-issuing', module: 'wms.issuing' },
+      // 成品发运（2026-11-25）：发货单/拣货/出库/签收，独立模块门 wms.outbound
+      { key: 'wms-shipments', name: '成品发运', icon: 'Van', path: '/wms-shipments', module: 'wms.outbound' },
       // 基础资料的后端模块门是 masterdata（inventory 的依赖会自动展开），
       // 菜单侧沿用 inventory 模块门，避免出现「有库存却看不到基础资料」。
       // 库存调整单（2026-11-25）：手工出入库下线后，盘盈盘亏都走这张单，需写权限

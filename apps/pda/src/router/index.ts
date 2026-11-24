@@ -9,6 +9,8 @@ import PutawayDetail from '@/views/PutawayDetail.vue';
 import UdiVerify from '@/views/UdiVerify.vue';
 import IssuingList from '@/views/IssuingList.vue';
 import IssuingDetail from '@/views/IssuingDetail.vue';
+import ShipmentList from '@/views/ShipmentList.vue';
+import ShipmentPick from '@/views/ShipmentPick.vue';
 
 const router = createRouter({
   history: createWebHistory(),
@@ -21,6 +23,8 @@ const router = createRouter({
     { path: '/putaway/:id', name: 'putaway-detail', component: PutawayDetail, meta: { title: '上架确认' } },
     { path: '/issuing', name: 'issuing', component: IssuingList, meta: { title: '发料工单' } },
     { path: '/issuing/:id', name: 'issuing-detail', component: IssuingDetail, meta: { title: '发料作业' } },
+    { path: '/shipments', name: 'shipments', component: ShipmentList, meta: { title: '成品发运' } },
+    { path: '/shipments/:id', name: 'shipment-pick', component: ShipmentPick, meta: { title: '拣货出库' } },
     { path: '/udi/verify', name: 'udi-verify', component: UdiVerify, meta: { title: 'UDI 扫码复核' } },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],

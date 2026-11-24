@@ -72,6 +72,8 @@ wms_putaway_rules
 wms_putaway_tasks
 wms_receipt_lines
 wms_receipts
+wms_shipment_lines
+wms_shipments
 wms_wo_lines
 wms_wo_returns
 wms_work_orders

@@ -7,6 +7,7 @@ import { TypeOrmModule } from '../common/tenant-typeorm.module';
 import {
   WmsReceipt, WmsReceiptLine, WmsPutawayTask, WmsPutawayRule,
 } from './inbound/entities/wms.entity';
+import { WmsShipment, WmsShipmentLine } from './outbound/entities/shipment.entity';
 import { Material, MaterialGtin, Warehouse, WarehouseLocation, Bom, BomItem } from '../inventory/inventory.entity';
 import { InventoryModule } from '../inventory/inventory.module';
 import { AgentModule } from '../agent/agent.module';
@@ -14,6 +15,8 @@ import { AuditModule } from '../audit/audit.module';
 import { UdiModule } from '../udi/udi.module';
 import { InboundService } from './inbound/services/inbound.service';
 import { InboundController } from './inbound/controllers/inbound.controller';
+import { ShipmentService } from './outbound/services/shipment.service';
+import { ShipmentController } from './outbound/controllers/shipment.controller';
 import { PrintGateway } from './gateways/print.gateway';
 import { InventoryGateway } from './gateways/inventory.gateway';
 
@@ -21,6 +24,7 @@ import { InventoryGateway } from './gateways/inventory.gateway';
   imports: [
     TypeOrmModule.forFeature([
       WmsReceipt, WmsReceiptLine, WmsPutawayTask, WmsPutawayRule,
+      WmsShipment, WmsShipmentLine,
       Material, MaterialGtin, Warehouse, WarehouseLocation, Bom, BomItem,
     ]),
     InventoryModule,
@@ -28,8 +32,8 @@ import { InventoryGateway } from './gateways/inventory.gateway';
     AuditModule,
     UdiModule,
   ],
-  controllers: [InboundController],
-  providers: [InboundService, PrintGateway, InventoryGateway],
-  exports: [InboundService, PrintGateway, InventoryGateway],
+  controllers: [InboundController, ShipmentController],
+  providers: [InboundService, ShipmentService, PrintGateway, InventoryGateway],
+  exports: [InboundService, ShipmentService, PrintGateway, InventoryGateway],
 })
 export class WmsModule {}

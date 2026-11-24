@@ -363,3 +363,60 @@ export const apiWoReturn = (id: number, body: {
 export const woStatusLabel = (s?: string) => ({
   CREATED: '待齐套', RELEASED: '已放行', ISSUING: '发料中', ISSUED: '已发完', CLOSED: '已关单', CANCELLED: '已取消',
 } as Record<string, string>)[String(s)] || String(s ?? '—');
+
+// ---------------------------------------------------------------------------
+// 成品发运（wms.outbound）：PDA 拣货 + 出库 + 签收
+// ---------------------------------------------------------------------------
+export interface ShipmentListItem {
+  id: number;
+  shipmentNo: string;
+  shipType: string;
+  shipTypeText: string;
+  warehouse: string;
+  customerName: string | null;
+  carrier: string | null;
+  trackingNo: string | null;
+  expectedDate: string | null;
+  status: string;
+  statusText: string;
+  lineCount: number;
+  pickedLines: number;
+  shippedLines: number;
+  qtyPlan: number;
+  createdAt: string;
+}
+
+export interface ShipmentLineItem {
+  id: number; lineNo: number; skuCode: string; materialName: string; unit: string;
+  batchNo: string | null; locationText: string | null; packSscc: string | null; udiCodes: string[];
+  qtyPlan: number; qtyPicked: number; qtyShipped: number;
+  qtyBefore: number | null; qtyAfter: number | null;
+  status: string; statusText: string; error: string | null;
+  udiResult: Record<string, any> | null;
+}
+
+export interface ShipmentDetail {
+  id: number; shipmentNo: string; shipType: string; shipTypeText: string;
+  status: string; statusText: string; warehouse: { id: number; code: string; name: string } | null;
+  customerName: string | null; shipTo: string | null; carrier: string | null; trackingNo: string | null;
+  expectedDate: string | null; remark: string | null;
+  shippedAt: string | null; signedReceiver: string | null; signedAt: string | null;
+  lines: ShipmentLineItem[];
+}
+
+export const apiShipmentList = (params: { status?: string; keyword?: string; page?: number; pageSize?: number }) =>
+  get<{ items: ShipmentListItem[]; total: number }>('/wms/shipments', params);
+
+export const apiShipmentDetail = (id: number) => get<ShipmentDetail>(`/wms/shipments/${id}`);
+
+export const apiShipmentPick = (id: number, lineId: number, body: { qty: number; batchNo?: string }) =>
+  post<ShipmentDetail>(`/wms/shipments/${id}/lines/${lineId}/pick`, body);
+
+export const apiShipmentPost = (id: number) => post<any>(`/wms/shipments/${id}/post`);
+
+export const apiShipmentSign = (id: number, receiver?: string) =>
+  post<ShipmentDetail>(`/wms/shipments/${id}/sign`, { receiver });
+
+export const shipStatusLabel = (s?: string) => ({
+  CREATED: '待拣货', PICKING: '拣货中', PICKED: '已拣完', SHIPPED: '已出库', SIGNED: '已签收', CANCELLED: '已作废',
+} as Record<string, string>)[String(s)] || String(s ?? '—');

@@ -28,6 +28,11 @@
           <span class="nm">发料作业</span>
           <span class="ds">工单齐套、扫码发料、退料冲销</span>
         </button>
+        <button class="menu-tile" @click="router.push('/shipments')">
+          <span class="ic">🚚</span>
+          <span class="nm">成品发运</span>
+          <span class="ds">发货单拣货、扫码核对、出库过账、签收</span>
+        </button>
         <button class="menu-tile" @click="router.push('/udi/verify')">
           <span class="ic">🧬</span>
           <span class="nm">UDI 复核</span>

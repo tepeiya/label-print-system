@@ -46,6 +46,9 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'WMS 收货与上架', icon: 'Box', module: 'wms.inbound' } },
       { path: 'wms-issuing', component: () => import('@/views/WmsDocuments.vue'),
         meta: { title: 'WMS 工单发料', icon: 'Box', module: 'wms.issuing', tab: 'issuing' } },
+      // 成品发运（2026-11-25）：发货单 + 拣货 + 出库 + 签收，模块门 wms.outbound
+      { path: 'wms-shipments', component: () => import('@/views/WmsShipments.vue'),
+        meta: { title: '成品发运', icon: 'Van', module: 'wms.outbound' } },
       // 基础资料：产品/仓库/库位。后端 Controller 的模块门是 masterdata，
       // 但它是 inventory 的依赖（module-deps 会自动展开），菜单与路由用 inventory 保持一致。
       { path: 'masterdata', component: () => import('@/views/Masterdata.vue'),

@@ -40,6 +40,7 @@ wms_p2_issuing.sql                         # WMS 工单/发料/退料
 udi_p1_trace.sql                           # UDI 追溯三表（udi_units/udi_packages/udi_events）
 wms_u5_material_gtin.sql                   # materials 增 gtin / udi_required
 wms_u5_material_gtins.sql                  # 多码表 material_gtins（含 pack_qty），并回填旧 gtin
+wms_p3_outbound.sql                        # WMS 成品发运：发货单头/行（依赖 warehouses/materials）
 saas_p6_rls.sql                            # 第二遍：必须放在所有建表之后重跑，给新表补挂隔离策略（脚本幂等）
 
 @demo seed-inventory-demo.sql              # 演示数据（水果/生鲜玩具数据：物料/库位/批次/BOM），仅 --seed-demo

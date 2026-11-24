@@ -19,8 +19,8 @@ import {
   summarizePrintAudit, toCsv, reportFileName, UDI_STATUS,
 } from './udi.trace.calc';
 import {
-  udiKeyFromCode, receiveIdemKey, issueIdemKey,
-  checkUnitForReceive, checkUnitForIssue, receiveDetail, issueDetail,
+  udiKeyFromCode, receiveIdemKey, issueIdemKey, shipIdemKey,
+  checkUnitForReceive, checkUnitForIssue, checkUnitForShip, receiveDetail, issueDetail, shipDetail, summarizeLink,
 } from './udi.link.calc';
 
 export interface UnitRegisterRow {
@@ -344,6 +344,80 @@ export class UdiTraceService {
       udiKey: unit.udiKey, gtin: unit.gtin, lot: unit.lot, serial: unit.serial,
       status: ev.status, eventId: ev.eventId, idempotent: ev.idempotent,
     };
+  }
+
+  // ---------------------------------------------------------------- 出库联动（成品发运 WMS-OUT）
+  /**
+   * 出库扫码联动：收货/发料过的单元记 SHIP → SHIPPED。
+   * 同一发货单 + 同一单元重复扫 → 事件键幂等回放，不会重复落事件。
+   * 未建档/未收货的码 → 报错（出库不能凭空造码）。
+   */
+  async shipByScan(input: { code: string; shipmentNo: string; lineNo?: number; customerName?: string | null; carrier?: string | null; trackingNo?: string | null }) {
+    const tenantId = useTenantId();
+    if (!input.shipmentNo) throw new BadRequestException('缺少发货单号，无法记 SHIP 事件');
+    const raw = String(input.code ?? '').trim();
+    // 两种入参都接受：① 扫码原文（GS1 HRI/元素串）→ 解析出 udiKey；② 直接给 udiKey（gtin|lot|serial|expiry，接口互调用）
+    let udiKey: string | null = null;
+    if (raw.includes('|') && raw.split('|').length >= 3) {
+      udiKey = raw;
+    } else {
+      const parsed = udiKeyFromCode(raw);
+      if (!parsed.ok) throw new BadRequestException(`UDI 码解析失败：${parsed.errors.join('；')}`);
+      udiKey = parsed.udiKey!;
+    }
+
+    const unit = await this.units.findOne({ where: { tenantId, udiKey: udiKey! } });
+    if (!unit) throw new NotFoundException(`UDI 单元未建档：${udiKey}（请先收货建档）`);
+
+    const guard = checkUnitForShip(unit.status);
+    if (!guard.ok) throw new ConflictException(guard.reason!);
+
+    const idemKey = shipIdemKey(input.shipmentNo, unit.udiKey);
+    const dup = await this.events.findOne({ where: { tenantId, idemKey } });
+    if (dup) {
+      return { udiKey: unit.udiKey, gtin: unit.gtin, lot: unit.lot, serial: unit.serial, status: dup.statusAfter, eventId: dup.id, idempotent: true, ok: true };
+    }
+
+    const ev = await this.recordEvent({
+      udiKey: unit.udiKey, eventType: 'SHIP', refType: 'wms_shipment', refNo: input.shipmentNo,
+      idemKey, detail: shipDetail(input),
+    });
+    void this.audit.write(tenantId, 'udi.link.ship', {
+      shipmentNo: input.shipmentNo, udiKey: unit.udiKey, gtin: unit.gtin, lineNo: input.lineNo ?? null,
+    }, undefined, 'udi_unit', unit.id);
+    return {
+      udiKey: unit.udiKey, gtin: unit.gtin, lot: unit.lot, serial: unit.serial,
+      status: ev.status, eventId: ev.eventId, idempotent: ev.idempotent, ok: true,
+    };
+  }
+
+  /**
+   * 按托盘/箱码出库：扫一个 SSCC，包内（含子包）所有已建档单元一起置 SHIPPED。
+   * 库里没有该包的单元时返回空结果（不算失败：纯库存发货的客户本来就没有码）。
+   */
+  async shipPackage(input: { sscc: string; shipmentNo: string; lineNo?: number; customerName?: string | null; carrier?: string | null; trackingNo?: string | null }) {
+    const tenantId = useTenantId();
+    if (!input.shipmentNo) throw new BadRequestException('缺少发货单号，无法记 SHIP 事件');
+    const v = validateSscc(input.sscc);
+    if (!v.ok) throw new BadRequestException(`SSCC 无效：${v.reason ?? input.sscc}`);
+
+    const pkgs = await this.packages.find({ where: { tenantId } });
+    const rows = pkgs.map((p) => ({ sscc: p.sscc, parentSscc: p.parentSscc ?? null, level: p.level }));
+    const ssccs = [v.normalized, ...descendantsOf(v.normalized, rows)];
+    const units = await this.units.find({ where: { tenantId } });
+    const targets = units.filter((u) => u.packageSscc && ssccs.includes(u.packageSscc));
+
+    const results: Array<{ ok: boolean; idempotent?: boolean; code?: string; reason?: string }> = [];
+    for (const u of targets) {
+      try {
+        const r = await this.shipByScan({ code: u.udiKey, shipmentNo: input.shipmentNo, lineNo: input.lineNo, customerName: input.customerName, carrier: input.carrier, trackingNo: input.trackingNo });
+        results.push({ ok: true, idempotent: r.idempotent, code: u.udiKey });
+      } catch (e: any) {
+        results.push({ ok: false, code: u.udiKey, reason: String(e?.message ?? e).slice(0, 200) });
+      }
+    }
+    const summary = summarizeLink(results);
+    return { sscc: v.normalized, ...summary, units: targets.length };
   }
 
   // ---------------------------------------------------------------- 追溯查询

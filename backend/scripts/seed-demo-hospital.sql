@@ -209,7 +209,7 @@ WHERE u.tenant_id = :tid::bigint AND u.status = 'PRINTED'
 -- 8. 模块订阅（演示要用 WMS 收货/发料与 UDI）------------------------------
 INSERT INTO tenant_modules (tenant_id, module_code, status, source)
 SELECT :tid::bigint, x.code, 'active', 'manual'
-FROM (VALUES ('wms.inbound'), ('wms.issuing'), ('wms.trace'), ('inventory'), ('print'), ('bom')) AS x(code)
+FROM (VALUES ('wms.inbound'), ('wms.issuing'), ('wms.outbound'), ('wms.trace'), ('inventory'), ('print'), ('bom')) AS x(code)
 WHERE EXISTS (SELECT 1 FROM tenant_modules t WHERE t.tenant_id = :tid::bigint)
 ON CONFLICT (tenant_id, module_code) DO NOTHING;
 

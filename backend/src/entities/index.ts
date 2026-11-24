@@ -31,3 +31,5 @@ export { UdiUnit, UdiPackage, UdiEvent, UdiDiMaster, UdiSubmission } from '../ud
 export { WmsWorkOrder, WmsWoLine, WmsIssueRecord, WmsWoReturn } from '../wms/issuing/entities/wo.entity';
 // 平台端知识库 + AI 助手（DDL: scripts/kb_p1_articles.sql；无 tenant_id，平台身份守卫）
 export { KbArticle, KbAssistantLog } from '../kb/kb.entity';
+// WMS 阶段三：成品发运（DDL: scripts/wms_p3_outbound.sql）
+export { WmsShipment, WmsShipmentLine } from '../wms/outbound/entities/shipment.entity';
