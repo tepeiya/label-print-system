@@ -17,6 +17,7 @@ saas_p3_billing.sql                        # 套餐/账单/收款
 saas_p4_agent.sql                          # Agent + 仓库/物料/批次（inventory 依赖）
 saas_p5_agent_tools.sql                    # Agent 工具权限
 saas_p6_branding.sql                       # 白标/域名
+inventory_stock_adjustments.sql            # 库存调整单头+行（DRAFT/PARTIAL/POSTED，2026-11-25）
 saas_p6_rls.sql                            # 第一遍：建 labelflow_app/labelflow_platform 角色 + 给已有表挂策略（后面脚本要 GRANT 到该角色）
 saas_p6_dedicated.sql                      # 独立库租户注册表
 saas_p6_prompts.sql                        # Prompt 库

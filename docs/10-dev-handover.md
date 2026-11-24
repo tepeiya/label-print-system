@@ -2887,3 +2887,14 @@ MaxiCode/HIBC/PZN 已有 bwip 位图通道 + 能力表登记（§10.29.2），GS
 - 落地：新增 `apps/console/src/views/WmsDocuments.vue` + `src/api/wms.ts`，一个组件承载 `/wms-receipts`（收货单/上架任务）与 `/wms-issuing`（工单发料）两条路由，各挂自己的 `meta.module`；菜单两项挂在「库存管理」分组下；只读，不新建、不状态流转。
 - 细节（接口字段、状态机口径、验收记录）见 `docs/16-wms-phase2-dev.md` §13。
 
+
+### 10.40 库存调整单：手工出入库单据化（2026-11-25，已实施）
+
+> 承接 §10.39 里被拆出来的 ①。用户在看到 WMS 单据页后决定「开工」，本轮把 console 那对「+ 入库 / − 出库」下线，换成库存调整单。
+
+- 下线的是**入口**不是能力：`POST /inventory/inbound|outbound` 两个端点保留（PDA 与 Agent 工具仍在用），console 不再提供只填一句「事由」就改库存的按钮。
+- 新单据 `SA-YYYYMMDD-NNNN`：类型（盘盈/盘亏/报废/退货入库/其他）+ 原因 + 最多 50 行明细；保存只建草稿，**过账才动库存**。
+- 过账仍逐行调 `InventoryService.adjustStock`（FIFO/行锁/事务台账原样），单据号写进 `stock_moves.reason` 前缀 → 只有一条写库存的路，台账可反查单据。
+- 口径护栏：盘盈/退货只能加、盘亏/报废只能减，其他调整方向自由；部分行失败落 `PARTIAL`，成功行不回滚、失败行可重试；已过账单不可作废，须另开反方向单冲回。
+- 细节与验收表见 `docs/34-stock-adjustment.md`。
+

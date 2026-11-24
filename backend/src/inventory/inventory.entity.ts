@@ -166,3 +166,47 @@ export class BomItem {
   @Column({ name: 'qty_per', type: 'numeric', precision: 14, scale: 6 }) qtyPer: string;
   @Column({ name: 'loss_rate', type: 'numeric', precision: 6, scale: 4, default: 0 }) lossRate: string;
 }
+
+/** 库存调整单头（DDL: scripts/inventory_stock_adjustments.sql，2026-11-25） */
+@Entity('stock_adjustments')
+@Index('ix_stock_adj_tenant_time', ['tenantId', 'createdAt'])
+export class StockAdjustment {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ name: 'tenant_id', type: 'bigint' }) tenantId: number;
+  @Column({ name: 'adjust_no', length: 40 }) adjustNo: string;
+  @Column({ type: 'varchar', length: 16, default: 'GAIN' }) adjustType: 'GAIN' | 'LOSS' | 'DAMAGE' | 'RETURN' | 'OTHER';
+  @Column({ name: 'warehouse_id', type: 'bigint' }) warehouseId: number;
+  @Column({ type: 'varchar', length: 12, default: 'DRAFT' }) status: 'DRAFT' | 'PARTIAL' | 'POSTED' | 'CANCELLED';
+  @Column({ length: 200 }) reason: string;
+  @Column({ type: 'varchar', length: 300, nullable: true }) remark: string | null;
+  @Column({ name: 'created_by', type: 'bigint', nullable: true }) createdBy: number | null;
+  @Column({ name: 'posted_by', type: 'bigint', nullable: true }) postedBy: number | null;
+  @Column({ name: 'posted_at', type: 'timestamptz', nullable: true }) postedAt: Date | null;
+  @Column({ name: 'cancelled_by', type: 'bigint', nullable: true }) cancelledBy: number | null;
+  @Column({ name: 'cancelled_at', type: 'timestamptz', nullable: true }) cancelledAt: Date | null;
+  @Column({ name: 'cancel_reason', type: 'varchar', length: 200, nullable: true }) cancelReason: string | null;
+  @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
+  @UpdateDateColumn({ name: 'updated_at' }) updatedAt: Date;
+}
+
+/** 库存调整单行（带符号 qty_delta：盘盈为正、盘亏为负） */
+@Entity('stock_adjustment_lines')
+@Index('ix_stock_adj_line_doc', ['tenantId', 'adjustmentId'])
+export class StockAdjustmentLine {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ name: 'tenant_id', type: 'bigint' }) tenantId: number;
+  @Column({ name: 'adjustment_id', type: 'bigint' }) adjustmentId: number;
+  @Column({ name: 'line_no', type: 'int' }) lineNo: number;
+  @Column({ name: 'material_id', type: 'bigint' }) materialId: number;
+  @Column({ name: 'sku_code', length: 40 }) skuCode: string;
+  @Column({ name: 'batch_no', type: 'varchar', length: 60, nullable: true }) batchNo: string | null;
+  @Column({ name: 'location_id', type: 'bigint', nullable: true }) locationId: number | null;
+  @Column({ name: 'qty_delta', type: 'numeric', precision: 14, scale: 3 }) qtyDelta: string;
+  @Column({ type: 'varchar', length: 12, default: 'PENDING' }) status: 'PENDING' | 'DONE' | 'FAILED';
+  @Column({ name: 'qty_before', type: 'numeric', precision: 14, scale: 3, nullable: true }) qtyBefore: string | null;
+  @Column({ name: 'qty_after', type: 'numeric', precision: 14, scale: 3, nullable: true }) qtyAfter: string | null;
+  @Column({ name: 'move_no', type: 'varchar', length: 40, nullable: true }) moveNo: string | null;
+  @Column({ type: 'varchar', length: 200, nullable: true }) error: string | null;
+  @Column({ name: 'posted_at', type: 'timestamptz', nullable: true }) postedAt: Date | null;
+  @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
+}

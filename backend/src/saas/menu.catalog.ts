@@ -62,6 +62,8 @@ export const MENU_CATALOG: MenuNode[] = [
       { key: 'wms-issuing', name: 'WMS 工单发料', icon: 'Box', path: '/wms-issuing', module: 'wms.issuing' },
       // 基础资料的后端模块门是 masterdata（inventory 的依赖会自动展开），
       // 菜单侧沿用 inventory 模块门，避免出现「有库存却看不到基础资料」。
+      // 库存调整单（2026-11-25）：手工出入库下线后，盘盈盘亏都走这张单，需写权限
+      { key: 'inventory-adjustments', name: '库存调整', icon: 'Tickets', path: '/inventory-adjustments', module: 'inventory', permission: 'inventory:stock:adjust' },
       { key: 'masterdata', name: '基础资料', icon: 'Files', path: '/masterdata', module: 'inventory', permission: 'masterdata:item:read' },
       // 呆滞/效期预警：alert 是独立模块（依赖 inventory 自动展开），入口用 alert:event:read。
       // 放在库存分组下，和「库存/基础资料」形成 库存域三件套。

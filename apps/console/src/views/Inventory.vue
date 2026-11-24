@@ -3,8 +3,8 @@
     <div class="page-head">
       <h2>库存与出入库</h2>
       <div class="head-actions">
-        <el-button v-if="canAdjust" type="primary" @click="openMove('in')">+ 入库</el-button>
-        <el-button v-if="canAdjust" type="warning" @click="openMove('out')">− 出库</el-button>
+        <!-- 2026-11-25 口径改造：手工「+入库/−出库」下线，改为库存调整单（单号/类型/原因/过账） -->
+        <el-button v-if="canAdjust" type="primary" @click="goAdjust">库存调整（开单）</el-button>
         <el-button v-if="canTransfer" @click="openTransfer">⇄ 调拨</el-button>
       </div>
     </div>
@@ -128,57 +128,6 @@
       </el-tab-pane>
     </el-tabs>
 
-    <!-- 入库 / 出库 -->
-    <el-dialog v-model="moveDialog" :title="moveMode === 'in' ? '入库登记' : '出库登记'" width="540px">
-      <el-form :model="moveForm" label-width="100px">
-        <el-form-item label="物料" required>
-          <el-select v-model="moveForm.sku" filterable placeholder="输入编码或名称搜索" style="width: 100%"
-                     @change="onMoveSkuChange">
-            <el-option v-for="m in materials" :key="m.id" :label="`${m.code} · ${m.name}`" :value="m.code">
-              <span>{{ m.code }} · {{ m.name }}</span>
-              <span class="option-unit">{{ m.unit }}</span>
-            </el-option>
-          </el-select>
-        </el-form-item>
-        <el-form-item label="仓库" required>
-          <el-select v-model="moveForm.warehouse" filterable placeholder="选择仓库" style="width: 100%">
-            <el-option v-for="w in warehouses" :key="w.id" :label="w.name" :value="w.code" />
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="moveMode === 'in' ? '入库批次' : '指定批次'">
-          <el-input v-model="moveForm.batchNo" placeholder="留空：入库自动生成批次 / 出库按 FIFO 先到期先出" />
-        </el-form-item>
-        <el-form-item :label="moveMode === 'in' ? '入库库位' : '出库库位'">
-          <el-select v-model="moveForm.locationId" clearable filterable placeholder="留空不指定"
-                     :disabled="!moveForm.warehouse" style="width: 100%">
-            <el-option v-for="l in locsOf(moveForm.warehouse)" :key="l.id"
-                       :label="`${l.code} · ${l.name}`" :value="l.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="moveMode === 'in' ? '入库数量' : '出库数量'" required>
-          <el-input-number v-model="moveForm.qty" :min="0.001" :precision="3" :step="1" style="width: 100%" />
-        </el-form-item>
-        <el-form-item label="事由" required>
-          <el-input v-model="moveForm.reason" :placeholder="moveMode === 'in' ? '如：采购到货 / 退货入库' : '如：销售出库 / 领料'" />
-        </el-form-item>
-        <el-form-item label="预演">
-          <el-checkbox v-model="moveForm.dryRun">只预览影响，不实际改动库存</el-checkbox>
-        </el-form-item>
-      </el-form>
-      <div v-if="preview" class="preview-box">
-        <div class="preview-title">预演结果</div>
-        <div v-for="(l, i) in preview.lines" :key="i" class="preview-line">
-          {{ l.warehouse }} / {{ l.batchNo }}：{{ l.before }} → {{ l.after }}（{{ l.change > 0 ? '+' : '' }}{{ l.change }}）
-        </div>
-        <div class="preview-note">{{ preview.material.name }} · {{ preview.warehouse.name }}</div>
-      </div>
-      <template #footer>
-        <el-button @click="moveDialog = false">取消</el-button>
-        <el-button @click="submitMove(true)" :loading="saving">预演</el-button>
-        <el-button type="primary" @click="submitMove(false)" :loading="saving">确认{{ moveMode === 'in' ? '入库' : '出库' }}</el-button>
-      </template>
-    </el-dialog>
-
     <!-- 调拨 -->
     <el-dialog v-model="transferDialog" title="跨仓调拨" width="540px">
       <el-form :model="transferForm" label-width="100px">
@@ -242,10 +191,11 @@
 
 <script setup lang="ts">
 import { reactive, ref, computed, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import {
   apiQueryStock, apiLowStock, apiExpiringStock, apiQueryMoves,
-  apiInventoryMaterials, apiInventoryWarehouses, apiStockInbound, apiStockOutbound, apiStockTransfer,
+  apiInventoryMaterials, apiInventoryWarehouses, apiStockTransfer,
   apiMdLocations,
 } from '@/api';
 import { useAuthStore } from '@/store/auth';
@@ -274,12 +224,8 @@ const moveTotal = ref(0);
 const movePage = ref(1);
 const moveLoading = ref(false);
 
-const moveDialog = ref(false);
-const moveMode = ref<'in' | 'out'>('in');
-const moveForm = reactive({
-  sku: '', warehouse: '', batchNo: '', locationId: undefined as number | undefined,
-  qty: 1, reason: '', dryRun: false,
-});
+/** 单据化的库存调整页（/inventory-adjustments），本页不再提供手工出入库 */
+const router = useRouter();
 const transferDialog = ref(false);
 const transferForm = reactive({
   sku: '', fromWarehouse: '', toWarehouse: '', batchNo: '',
@@ -354,22 +300,6 @@ async function loadMoves() {
 
 function onMovePage(p: number) { movePage.value = p; loadMoves(); }
 
-function resetMove() {
-  moveForm.sku = ''; moveForm.warehouse = ''; moveForm.batchNo = ''; moveForm.locationId = undefined;
-  moveForm.qty = 1; moveForm.reason = ''; moveForm.dryRun = false;
-  preview.value = null;
-}
-
-/** 选产品后按产品/分组默认位置联动仓库与库位 */
-function onMoveSkuChange(code: string) {
-  const m = materials.value.find((x) => x.code === code);
-  if (!m) return;
-  if (m.defaultWarehouseId) {
-    const w = warehouses.value.find((x) => x.id === m.defaultWarehouseId);
-    if (w) moveForm.warehouse = w.code;
-  }
-  moveForm.locationId = m.defaultLocationId ?? undefined;
-}
 function onTransferSkuChange(code: string) {
   const m = materials.value.find((x) => x.code === code);
   if (!m?.defaultWarehouseId) return;
@@ -378,11 +308,7 @@ function onTransferSkuChange(code: string) {
   transferForm.fromLocationId = m.defaultLocationId ?? undefined;
 }
 
-function openMove(mode: 'in' | 'out') {
-  moveMode.value = mode;
-  resetMove();
-  moveDialog.value = true;
-}
+function goAdjust() { router.push('/inventory-adjustments'); }
 
 function openTransfer() {
   transferForm.sku = ''; transferForm.fromWarehouse = ''; transferForm.toWarehouse = '';
@@ -390,31 +316,6 @@ function openTransfer() {
   transferForm.qty = 1; transferForm.reason = ''; transferForm.dryRun = false;
   preview.value = null;
   transferDialog.value = true;
-}
-
-async function submitMove(dry: boolean) {
-  if (!moveForm.sku || !moveForm.warehouse || !moveForm.qty || moveForm.reason.length < 2) {
-    ElMessage.warning('请填物料、仓库、数量与事由（至少 2 字）');
-    return;
-  }
-  saving.value = true;
-  try {
-    const payload = {
-      sku: moveForm.sku, warehouse: moveForm.warehouse, batchNo: moveForm.batchNo || undefined,
-      locationId: moveForm.locationId,
-      delta: moveForm.qty, reason: moveForm.reason, dryRun: dry ? 'true' : String(moveForm.dryRun),
-    };
-    const r = await (moveMode.value === 'in' ? apiStockInbound(payload) : apiStockOutbound(payload));
-    if (dry || moveForm.dryRun) {
-      preview.value = r;
-      ElMessage.success('预演完成，未改动库存');
-      return;
-    }
-    ElMessage.success(moveMode.value === 'in' ? '入库成功' : '出库成功');
-    moveDialog.value = false;
-    await Promise.all([loadStock(), loadMoves(), loadStats()]);
-    tab.value = 'moves';
-  } finally { saving.value = false; }
 }
 
 async function submitTransfer(dry: boolean) {

@@ -37,6 +37,10 @@ const routes: RouteRecordRaw[] = [
       { path: 'inventory', component: () => import('@/views/Inventory.vue'),
         meta: { title: '库存与出入库', icon: 'Box', module: 'inventory', permission: 'inventory:stock:read' } },
 
+      // 库存调整（2026-11-25 ① 口径改造）：手工出入库改为调整单，需写权限才进得来
+      { path: 'inventory-adjustments', component: () => import('@/views/InventoryAdjustments.vue'),
+        meta: { title: '库存调整', icon: 'Tickets', module: 'inventory', permission: 'inventory:stock:adjust' } },
+
       // WMS 单据（只读）：同一个组件承载收货上架与工单发料两条路由，各自挂自己的模块门
       { path: 'wms-receipts', component: () => import('@/views/WmsDocuments.vue'),
         meta: { title: 'WMS 收货与上架', icon: 'Box', module: 'wms.inbound' } },
