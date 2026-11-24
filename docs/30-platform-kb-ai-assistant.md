@@ -118,6 +118,24 @@ none → 助手降级为"知识库原文整理"（明确标注"不是模型生�
 6. **不做会话记忆**：每次提问独立检索，不带上下文追问（"那第二步呢"这种会搜不到）。
 7. **合规口径**：UDI 相关回答只到"可映射的台账导出"，不承诺官方平台报文上报。
 
+## 7.1 界面实拍
+
+知识库页（左分类 + 中列表 + 右正文，表格/列表/行内 code 都按原样式渲染）：
+
+![知识库页](images/d6-kb-page.png)
+
+助手回答（未配置模型时的降级形态：原文摘 + 参考文章 K1…）：
+
+![助手回答](images/d6-assistant-answer.png)
+
+关闭后只剩右下角悬浮球，侧栏「AI 助手」入口随时再调出：
+
+![关闭态](images/d6-assistant-closed.png)
+
+平台级 AI 配置弹窗（写 `ai_model_configs` 的 `tenant_id=0`）：
+
+![AI 设置](images/d6-ai-config.png)
+
 ## 8. 运维要点
 
 - 新增/修改文章：改 `backend/scripts/kb_seed_articles.sql` → 在目标库执行该脚本（`ON CONFLICT` 幂等，不会重复插入）。
