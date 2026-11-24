@@ -132,3 +132,13 @@ GET  /udi/submissions   → 4 条记录，id 倒序，字段齐全
 ### 8.3 顺手修掉的导出缺陷
 
 后端所有响应被 `ResponseInterceptor` 包成 `{code,data}`，浏览器直接打开 `.csv` 链接只会看到一段 JSON。新增 `downloadCsvUrl()`（`apps/console/src/api/index.ts`）：fetch 出 `data` 文本再生成 Blob 下载（带 UTF-8 BOM，Excel 中文不乱码），已替换「留痕报表」「单台账」「召回清单」三个导出按钮。
+
+## 9. RFID / EPC（暂不开发，已存档）
+
+系统当前**只有 RFID 的 EPC 数据层**（SGTIN-96 编解码 + 写作业信封 + 写后读回判定，`backend/src/hardware/epc.calc.ts`，
+端点 `POST /hardware/rfid/encode|write-job|verify-read`），**没有**前端界面、没有读写器驱动（LLRP / 厂商 SDK）、
+真机零验收，因此不能对外说"支持 RFID 标签"。
+
+与 UDI 套件的接线点：EPC 的 CompanyPrefix + ItemReference 就是 GTIN，和 `udi_di_master.di` 同源，
+打通后同一个 DI 可同时出条码与 RFID 双载体、共用一套追溯流水。四阶段方案与验收清单见
+[docs/33-rfid-epc-plan.md](33-rfid-epc-plan.md)。
