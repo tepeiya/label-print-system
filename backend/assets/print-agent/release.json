@@ -1,10 +1,10 @@
 {
-  "version": "1.0",
-  "fileName": "labelflow-print-agent-win64-1.0.zip",
-  "sizeBytes": 29955982,
-  "sha256": "4585fb8ef5c0e200fb5b0b1cd9d4f20adf4052a86e7d00db61cce8b142695865",
-  "exeSha256": "35fe3ac72fa64c88b5af22d3dea0d80fa6b46073db9c3f39c14d897536c2eb70",
-  "exeSizeBytes": 68284394,
+  "version": "1.1",
+  "fileName": "labelflow-print-agent-win64-1.1.zip",
+  "sizeBytes": 29958966,
+  "sha256": "9908ee4de73464a670bf23d53fc0b636ef74f49e785ce6446488d4c94f6292e6",
+  "exeSha256": "bb09e52478d540623911968cf9e060da469510d7770a75f8a215373a94688789",
+  "exeSizeBytes": 68284390,
   "platform": "windows-x64",
-  "builtAt": "2026-11-24T04:00:29Z"
+  "builtAt": "2026-11-24T04:27:33Z"
 }

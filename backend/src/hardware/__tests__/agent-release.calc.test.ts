@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isValidVersion, isSafeArchiveName, parseReleaseManifest } from '../agent-release.calc';
+import {
+  isValidVersion, isSafeArchiveName, parseReleaseManifest,
+  planAgentPrinters, renderSetupScript, sanitizeBaseUrl,
+} from '../agent-release.calc';
 
 const good = {
   version: '1.0',
@@ -46,4 +49,43 @@ test('sha256 必须是 64 位小写 hex；版本号必须是数字点段', () =>
   assert.equal(isValidVersion('1.2.3'), true);
   assert.equal(isValidVersion('1.0-beta'), true);
   assert.equal(isValidVersion('latest'), false);
+});
+
+test('安装脚本的服务器地址只允许 http(s)://主机[:端口]，其余回退', () => {
+  const fb = 'https://fallback.example.com';
+  assert.equal(sanitizeBaseUrl('https://labelflow.example.com', fb), 'https://labelflow.example.com');
+  assert.equal(sanitizeBaseUrl('http://127.0.0.1:3200/', fb), 'http://127.0.0.1:3200');
+  for (const bad of [
+    "https://evil.com'; Write-Host pwned; '", 'https://a.com\nWrite-Host x', 'ftp://a.com',
+    'javascript:alert(1)', '//a.com', 'https://a.com/../x', '', null, undefined,
+  ]) {
+    assert.equal(sanitizeBaseUrl(bad as any, fb), fb, String(bad));
+  }
+});
+
+test('渲染引导脚本：占位符全部替换且不引入引号/换行', () => {
+  const tpl = "param([string]$Tenant='')\n$Base = '__BASE_URL__'\n";
+  const out = renderSetupScript(tpl, "https://a.com'; rm -rf /; '", 'https://safe.example.com');
+  assert.equal(out.includes('__BASE_URL__'), false);
+  assert.ok(out.includes("$Base = 'https://safe.example.com'"));
+  assert.equal(out.includes('rm -rf'), false);
+});
+
+test('注册后补建打印机：按 driverName 去重，第一台给默认', () => {
+  const plan = planAgentPrinters([], ['ZDesigner ZD421', 'TSC TE244']);
+  assert.equal(plan.length, 2);
+  assert.equal(plan[0].isDefault, true);
+  assert.equal(plan[1].isDefault, false);
+  assert.deepEqual(plan[0].connection, { driverName: 'ZDesigner ZD421' });
+  assert.match(plan[0].name, /本地代理/);
+
+  // 已存在同一 driverName（大小写不同）→ 不重复建，且不再抢默认
+  const again = planAgentPrinters([{ connection: { driverName: 'zdesigner zd421' } }, { connection: { driverName: 'other' } }], ['ZDesigner ZD421']);
+  assert.deepEqual(again, []);
+});
+
+test('补建打印机跳过空 driverName，名称截断到 120', () => {
+  const plan = planAgentPrinters([], ['', '   ', 'X'.repeat(200)]);
+  assert.equal(plan.length, 1);
+  assert.equal(plan[0].name.length, 120);
 });

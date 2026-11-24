@@ -75,3 +75,44 @@ export function parseReleaseManifest(jsonText: string | null, zipSize: number | 
     builtAt: typeof raw.builtAt === 'string' ? raw.builtAt.slice(0, 40) : '',
   };
 }
+
+/**
+ * 安装脚本里的服务器地址来自请求 Host，属于**不可信输入**。
+ * 这段会被直接拼进 PowerShell 的单引号字符串，所以只允许 http(s) + 主机名/IP/端口，
+ * 任何引号、分号、换行、空白一律拒绝并回退到配置值 —— 否则就是代码注入。
+ */
+export function sanitizeBaseUrl(raw: string | null | undefined, fallback: string): string {
+  const v = String(raw ?? '').trim().replace(/\/+$/, '');
+  return /^https?:\/\/[A-Za-z0-9.\-]+(:\d{1,5})?$/.test(v) ? v : fallback;
+}
+
+/** 把引导脚本模板里的占位符换成实际地址（先 sanitize，再单次替换，避免二次替换注入） */
+export function renderSetupScript(template: string, baseUrl: string, fallback: string): string {
+  const safe = sanitizeBaseUrl(baseUrl, fallback);
+  return template.split('__BASE_URL__').join(safe);
+}
+
+/** 代理注册后要自动补建的打印机（按 driverName 去重，已存在就跳过） */
+export function planAgentPrinters(
+  existing: Array<{ connection?: Record<string, any> | null }>,
+  driverNames: string[],
+): Array<{ name: string; connection: Record<string, any>; isDefault: boolean }> {
+  const known = new Set(
+    existing.map((p) => String((p.connection ?? {})['driverName'] ?? '').trim().toLowerCase()).filter(Boolean),
+  );
+  const out: Array<{ name: string; connection: Record<string, any>; isDefault: boolean }> = [];
+  for (const raw of driverNames) {
+    const name = String(raw ?? '').trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (known.has(key)) continue;
+    known.add(key);
+    out.push({
+      // 打印机名带上队列名 + 后缀，租户在列表里一眼能认出是"这台机器上的"
+      name: `${name}（本地代理）`.slice(0, 120),
+      connection: { driverName: name },
+      isDefault: existing.length === 0 && out.length === 0,
+    });
+  }
+  return out;
+}

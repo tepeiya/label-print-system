@@ -7,17 +7,19 @@
 // 该静态桥接是「静态 Provider 注册表」与「Nest DI」之间唯一的一处适配。
 // =============================================================================
 import {
-  Module, OnModuleInit, Controller, Get, Post, Body, Param, Headers, Res, UseGuards,
+  Module, OnModuleInit, Controller, Get, Post, Body, Param, Headers, Req, Res, UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { createReadStream } from 'fs';
 import { Roles, RoleName } from '../common/roles.guard';
 import { RequireModule } from '../common/module.guard';
+import { Public } from '../common/public.decorator';
 import { TenantGuard } from '../common/tenant.guard';
 import { TypeOrmModule } from '../common/tenant-typeorm.module';
 import { AuditModule } from '../audit/audit.module';
 import { setAgentEnqueuePort } from '../../printer/printer-provider.interface';
 import { HardwareAgent, HardwareAgentJob, RfidWriteLog } from './hardware.entity';
+import { Printer } from '../entities/print.entity';
 import { HardwareService } from './hardware.service';
 
 const HW_WRITE: RoleName[] = ['admin', 'operator'];
@@ -117,12 +119,40 @@ export class HardwareController {
   inkjetBuild(@Body() b: any) { return this.svc.inkjetBuild(b); }
 }
 
+/**
+ * 一行命令安装：GET /api/v1/agent/setup.ps1
+ *
+ * 为什么敢公开（@Public）：脚本本身不含任何秘密，只有"服务器地址 + 安装步骤"；
+ * 租户要在客户机上跑它，那一刻还没有 token，也不该让客户手工复制 token。
+ * 真正的门禁在脚本内部：它自己去 /auth/login 校验账号密码，下载发行包也带那个 token。
+ * 地址取自请求 Host → 走 sanitizeBaseUrl 白名单，防止被伪造 Host 注入 PowerShell。
+ */
+@Controller('agent')
+export class AgentSetupController {
+  constructor(private svc: HardwareService) {}
+
+  @Public()
+  @Get('setup.ps1')
+  setupScript(@Req() req: any, @Res() res: Response) {
+    const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
+    const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+    const base = `${proto}://${host}`;
+    // 兜底：Host 缺失或非法时用 PUBLIC_BASE_URL；再没有就落到常驻地址，
+    // 注意兜底值本身也必须合法，否则 sanitizeBaseUrl 会把非法值原样返回
+    const fallback = process.env.PUBLIC_BASE_URL || 'http://127.0.0.1:3200';
+    const text = this.svc.setupScript(base, fallback);
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(text);
+  }
+}
+
 @Module({
   imports: [
-    TypeOrmModule.forFeature([HardwareAgent, HardwareAgentJob, RfidWriteLog]),
+    TypeOrmModule.forFeature([HardwareAgent, HardwareAgentJob, RfidWriteLog, Printer]),
     AuditModule,
   ],
-  controllers: [HardwareController],
+  controllers: [HardwareController, AgentSetupController],
   providers: [HardwareService],
   exports: [HardwareService],
 })

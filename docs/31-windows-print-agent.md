@@ -108,49 +108,55 @@ OpenPrinter → StartDocPrinter → StartPagePrinter → WritePrinter → EndDoc
 
 单测新增 2 例（env 覆盖与脏值夹取、放宽租约后不回收），`agent-protocol.calc.test.ts` 13 例全绿。
 
-## 6. 分发：租户自助下载
+## 6. 分发：一行命令装完
 
-代理不能靠"运维私发 zip"，否则客户一多就变成人肉分发。这一版把它做进控制台：
+租户不需要"下载 → 解压 → 找脚本 → 填 4 个参数 → 再去云端建打印机"。控制台「打印机」页给的是**一行命令**：
+
+```powershell
+irm https://你的域名/api/v1/agent/setup.ps1 | iex
+```
+
+管理员 PowerShell 里粘贴回车，脚本自己做完：登录校验 → 下载发行包并校验 SHA-256 → 解压到 `C:\Program Files\LabelFlowPrintAgent` → 枚举本机打印队列让你选 → 写 `agent.json` → 密码存 DPAPI → 注册开机自启计划任务 → 跑一次 `--doctor` 体检。租户只回答三件事：租户代码（默认 default）、账号密码、选中哪几台队列。
+
+**装完云端自动出现打印机**：代理注册时把 `driverNames` 变成租户下的 `windows_spooler` 打印机（`planAgentPrinters`，按 driverName 去重、第一台自动设默认）。所以「打印机」页不用再手工建，设计器里直接能选。
 
 | 组成部分 | 位置 |
 | --- | --- |
-| 发布脚本 | `backend/scripts/print-agent-release.sh`（publish → 组装 → zip → 写 `release.json`） |
+| 引导脚本模板 | `backend/assets/print-agent/install-online.ps1`（服务端把 `__BASE_URL__` 换成请求 Host） |
+| 引导端点 | `GET /api/v1/agent/setup.ps1`（`@Public`，`text/plain`） |
+| 发布脚本 | `backend/scripts/print-agent-release.sh`（publish → 组装 → zip → `release.json`） |
 | 发行包与清单 | `backend/assets/print-agent/labelflow-print-agent-win64-<ver>.zip` + `release.json` |
-| 清单接口 | `GET /api/v1/hardware/agents/release` → `{available, version, sizeBytes, sha256, builtAt, reason?}` |
-| 下载接口 | `GET /api/v1/hardware/agents/release/download` → zip 流（`Content-Disposition` + `X-LabelFlow-Release-Sha256`） |
-| 前端入口 | 租户后台「打印机」页右上：`下载本地代理 v1.0（29MB）` + 「本地代理怎么用」三步说明（`docs/images/d7-*`） |
+| 清单 / 下载 | `GET /hardware/agents/release`（`available/version/sizeBytes/sha256`）、`GET /hardware/agents/release/download`（zip 流） |
+| 前端入口 | 「打印机」页右上「一键安装本地代理」→ 弹窗里一条命令 + `复制命令`；手动分发走折叠区里的整包下载 |
 
-出包与升级只有一条命令：
+![一键安装：一条命令 + 自动出现的打印机](images/d7-agent-one-line-install.png)
+
+**为什么引导端点敢公开**：脚本里只有"服务器地址 + 安装步骤"，不含秘密；客户机执行那一刻还没有 token。真正的门禁在脚本内部——它自己去 `POST /auth/login` 校验账号密码，下载发行包也带那个 token。`release` / `download` 两个端点仍然是 `TenantGuard` + `print` 模块 + `admin/operator`，不做 `@Public`。
+
+**Host 注入**：`$Base` 取自请求 Host，属于不可信输入，`sanitizeBaseUrl()` 只放行 `http(s)://主机[:端口]`，引号/分号/换行一律回退到 `PUBLIC_BASE_URL`（防 PowerShell 代码注入，已有单测覆盖伪造 Host 的场景）。
+
+**出包与升级**：
 
 ```bash
 bash backend/scripts/print-agent-release.sh                    # 版本 1.0
-VERSION=1.1 bash backend/scripts/print-agent-release.sh         # 升版本
-DOTNET_BIN=$HOME/.dotnet8/dotnet bash backend/scripts/print-agent-release.sh   # SDK 不在 PATH 时
+VERSION=1.1 bash backend/scripts/print-agent-release.sh         # 升版本（旧的 zip 记得删）
+DOTNET_BIN=$HOME/.dotnet8/dotnet bash backend/scripts/print-agent-release.sh
 ```
 
-**鉴权取舍**：两个端点都挂在 `TenantGuard` + `@RequireModule('print')` + `@Roles('admin','operator')` 之下 —— 不做 `@Public`。代价是租户必须登录才能下载（curl 要带 Bearer）；好处是没人能从公网白拿安装包，也不会被当成 CDN 刷流量。
+**清单可信度**（`agent-release.calc.ts`，纯函数 + 单测）：清单缺失 / JSON 损坏 / zip 已丢 → `available:false` + `reason`；`fileName` 白名单（`.zip`、不含 `..`）；`sha256` 必须 64 位小写 hex；大小以磁盘实际文件为准。
 
-**清单可信度**（`agent-release.calc.ts`，纯函数 + 单测）：
-
-- 清单缺失 / JSON 损坏 / zip 已丢 → `available:false` + `reason`（前端按钮点了给提示，不产生坏链接）；
-- `fileName` 白名单（只允许 `[A-Za-z0-9._-]` 且 `.zip` 结尾、不含 `..`）—— 清单被改坏也无法做路径穿越；
-- `sha256` 必须 64 位小写 hex，`version` 必须数字点段；
-- `sizeBytes` 以磁盘实际文件为准（清单比文件旧时不至于报错的大小）。
-
-![打印机页：下载入口与说明弹窗](images/d7-printers-agent-help.png)
-
-**部署注意**：发行包随代码走 `backend/assets/print-agent/`（约 29MB zip / 66MB exe）。容器镜像若不带该目录，用 `PRINT_AGENT_ASSET_DIR` 指向挂载卷；目录里没有 `release.json` 时接口返回 `available:false`，不影响其它功能。
+**部署注意**：发行包随代码走 `backend/assets/print-agent/`（约 29MB zip / 66MB exe）。容器镜像若不带该目录，用 `PRINT_AGENT_ASSET_DIR` 指向挂载卷；没有 `release.json` 时接口返回 `available:false`，不影响其它功能。
 
 ## 7. 装机与验收
 
-装机三步：`dotnet publish` → `install-agent.ps1`（四件事：复制程序、生成配置、设密码存 DPAPI、注册计划任务）→ `--doctor` 体检。
+装机就是一行命令（见 §6），装完脚本自己跑 `--doctor`。手动分发（IT 统一推包）时仍可用 `install\install-agent.ps1`，四件事一样：复制程序、生成配置、设密码存 DPAPI、注册计划任务。
 
 验收五步（客户现场）：
 
 1. `--doctor` 四项全 ✓（登录 / 注册 / 本机队列 / 拉取通道）；
 2. `--once --dry-run` 拉到任务并回执成功、不出纸；
 3. 云端 `/hardware` 页代理变"在线"，`pending` 数正确；
-4. 云端下发真实作业，5 秒内出纸，回执 `succeeded` 且 `printedCount` 正确；
+4. 「打印机」页已自动出现该队列对应的本地代理打印机（无需手工建），下发真实作业 5 秒内出纸，回执 `succeeded` 且 `printedCount` 正确；
 5. 拔网线 90s → 代理显示离线、任务不再派发；插回 → 恢复在线并补打。
 
 ## 8. 已知未做 / 遗留
@@ -164,11 +170,12 @@ DOTNET_BIN=$HOME/.dotnet8/dotnet bash backend/scripts/print-agent-release.sh   #
 | ISO 15415 分级 | 不评估条码质量等级，只保证"能扫出来" |
 | 真库实跑 sweep | 定时回收只过了 `tsc` 与单测，未做真库定时器实跑（沙箱 PG 反复丢失） |
 | 发行包灰度 | 只有"当前一个版本可下"，没有旧版本留存/回滚列表；升级出错只能重跑脚本覆盖 |
+| 一键安装未真机跑 | Linux 侧只做了 PowerShell 语法解析（`Parser::ParseFile` 无错误）与接口实测；`iex` + DPAPI + 计划任务的完整链路必须在 Windows 上过一遍 |
 
 ## 9. 代码位置
 
 - 代理：`apps/print-agent/`（`src/` 七个类 + `install/` 两个 PowerShell 脚本 + `agent.example.json`）
 - 发行包：`backend/assets/print-agent/`（zip + `release.json`），生成脚本 `backend/scripts/print-agent-release.sh`
 - 服务端加固：`backend/src/hardware/agent-protocol.calc.ts`、`backend/src/hardware/hardware.service.ts`
-- 自助下载：`backend/src/hardware/agent-release.calc.ts`（清单校验）、`hardware.module.ts`（两个 GET 端点）、`apps/console/src/views/Printers.vue`（下载按钮 + 说明弹窗）
+- 自助下载 / 一键安装：`backend/src/hardware/agent-release.calc.ts`（清单校验、Host 消毒、脚本渲染、打印机补建）、`backend/assets/print-agent/install-online.ps1`、`hardware.module.ts`（`GET /agent/setup.ps1` + release 两端点）、`apps/console/src/views/Printers.vue`（一键安装弹窗）
 - 单测：`backend/src/hardware/__tests__/agent-protocol.calc.test.ts`、`agent-release.calc.test.ts`

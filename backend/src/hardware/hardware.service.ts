@@ -29,13 +29,17 @@ import type { AgentEnqueuePort, PrintJobInput } from '../../printer/printer-prov
 import { generateZpl } from '../../core/zpl-generator';
 import { buildJob as buildTsplJob } from '../../core/tspl-generator';
 import { HardwareAgent, HardwareAgentJob, RfidWriteLog } from './hardware.entity';
+import { Printer } from '../entities/print.entity';
 import {
   AGENT_JOB_MAX_ATTEMPTS, agentJobEnvelope, agentOnline, agentStatus, claimExpired,
   maxPullLimit, normalizeAgentRegistration, normalizeHeartbeat,
   verifyAgentSignature, verifyReceipt, type AgentJobSource, type AgentJobStatus,
 } from './agent-protocol.calc';
 import { encodeSgtin96, decodeSgtin96, rfidWriteJob, verifyEpcWrite } from './epc.calc';
-import { parseReleaseManifest, type PrintAgentRelease } from './agent-release.calc';
+import {
+  parseReleaseManifest, planAgentPrinters, renderSetupScript,
+  sanitizeBaseUrl, type PrintAgentRelease,
+} from './agent-release.calc';
 import {
   INKJET_MAX_CHARS_PER_LINE, INKJET_MAX_ITEMS, INKJET_MAX_LINES, TRIGGER_MODES,
   inkjetJob, inkjetPayload, validateInkjetJob,
@@ -73,6 +77,7 @@ export class HardwareService implements AgentEnqueuePort, OnModuleInit, OnModule
     @InjectRepository(HardwareAgent) private agents: Repository<HardwareAgent>,
     @InjectRepository(HardwareAgentJob) private jobs: Repository<HardwareAgentJob>,
     @InjectRepository(RfidWriteLog) private rfidLogs: Repository<RfidWriteLog>,
+    @InjectRepository(Printer) private printers: Repository<Printer>,
     private audit: AuditService,
   ) {}
 
@@ -118,6 +123,8 @@ export class HardwareService implements AgentEnqueuePort, OnModuleInit, OnModule
     await this.audit.write(r.tenantId, 'hardware.agent.register', {
       agentId: r.agentId, capabilities: r.capabilities, rotated: !!existing,
     }, undefined, 'hardware_agent', saved.id);
+    // 顺手把代理声明的队列变成打印机记录：租户装完就不用再去「打印机」页手工建
+    await this.ensureAgentPrinters(r.driverNames);
     return {
       agentId: r.agentId, protocolVersion: '1.0',
       // 明文密钥只在这一次返回，服务端仅存密文 + 指纹
@@ -347,6 +354,20 @@ export class HardwareService implements AgentEnqueuePort, OnModuleInit, OnModule
   // ------------------------------ 代理发行包（租户自助下载） ------------------------------
 
   /**
+   * 一行命令安装用的引导脚本（GET /agent/setup.ps1）。
+   * 模板在 backend/assets/print-agent/install-online.ps1，这里只把 __BASE_URL__ 换成真实地址。
+   * 地址来自请求 Host（不可信）→ 先过 sanitizeBaseUrl 白名单，防 PowerShell 代码注入。
+   */
+  setupScript(baseUrl: string, fallbackBaseUrl: string): string {
+    const dir = resolveReleaseDir();
+    const p = path.join(dir, 'install-online.ps1');
+    let tpl: string;
+    try { tpl = fs.readFileSync(p, 'utf8'); }
+    catch { throw new NotFoundException('安装脚本模板未就位（backend/assets/print-agent/install-online.ps1）'); }
+    return renderSetupScript(tpl, baseUrl, fallbackBaseUrl);
+  }
+
+  /**
    * 发行包清单：读 backend/assets/print-agent/release.json + 磁盘实际大小。
    * 清单缺失/损坏一律 available:false（带原因），不把坏链接丢给前端。
    * 这里不校验租户：包内容对所有租户相同，鉴权由 Controller 的 TenantGuard + Roles 负责。
@@ -379,6 +400,28 @@ export class HardwareService implements AgentEnqueuePort, OnModuleInit, OnModule
     const filePath = path.join(dir, release.fileName);
     if (path.dirname(filePath) !== dir) throw new NotFoundException('发行包路径非法');
     return { path: filePath, release };
+  }
+
+  /**
+   * 代理注册后，把它的 driverNames 自动变成租户下的「本地代理」打印机。
+   * 目的：租户装完代理就不用再去「打印机」页手工建一遍（多一步就是多一个出错点）。
+   * 幂等：按 connection.driverName 去重，重复注册不会产生重复打印机。
+   */
+  private async ensureAgentPrinters(driverNames: string[]) {
+    try {
+      const existing = await this.printers.find({ where: { type: 'windows_spooler' } as any });
+      const plan = planAgentPrinters(existing as any[], driverNames);
+      if (plan.length === 0) return;
+      await this.printers.save(plan.map((p) => ({
+        tenantId: useTenantId(), type: 'windows_spooler', name: p.name,
+        connection: p.connection, isDefault: p.isDefault, dpi: 203,
+        labelWidthMm: 40, labelHeightMm: 30,
+      })) as any);
+      this.logger.log(`代理注册：自动补建 ${plan.length} 台本地代理打印机`);
+    } catch (e: any) {
+      // 建打印机失败不能让注册失败（代理还得能干活）
+      this.logger.warn(`代理注册后自动建打印机失败（可手工在打印机页添加）：${e?.message ?? e}`);
+    }
   }
 
   inkjetBuild(dto: any) {

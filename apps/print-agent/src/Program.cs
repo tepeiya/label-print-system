@@ -23,6 +23,18 @@ public static class Program
             var secrets = new SecretStore(cfg.DataDir, log);
             log.Info($"LabelFlow 打印代理启动：agentId={cfg.AgentId} tenant={cfg.TenantId} server={cfg.ServerBaseUrl}");
 
+            // --set-password-stdin：给一行命令安装用（PowerShell 管道喂密码），不落命令行历史
+            if (args.Contains("--set-password-stdin"))
+            {
+                var piped = Console.In.ReadLine();
+                if (string.IsNullOrEmpty(piped)) throw new ArgumentException("标准输入没有读到密码");
+                var d0 = secrets.Load();
+                d0["password"] = piped;
+                secrets.Save(d0);
+                Console.WriteLine("已保存到本地 DPAPI 仓库。");
+                return 0;
+            }
+
             if (args.Contains("--set-password"))
             {
                 Console.Write($"请输入 {cfg.Username} 的密码：");

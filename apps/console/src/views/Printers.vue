@@ -3,10 +3,8 @@
     <div class="page-head">
       <h2>打印机</h2>
       <div class="head-actions">
-        <el-button v-if="agentRelease.available" @click="agentHelp = true">本地代理怎么用</el-button>
-        <el-button :loading="downloading" @click="downloadAgent">
-          {{ agentRelease.available ? `下载本地代理 v${agentRelease.version}（${agentSizeText}）` : '下载本地代理' }}
-        </el-button>
+        <el-button v-if="agentRelease.available" type="success" @click="agentHelp = true">一键安装本地代理</el-button>
+        <el-button v-else :loading="downloading" @click="downloadAgent">下载本地代理</el-button>
         <el-button type="primary" @click="openCreate">+ 添加打印机</el-button>
       </div>
     </div>
@@ -138,23 +136,43 @@
       <pre class="cmd">{{ cmdText }}</pre>
     </el-dialog>
 
-    <!-- 本地代理使用说明 -->
-    <el-dialog v-model="agentHelp" title="本地代理怎么用" width="620px">
+    <!-- 本地代理：一键安装 -->
+    <el-dialog v-model="agentHelp" title="安装本地打印代理" width="660px">
+      <p class="agent-lead">
+        在<b>装打印机的那台 Windows</b> 上，用<b>管理员身份</b>打开 PowerShell，粘贴下面这一行、回车。
+        剩下的它自己做完 —— 下载、装程序、建配置、存密码、开机自启。
+      </p>
+      <div class="agent-cmdbox">
+        <pre class="cmd one-liner">{{ setupCommand }}</pre>
+        <el-button type="primary" size="small" @click="copySetupCommand">复制命令</el-button>
+      </div>
+      <p class="agent-lead">跑起来后只需要回答三件事：</p>
       <ol class="agent-steps">
-        <li><b>下载</b>：点右上「下载本地代理」，解压得到一个自包含 exe + install 脚本（客户机不用装 .NET）。</li>
-        <li><b>装机</b>：把解压后的文件夹拷到装打印机的那台 Windows，管理员 PowerShell 里执行
-          <pre class="cmd small">.\install\install-agent.ps1 -ServerBaseUrl {{ serverHint }} -TenantId {{ tenantHint }} -Username 代理账号 -AgentId 机器名 -DriverName "本机打印队列全名"</pre>
-          脚本会复制程序、生成配置、让你输一次密码（存 DPAPI 不落明文）、注册开机自启。
-          <div class="agent-tip">上面 -ServerBaseUrl 自动填的是当前浏览器地址；若前后端分域名部署，改成后端 API 地址再执行。</div></li>
-        <li><b>体检</b>：<pre class="cmd small">LabelFlow.PrintAgent.exe --doctor</pre>四项全 ✓（登录 / 注册 / 本机队列 / 拉取通道）才算装好。</li>
-        <li><b>建打印机</b>：类型选「本地代理 (windows_spooler)」，<b>驱动名必须与本机打印队列名逐字符一致</b>（代理不会自动替换成别的队列）。</li>
+        <li>租户代码（不知道直接回车，默认 <code>default</code>）</li>
+        <li>代理用的账号和密码（建议单开一个 operator 账号）</li>
+        <li>把哪几台打印队列交给代理（回车=全部）</li>
       </ol>
-      <p class="agent-tip">装好后本页该打印机下发即 5 秒内出纸；代理在线状态见右下角日志或 <code>--doctor</code> 输出。一台机器挂多台打印机时，建议每台起一个代理实例（不同 AgentId / DriverName）。</p>
+      <p class="agent-lead">
+        装完<b>不用再去建打印机</b> —— 代理注册时会把选中的队列自动变成这个列表里的「本地代理」打印机，
+        驱动名、通道都已填好，直接在设计器里选它就能打。
+      </p>
+      <el-collapse class="agent-manual">
+        <el-collapse-item title="想手动装？下载整包自己跑脚本（IT 统一分发时用）" name="manual">
+          <p class="agent-lead">
+            包里有 <code>LabelFlow.PrintAgent.exe</code> + <code>install\install-agent.ps1</code>，
+            <code>--doctor</code> 可做体检，<code>--once --dry-run</code> 可演练。
+          </p>
+          <el-button :loading="downloading" @click="downloadAgent">
+            下载安装包 {{ agentRelease.available ? `v${agentRelease.version}（${agentSizeText}）` : '' }}
+          </el-button>
+        </el-collapse-item>
+      </el-collapse>
       <template #footer>
         <el-button @click="agentHelp = false">关闭</el-button>
-        <el-button type="primary" @click="downloadAgent">现在就下载</el-button>
+        <el-button type="primary" @click="copySetupCommand">复制并关掉</el-button>
       </template>
     </el-dialog>
+
   </div>
 </template>
 
@@ -166,7 +184,6 @@ import {
   apiCalibratePrinter, apiTestPrinter, apiTestPrintPrinter, apiTestCommandsPrinter,
   apiGetPrintAgentRelease, apiDownloadPrintAgent,
 } from '@/api';
-import { useAuthStore } from '@/store/auth';
 
 const list = ref<any[]>([]);
 const loading = ref(false);
@@ -184,16 +201,27 @@ const form = reactive({
 const agentRelease = ref<any>({ available: false });
 const downloading = ref(false);
 const agentHelp = ref(false);
-const authStore = useAuthStore();
 const agentSizeText = computed(() => {
   const b = Number(agentRelease.value?.sizeBytes || 0);
   if (!b) return '';
   return b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(0)}MB` : `${(b / 1024).toFixed(0)}KB`;
 });
 // 安装脚本提示里用当前租户信息，减少租户自己算
-// /auth/me 把租户 ID 挂在 user 上（store/auth.ts 的 me.tenantId），这里直接取，省得租户自己查
-const tenantHint = computed(() => String((authStore as any)?.user?.tenantId ?? '你的租户ID'));
-const serverHint = computed(() => location.origin);
+
+// 一行命令：服务端按请求 Host 生成脚本，这里用同源地址（前后端分域名时租户改一下）
+const setupCommand = computed(() => `irm ${location.origin}/api/v1/agent/setup.ps1 | iex`);
+
+async function copySetupCommand() {
+  const text = setupCommand.value;
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+    else throw new Error('no clipboard');
+    ElMessage.success('命令已复制，到客户机管理员 PowerShell 里粘贴执行');
+  } catch {
+    // 非 https / 无剪贴板权限时兜底：选中文本让用户自己 Ctrl+C
+    ElMessageBox.alert(text, '请手动复制（Ctrl+C）', { confirmButtonText: '知道了' });
+  }
+}
 
 async function loadRelease() {
   try { agentRelease.value = (await apiGetPrintAgentRelease()) || { available: false }; }
@@ -358,5 +386,9 @@ defineExpose({ showCommands });
 .agent-steps { line-height: 1.9; padding-left: 18px; }
 .agent-steps .cmd.small { margin: 6px 0 0; font-size: 12px; padding: 8px 10px; max-height: none; background: #f5f7fa; color: #303133; border: 1px solid #e4e7ed; }
 .agent-tip { color: #909399; font-size: 12px; line-height: 1.8; margin-top: 8px; }
+.agent-lead { line-height: 1.8; margin: 0 0 10px; }
+.agent-cmdbox { display: flex; align-items: center; gap: 10px; margin: 10px 0 14px; }
+.cmd.one-liner { flex: 1; margin: 0; padding: 10px 12px; max-height: none; background: #0d1117; color: #7ee787; white-space: pre-wrap; word-break: break-all; font-size: 13px; }
+.agent-manual { margin-top: 14px; }
 .cmd { background: #0d1117; color: #c9d1d9; padding: 12px; border-radius: 6px; max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
 </style>

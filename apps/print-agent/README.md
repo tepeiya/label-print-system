@@ -1,5 +1,9 @@
 # LabelFlow 本地打印代理（Windows）
 
+> **最短路径：一行命令。** 客户机管理员 PowerShell 里执行
+> `irm https://你的域名/api/v1/agent/setup.ps1 | iex` —— 下载、装程序、选队列、存密码、开机自启、体检全自动，装完云端打印机也自动出现。
+> 模板见 `backend/assets/print-agent/install-online.ps1`。
+
 > **本目录不含 exe / zip（构建产物不进源码库）。**
 > 要拿到可运行的 `LabelFlow.PrintAgent.exe`，走这三条任一条：
 > 1. 租户控制台「打印机」页右上「下载本地代理」（整包 zip，含 exe + install 脚本）；
