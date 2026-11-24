@@ -120,6 +120,8 @@ const props = defineProps<{
   el: ElementData;
   zoom: number;
   ctx: RenderContext;
+  /** 整份模板元素：HRI 文本元素要靠它找到绑定的条码并取内容 */
+  elements?: ElementData[];
 }>();
 
 /** 图片地址按数据上下文解析：绑定变量后画布仍显示示例图，不会裂图 */
@@ -177,7 +179,14 @@ const lineGeom = computed(() => {
 
 const textParts = computed(() => {
   const el = props.el;
-  if (el.type === 'text') return splitPlaceholders(el.text, props.ctx);
+  if (el.type === 'text') {
+    // HRI 绑定：内容跟随目标条码（不显示占位高亮，因为它已不是手填的模板串）
+    if (el.bindId && props.elements?.length) {
+      const t = elementText(el, props.ctx, props.elements);
+      return [{ text: t, placeholder: false, resolved: t }];
+    }
+    return splitPlaceholders(el.text, props.ctx);
+  }
   if (el.type === 'dbField') {
     const shown = dbFieldLabel.value;
     return [{ text: shown, placeholder: false, resolved: shown }];

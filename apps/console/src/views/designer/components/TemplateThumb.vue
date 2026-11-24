@@ -7,6 +7,7 @@
         :el="el"
         :zoom="scale"
         :ctx="ctx"
+        :elements="visible"
       />
     </div>
   </div>

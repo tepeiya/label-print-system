@@ -61,7 +61,7 @@ function barcodeTextHtml(spec: ElementData['barcode'], content: string): string 
     + `${escapeHtml(content)}</div>`;
 }
 
-function printElement(el: ElementData, ctx: RenderContext): string {
+function printElement(el: ElementData, ctx: RenderContext, elements?: ElementData[]): string {
   const st = printBoxStyle(el);
   switch (el.type) {
     case 'rect': {
@@ -172,7 +172,7 @@ function printElement(el: ElementData, ctx: RenderContext): string {
     default: {
       const align = el.font?.align || 'left';
       const vAlign = el.font?.vAlign || 'middle';
-      const txt = escapeHtml(elementText(el, ctx));
+      const txt = escapeHtml(elementText(el, ctx, elements));
       return `<div style="${st}display:flex;align-items:${valignToAlign(vAlign)};justify-content:${alignToJustify(align)};overflow:hidden;">
         <div style="${printFontCss(el.font)}width:100%;white-space:${el.font?.wrap === false ? 'nowrap' : 'pre-wrap'};text-align:${align};">${txt}</div></div>`;
     }
@@ -222,7 +222,7 @@ export function buildPrintHtml(template: TemplateData, rows: Record<string, unkn
           const cond = evalFormula(el.printIf, ctx);
           if (cond === 'false' || cond === '0' || cond === null) continue;
         }
-        parts.push(printElement(el, ctx));
+        parts.push(printElement(el, ctx, template.elements));
       }
       const inner = parts.join('');
       labels.push(`<div class="label">${inner}</div>`);

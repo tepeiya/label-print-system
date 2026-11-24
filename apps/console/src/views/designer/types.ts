@@ -146,6 +146,12 @@ export interface ElementData {
 
   // text / richtext / formula / serial / datetime / sysvar
   text?: string;
+  /**
+   * HRI 绑定：文本内容跟随某个条码/二维码元素（填该元素 id）。
+   * 用于二维码旁的人眼可读文本 —— 内容永远等于码里真正编进去的串，
+   * 避免「改了码没改字」导致 GS1/UDI 合规检查不一致。
+   */
+  bindId?: string;
   /** 第四层：富文本片段（richtext 元素正文） */
   runs?: RichTextRun[];
   font?: FontSpec;

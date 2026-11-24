@@ -15,7 +15,9 @@
 //   - 每单只校首张（同模板同数据，逐张校会把 zxing 开销乘上份数），内容变化由调用方重入。
 // =============================================================================
 
-import { is2d, renderBarcodeToPng, renderQrcodeToPng } from '../../core/barcode-renderer';
+import {
+  renderBarcodeSvg, renderBarcodeToPng, renderQrcodeSvg, renderQrcodeToPng,
+} from '../../core/barcode-renderer';
 import { decodeBarcodeImage } from './verify.service';
 import { verdictOf } from './verify.calc';
 
@@ -25,7 +27,10 @@ export const MIN_XDIM_2D_MM = 0.3;
 /** 一维码条高低于此值，手持扫描枪的容错窗口太小 */
 export const MIN_HEIGHT_1D_MM = 6;
 
-export type GuardIssueKind = 'density' | 'decode' | 'encode' | 'unsupported';
+export type GuardIssueKind = 'density' | 'decode' | 'encode' | 'fit' | 'unsupported';
+
+/** 元素框尺寸（mm），用于判断「内容变长后码放不进框」 */
+export interface BoxSize { w: number; h: number }
 
 export interface GuardIssue {
   elementId: string;
@@ -82,6 +87,25 @@ export function barcodeTargetsOf(rendered: any[]): BarcodeTarget[] {
     }
   }
   return out;
+}
+
+/**
+ * 编码后的自然宽度（mm，含静区）。
+ * bwip 的 SVG viewBox 单位 = 模块×scale（scale=3），二维每模块 2 个基础单位。
+ * 内容变长 → 模块数增加 → 宽度变大（DataMatrix 会跨版本），这是「码溢出框」的根因。
+ */
+export function naturalWidthMm(t: Pick<BarcodeTarget, 'twoD' | 'sym' | 'xdimMm' | 'spec'>): number {
+  let svg: string;
+  try {
+    svg = t.twoD ? renderQrcodeSvg(t.spec) : renderBarcodeSvg(t.spec);
+  } catch {
+    return 0;
+  }
+  const m = /viewBox="0 0 ([\d.]+)/.exec(svg);
+  if (!m) return 0;
+  const unitsPerModule = t.twoD ? 2 : 1;
+  const modules = parseFloat(m[1]) / (3 * unitsPerModule);
+  return modules * t.xdimMm;
 }
 
 /** 密度闸门（纯函数，单测覆盖） */
@@ -145,15 +169,39 @@ async function verifyOne(t: BarcodeTarget, dpi: number): Promise<GuardIssue | nu
 }
 
 /**
+ * 装框闸门：码比元素框还宽，打印/贴标时会被相邻元素或标签边切掉。
+ * 这不是密度问题（密度可能完全达标），所以必须单独判。
+ */
+export function checkFit(t: BarcodeTarget, box?: BoxSize): GuardIssue | null {
+  if (!box || box.w <= 0 || box.h <= 0) return null;
+  const need = naturalWidthMm(t);
+  if (need <= 0) return null;
+  const avail = t.twoD ? Math.min(box.w, box.h) : box.w;
+  if (need > avail + 0.5) {
+    return {
+      elementId: t.elementId, sym: t.sym, content: t.content, kind: 'fit',
+      message: `编码后需 ${need.toFixed(1)}mm，元素框只有 ${avail.toFixed(1)}mm（内容变长会让码变宽），会溢出被切`,
+      blocking: true,
+    };
+  }
+  return null;
+}
+
+/**
  * 对一个标签行的全部条码做自检。
  * @param rendered renderRow 的输出（content 已解析）
  * @param dpi      打印机 dpi，决定位图渲染精度
  */
-export async function guardRenderedBarcodes(rendered: any[], dpi = 300): Promise<GuardResult> {
+export async function guardRenderedBarcodes(
+  rendered: any[], dpi = 300, boxes?: Record<string, BoxSize>,
+): Promise<GuardResult> {
   const targets = barcodeTargetsOf(rendered);
   const issues: GuardIssue[] = [];
   let checked = 0;
   for (const t of targets) {
+    // 装框先判：它和密度是两类失败，码可能密度达标但根本放不下
+    const fit = checkFit(t, t.elementId && boxes ? boxes[t.elementId] : undefined);
+    if (fit) { issues.push(fit); continue; }
     const dense = checkDensity(t);
     if (dense) { issues.push(dense); continue; }
     const bad = await verifyOne(t, dpi);

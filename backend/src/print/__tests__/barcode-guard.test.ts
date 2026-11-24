@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   MIN_HEIGHT_1D_MM, MIN_XDIM_1D_MM, MIN_XDIM_2D_MM,
-  barcodeTargetsOf, checkDensity, summarizeGuard,
+  barcodeTargetsOf, checkDensity, checkFit, summarizeGuard,
 } from '../barcode-guard';
 
 const bc = (o: any) => ({ id: 'b1', type: 'barcode', xMm: 2, yMm: 2, barcode: o });
@@ -80,4 +80,51 @@ test('summarizeGuard：只汇总阻断项，最多展示三条', () => {
   assert.match(msg, /CODE128/);
   assert.match(msg, /EAN13/);
   assert.doesNotMatch(msg, /QRCODE/, '非阻断项不该进摘要');
+});
+
+test('checkFit：内容变长后码比框宽 → 拦截（密度达标也拦）', () => {
+  const long = '(01)09501101530003(10)' + 'X'.repeat(60) + '(21)' + 'S'.repeat(12);
+  const t: any = {
+    elementId: 'q1', sym: 'DATAMATRIX', content: long, twoD: true,
+    xdimMm: 0.5, heightMm: 16,
+    spec: { sym: 'DATAMATRIX', content: long, moduleSizeMm: 0.5, ecc: 'M', quietZoneMm: 0 },
+  };
+  const issue = checkFit(t, { w: 16, h: 16 });
+  assert.ok(issue, '98 字符的 DataMatrix 自然宽约 19mm，16mm 框必须拦');
+  assert.equal(issue!.kind, 'fit');
+  assert.match(issue!.message, /溢出被切/);
+
+  // 同样的框，内容短 → 放得下
+  const short: any = {
+    ...t, content: 'AB123',
+    spec: { sym: 'DATAMATRIX', content: 'AB123', moduleSizeMm: 0.5, ecc: 'M', quietZoneMm: 0 },
+  };
+  assert.equal(checkFit(short, { w: 16, h: 16 }), null);
+});
+
+test('checkFit：没给框尺寸时跳过（补打/无模板几何的调用方不该被误拦）', () => {
+  const t: any = {
+    elementId: 'q1', sym: 'QRCODE', content: 'X'.repeat(200), twoD: true,
+    xdimMm: 0.3, heightMm: 20,
+    spec: { sym: 'QRCODE', content: 'X'.repeat(200), moduleSizeMm: 0.3, ecc: 'M', quietZoneMm: 0 },
+  };
+  assert.equal(checkFit(t, undefined), null);
+});
+
+test('renderRow：bindId 的文本跟随条码内容（HRI 永不与码不一致）', async () => {
+  const { RenderService } = await import('../render.service');
+  const svc = new RenderService();
+  const sys = { pageNo: 1, pageTotal: 1, copyIndex: 0, printDate: '2026-11-24', printTime: '10:00:00', uuid: 'u' };
+  const out: any[] = svc.renderRow(
+    [
+      { id: 'dm', type: 'qrcode', x: 3, y: 3, w: 16, h: 16, qrcode: { sym: 'DATAMATRIX', content: '(01)123(10){{batch}}', moduleSizeMm: 0.5, ecc: 'M', gs1: true } } as any,
+      { id: 'hri', type: 'text', x: 3, y: 20, w: 40, h: 4, text: '手抄的旧内容' } as any,
+      { id: 'hri2', type: 'text', x: 3, y: 25, w: 40, h: 4, text: '占位', bindId: 'dm' } as any,
+    ],
+    { batch: 'B11' }, {}, sys, 0, [],
+  );
+  assert.equal(out[0].qrcode.content, '(01)123(10)B11');
+  assert.equal(out[1].text, '手抄的旧内容', '未绑定的文本不受影响');
+  assert.equal(out[2].text, '(01)123(10)B11', '绑定文本必须等于码里编进去的内容');
+  assert.equal(out[2]._boundTo, 'dm');
 });

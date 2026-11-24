@@ -69,6 +69,13 @@ export class PrintProcessor extends WorkerHost {
     let done = 0, failed = 0, processed = 0;
     // 每单只自检首张（同模板同数据；zxing 首次 WASM 初始化 ~20s，逐张校验会把开销乘上份数）
     let guarded = false;
+    // 元素框尺寸：判断「内容变长后码比框宽」，与密度是两类失败
+    const boxes: Record<string, { w: number; h: number }> = {};
+    for (const el of (content.elements ?? []) as any[]) {
+      if ((el.type === 'barcode' || el.type === 'qrcode') && el.id) {
+        boxes[el.id] = { w: Number(el.w ?? 0), h: Number(el.h ?? 0) };
+      }
+    }
     for (let idx = 0; idx < totalLabels; idx++) {
       const seqNo = idx + 1;
       if (wanted && !wanted.includes(seqNo)) continue;
@@ -97,7 +104,7 @@ export class PrintProcessor extends WorkerHost {
 
         if (!guarded) {
           guarded = true;
-          const g = await guardRenderedBarcodes(rendered, printer?.dpi ?? content.page?.dpi ?? 300);
+          const g = await guardRenderedBarcodes(rendered, printer?.dpi ?? content.page?.dpi ?? 300, boxes);
           if (!g.ok) {
             const msg = summarizeGuard(g);
             console.warn(`[print] job ${jobId} 条码自检未通过，整单未下发：${msg}`);

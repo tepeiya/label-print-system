@@ -121,7 +121,22 @@
       <!-- ------------------------------ 文本 ------------------------------ -->
       <template v-if="el!.type === 'text'">
         <FGroup title="文本内容" collapsible store-key="content">
-          <FArea :model-value="el!.text ?? ''" :rows="3" placeholder="支持 {{变量}} 占位" @update:model-value="set({ text: $event })" />
+          <FRow>
+            <FLabel text="内容来源" />
+            <FSelect
+              :model-value="el!.bindId ?? ''"
+              :options="bindOptions"
+              @update:model-value="set({ bindId: String($event ?? '') || undefined })"
+            />
+          </FRow>
+          <span v-if="el!.bindId" class="f-hint">✓ 内容跟随绑定条码：改码即改字，不会出现「码对了字没改」</span>
+          <span v-else class="f-hint">绑定条码 = 这段文字永远等于码里真正编进去的内容（GS1/UDI 的 HRI 明文）</span>
+          <FArea
+            :model-value="el!.text ?? ''"
+            :rows="3"
+            :placeholder="el!.bindId ? '已绑定条码，此处内容会被覆盖' : '支持 {{变量}} 占位'"
+            @update:model-value="set({ text: $event })"
+          />
           <FRow>
             <FCheck text="自动换行" :model-value="el!.font?.wrap !== false" @update:model-value="setFont({ wrap: $event })" />
           </FRow>
@@ -225,6 +240,7 @@
         <span class="f-hint" :class="{ 'f-hint-bad': !bcCheck.ok }">
           {{ bcCheck.ok ? (bcCheck.note ? `✓ ${bcCheck.note}` : '') : `✗ ${bcCheck.error}` }}
         </span>
+        <span v-if="bcSizeText" class="f-hint">{{ bcSizeText }}</span>
         <span v-if="bcWarn" class="f-hint f-hint-warn">⚠ {{ bcWarn }}</span>
         <FRow>
           <FLabel text="模块宽 mm" />
@@ -275,6 +291,7 @@
         </FField>
         <span v-if="qrLen" class="f-hint">内容 {{ qrLen }} 字符（软换行只是显示，数据里不换行）</span>
         <span v-if="qrNotice" class="f-hint f-hint-warn">⚠ {{ qrNotice }}</span>
+        <span v-if="qrSizeText" class="f-hint">{{ qrSizeText }}</span>
         <span v-if="qrWarn" class="f-hint f-hint-warn">⚠ {{ qrWarn }}</span>
         <span class="f-hint" :class="{ 'f-hint-bad': !qrCheck.ok }">
           {{ qrCheck.ok ? (qrCheck.note ? `✓ ${qrCheck.note}` : '') : `✗ ${qrCheck.error}` }}
@@ -503,6 +520,21 @@ function setDatetime(patch: Record<string, unknown>) {
 /** 预检用的数据上下文：和画布同一份示例行，所见即所检 */
 const previewCtx = buildContext(store.template, sampleRowOf(store.template), { serialNo: store.serialStart });
 
+// HRI 绑定候选：本模板里的条码/二维码，选中后文本内容跟随该码
+const bindOptions = computed<Array<[string, string]>>(() => {
+  const els = (store.template?.elements ?? []) as any[];
+  const opts: Array<[string, string]> = [['', '自己输入']];
+  for (const e of els) {
+    if (e.type !== 'barcode' && e.type !== 'qrcode') continue;
+    if (!e.id || e.id === el.value?.id) continue;
+    const raw = String((e.type === 'barcode' ? e.barcode?.content : e.qrcode?.content) ?? '');
+    const kind = e.type === 'barcode' ? '1D' : '2D';
+    const label = `${e.name || kind}：${raw.slice(0, 14)}${raw.length > 14 ? '…' : ''}`;
+    opts.push([e.id, label]);
+  }
+  return opts;
+});
+
 const bcCheck = computed(() => validateBarcodeText(bc.value?.sym ?? 'CODE128', bc.value?.content ?? ''));
 const qrCheck = computed(() => validateBarcodeText(qr.value?.sym ?? 'QRCODE', qr.value?.content ?? ''));
 
@@ -519,6 +551,18 @@ function onQrNormalize(n: number) {
 // 换元素时这条提示就与当前内容无关了，别挂在下一个二维码下面
 watch(() => el.value?.id, () => { qrNotice.value = ''; });
 onBeforeUnmount(() => clearTimeout(qrNoticeTimer));
+
+/** 一维：编码后真实宽度（含静区）与元素框的对比 —— 内容变长会直接变宽，这才是溢出源头 */
+const bcSizeText = computed(() => {
+  if (!el.value || el.value.type !== 'barcode') return '';
+  const content = interpolate(bc.value?.content ?? '', previewCtx);
+  if (!content || /\{\{/.test(content)) return '';
+  const nat = barcodeNaturalWidth(bc.value, content);
+  if (nat == null) return '';
+  const box = el.value.w ?? 0;
+  const over = nat > box + 0.01 ? ` → 超出 ${(nat - box).toFixed(1)}mm` : '';
+  return `编码后宽 ${nat.toFixed(1)}mm（含静区）· 元素框 ${box}mm${over}`;
+});
 
 const bcWarn = computed(() => {
   if (!el.value || el.value.type !== 'barcode') return '';
@@ -538,6 +582,21 @@ const bcWarn = computed(() => {
 });
 
 /** 二维：元素框小于自然尺寸时模块被等比缩小，实际密度可能跌出可扫范围 */
+/** 二维：内容长度决定版本（模块数），框不变时模块会被压小 —— 提前把两个数摆出来 */
+const qrSizeText = computed(() => {
+  if (!el.value || el.value.type !== 'qrcode') return '';
+  const content = interpolate(qr.value?.content ?? '', previewCtx);
+  if (!content || /\{\{/.test(content)) return '';
+  const nat = makeQrSvg(qr.value, content).naturalWmm;
+  if (!nat) return '';
+  const box = Math.min(el.value.w ?? 0, el.value.h ?? 0);
+  if (!box) return `内容 ${content.length} 字符 · 自然尺寸 ${nat.toFixed(1)}mm（含静区）`;
+  const ratio = box / nat;
+  const real = (qr.value?.moduleSizeMm ?? 0.4) * Math.min(1, ratio);
+  return `内容 ${content.length} 字符 · 编码后 ${nat.toFixed(1)}mm（含静区）· 元素框 ${box}mm`
+    + (ratio < 0.999 ? ` → 实际模块 ${real.toFixed(3)}mm` : '');
+});
+
 const qrWarn = computed(() => {
   if (!el.value || el.value.type !== 'qrcode') return '';
   const size = qr.value?.moduleSizeMm ?? 0.4;

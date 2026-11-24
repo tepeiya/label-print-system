@@ -590,7 +590,22 @@ export function evalFormula(expr: unknown, ctx: RenderContext): string | null {
 // ---------------------------------------------------------------------------
 // 元素显示文本
 // ---------------------------------------------------------------------------
-export function elementText(el: ElementData, ctx: RenderContext): string {
+/**
+ * 元素文本（画布 / 打印 HTML / 缩略图共用）。
+ * @param elements 整份模板的 elements —— 仅当元素配了 bindId（HRI 绑定条码）时需要，
+ *   用来取绑定码真正编进去的内容，保证明文与码永远一致。
+ */
+export function elementText(el: ElementData, ctx: RenderContext, elements?: ElementData[]): string {
+  const bindId = el.bindId;
+  if (bindId && (el.type === 'text' || el.type === 'richtext') && elements?.length) {
+    const target = elements.find((e) => e.id === bindId);
+    if (target) {
+      const raw = target.type === 'barcode' ? target.barcode?.content
+        : target.type === 'qrcode' ? target.qrcode?.content
+        : '';
+      if (raw != null && String(raw) !== '') return interpolate(String(raw), ctx);
+    }
+  }
   switch (el.type) {
     case 'text': return interpolate(el.text, ctx);
     case 'formula': {

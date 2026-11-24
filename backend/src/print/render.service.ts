@@ -36,7 +36,7 @@ export class RenderService {
   renderRow(elements: RenderElement[], row: Record<string, any>, serials: Record<string, string[]>, sysVars: Record<string, any>, rowIndex = 0, variables?: ComputedVariable[]): RenderElement[] {
     const computed = resolveComputedVars(variables, row);
     const ctx = { ...computed.row, ...sysVars };
-    return elements.map((el) => {
+    const out = elements.map((el) => {
       const e: any = { ...el };
       // 条件打印：printIf 表达式为假则跳过该元素
       if (typeof e.printIf === 'string' && e.printIf.trim()) {
@@ -86,6 +86,29 @@ export class RenderService {
       }
       return e;
     });
+
+    // 第二遍：文本元素可绑定条码（HRI 人眼可读文本）。
+    // 目的不是「省一次输入」，而是让 HRI 永远等于码里真正编进去的内容 ——
+    // 手抄/手贴的明文最常见的问题就是改了码没改字，合规检查直接判不合格。
+    const byId = new Map<string, string>();
+    for (const e of out) {
+      if (e?.type === 'barcode') byId.set(String(e.id ?? ''), String(e.barcode?.content ?? ''));
+      else if (e?.type === 'qrcode') byId.set(String(e.id ?? ''), String(e.qrcode?.content ?? ''));
+    }
+    if (byId.size) {
+      for (const e of out) {
+        if (e?.type !== 'text' && e?.type !== 'richtext') continue;
+        const bindId = String((e as any).bindId ?? '');
+        const v = bindId ? byId.get(bindId) : undefined;
+        if (v == null) continue;
+        (e as any).text = v;
+        (e as any)._boundTo = bindId;
+        if (e.type === 'richtext' && Array.isArray((e as any).runs) && (e as any).runs.length) {
+          (e as any).runs = [{ ...(e as any).runs[0], text: v }];
+        }
+      }
+    }
+    return out;
   }
 
   /** 替换 {{name}} 占位（变量缺失留空，不报错）。支持 @系统占位符（如 {{@serial}} {{@printDate}}） */

@@ -22,6 +22,7 @@
               :el="el"
               :zoom="store.zoom"
               :ctx="ctx"
+              :elements="store.sortedElements"
             />
           </div>
           <DesignerOverlay />
