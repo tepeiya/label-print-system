@@ -2878,3 +2878,12 @@ MaxiCode/HIBC/PZN 已有 bwip 位图通道 + 能力表登记（§10.29.2），GS
 | 自动打印范围 | 入站只负责「事件入队 + 规则判定」，真正打印由 `TriggerProcessor` 异步消费；需租户预先配置 `source → print` 规则（含 templateId/copies）才会打印 |
 | 真机验收 | 沙盒无 PostgreSQL/Redis，签名事件驱动真机打印的端到端未实跑；探针仅验证到规则命中层 |
 | 剩余建议 | §8.3 P3（扩动作/编排）、P4（可靠性/运维）仍为未实施建议；非本轮缺口 |
+
+### 10.39 PC 端 WMS 单据页（2026-11-25，已实施）
+
+> 起因：核查「库存管理是否与 WMS 冲突」时发现两个真实问题——① console 库存页有手工「+入库/−出库」`adjustStock`，PDA 收货/上架/发料也改同一批库存，同一件事两条路；② PC 端完全看不到 WMS 单据（`apps/console` 对 `wms` 零命中）。用户拍板**只做 ②**（纯加法），① 的手工出入库口径改造留待独立排期。
+
+- 结论先说清：库存管理与 WMS **不冲突**，是"账 + 作业"分层。`backend/src/wms/gateways/inventory.gateway.ts` 明确 WMS 不直接读写 `stock_batches/stock_moves`，所有变更经 Gateway → `InventoryService`，不存在两套账；`wms_*` 系列表是作业单据。
+- 落地：新增 `apps/console/src/views/WmsDocuments.vue` + `src/api/wms.ts`，一个组件承载 `/wms-receipts`（收货单/上架任务）与 `/wms-issuing`（工单发料）两条路由，各挂自己的 `meta.module`；菜单两项挂在「库存管理」分组下；只读，不新建、不状态流转。
+- 细节（接口字段、状态机口径、验收记录）见 `docs/16-wms-phase2-dev.md` §13。
+

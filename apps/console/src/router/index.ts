@@ -36,6 +36,12 @@ const routes: RouteRecordRaw[] = [
       // 读权限进得来，写入按钮在页面内按 inventory:stock:adjust / transfer 再判一次。
       { path: 'inventory', component: () => import('@/views/Inventory.vue'),
         meta: { title: '库存与出入库', icon: 'Box', module: 'inventory', permission: 'inventory:stock:read' } },
+
+      // WMS 单据（只读）：同一个组件承载收货上架与工单发料两条路由，各自挂自己的模块门
+      { path: 'wms-receipts', component: () => import('@/views/WmsDocuments.vue'),
+        meta: { title: 'WMS 收货与上架', icon: 'Box', module: 'wms.inbound' } },
+      { path: 'wms-issuing', component: () => import('@/views/WmsDocuments.vue'),
+        meta: { title: 'WMS 工单发料', icon: 'Box', module: 'wms.issuing', tab: 'issuing' } },
       // 基础资料：产品/仓库/库位。后端 Controller 的模块门是 masterdata，
       // 但它是 inventory 的依赖（module-deps 会自动展开），菜单与路由用 inventory 保持一致。
       { path: 'masterdata', component: () => import('@/views/Masterdata.vue'),

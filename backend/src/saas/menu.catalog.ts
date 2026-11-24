@@ -56,6 +56,10 @@ export const MENU_CATALOG: MenuNode[] = [
     module: 'inventory',
     children: [
       { key: 'inventory-stock', name: '库存与出入库', icon: 'Box', path: '/inventory', module: 'inventory', permission: 'inventory:stock:read' },
+      // WMS 单据（只读，2026-11-24）：PC 端补上 PDA 作业单据的查询入口，各自挂 wms.inbound / wms.issuing 模块门。
+      // 放在库存分组内，是因为它们和库存共用同一套账（WMS 变更一律经 InventoryGateway → InventoryService）。
+      { key: 'wms-receipts', name: 'WMS 收货与上架', icon: 'Box', path: '/wms-receipts', module: 'wms.inbound' },
+      { key: 'wms-issuing', name: 'WMS 工单发料', icon: 'Box', path: '/wms-issuing', module: 'wms.issuing' },
       // 基础资料的后端模块门是 masterdata（inventory 的依赖会自动展开），
       // 菜单侧沿用 inventory 模块门，避免出现「有库存却看不到基础资料」。
       { key: 'masterdata', name: '基础资料', icon: 'Files', path: '/masterdata', module: 'inventory', permission: 'masterdata:item:read' },

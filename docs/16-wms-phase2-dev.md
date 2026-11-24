@@ -283,3 +283,43 @@ CREATED ──RELEASE──▶ RELEASED ──ISSUE_START──▶ ISSUING ─�
 1. 本文 §1 与 `docs/15` 决策勾选一致 → 打标签 `wms-p2-go`
 2. 按 M1→M5 顺序提交，每个里程碑一个 commit（中文 commit message，沿用现状）
 3. 每里程碑结束跑 `pnpm typecheck && pnpm test`，红了不进下一里程碑
+
+---
+
+## 13. PC 端 WMS 单据页（console，只读，2026-11-25）
+
+**背景**：WMS 的入口此前只有 `apps/pda`（收货作业 / 上架 / 发料），PC 端 `apps/console` 对 WMS 零命中。管理层要查"这批货收到哪一步、哪张工单还缺料"，只能拿 PDA 或问现场。
+
+**边界（只做加法）**：新增页面只读取已存在的单据，不新建、不改状态、不过账；PDA 仍是唯一作业入口。手工「+入库/−出库」的调整口径改造（应改为"库存调整/盘点"语义）属另一件事，未在本节范围内。
+
+### 13.1 页面与路由
+
+| 路由 | 组件 | 模块门（`meta.module`） | 内容 |
+|---|---|---|---|
+| `/wms-receipts` | `WmsDocuments.vue` | `wms.inbound` | 子 tab：收货单 / 上架任务 |
+| `/wms-issuing` | 同一组件 | `wms.issuing` | 工单发料列表 |
+
+同一组件承载两条路由：路由守卫只认单一 `meta.module`，拆成两条路由才能让"只买其中一个模块"的租户进得来；页面内按 `route.meta.tab` 区分，数据各自懒加载。
+
+### 13.2 菜单
+
+挂在 `inventory`（库存管理）分组下两项：`WMS 收货与上架`（`/wms-receipts`）、`WMS 工单发料`（`/wms-issuing`），各自模块门。`buildMenus` 的分组节点不参与可见性判断（只要有一个叶子可见，组就出现），因此只买 WMS 的租户也能看到这两项，不必额外加顶级菜单（顶部已有 8 项）。
+
+### 13.3 接口（全部只读，字段以现有 DTO 为准）
+
+- `GET /wms/receipts?status&page&pageSize` → `{items,total,page}`；明细 `GET /wms/receipts/:id` 额外带 `lines`（`lineNo/skuId/batchNo/qtyExpected/qtyReceived/diffType/diffQty/status`）与 `putawayTasks`
+- `GET /wms/putaway-tasks?status&page&pageSize` → `{items,total}`
+- `GET /wms/work-orders?status&keyword&page&pageSize` → `{total,page,pageSize,items}`
+- 工单详情 `GET /wms/work-orders/:id` → `product{code,name}` + `lines`（含 `materialCode/materialName/unit/qtyRequired/qtyIssued/qtyShortage/shortageReason`）+ `issues`（`materialId/batchNo/locationId/qty/printStatus/createdAt`）+ `returns`
+
+### 13.4 状态口径（照抄后端，勿臆造）
+
+- 收货单：`CREATED → RECEIVING → RECEIVED → PUTAWAY_DONE`，终态 `CANCELLED`
+- 收货行：`PENDING / RECEIVED / PUTAWAY_DONE`
+- 上架任务：`PENDING → ASSIGNED → DONE`，可 `CANCELLED`
+- 工单头：`CREATED / RELEASED / ISSUING / ISSUED / CLOSED / CANCELLED`（**没有 SHORTAGE / RETURN**，受 `ck_wms_wo_status` 约束；缺料靠 `shortageFlag` + 行状态 `SHORT` 表达）
+- 工单行：`PENDING / PARTIAL / DONE / SHORT`（注意行里的 `PENDING` 是「待发料」，与收货侧同名字段的含义不同，页面对行状态单独走一套文案）
+
+### 13.5 验收
+
+`apps/console` `vue-tsc -b --noEmit` 零错、`vite build` 通过；浏览器实测：两条菜单出现于库存管理下、收货单列表 2 行（PO/ASN 来源中文化、状态徽标）、收货单明细抽屉（差异行 `短收 40`、2 条上架任务）、上架任务 tab 2 行、工单列表 2 行（缺料标记）、工单明细（成品名、行缺口、发料记录 60 件到 A-02-01）、关键词搜索 `0502` 命中 1 条、`/wms-issuing` 与 `/wms-receipts` 互切数据不串。
