@@ -15,17 +15,6 @@ export interface MenuNode {
 
 export const MENU_CATALOG: MenuNode[] = [
   { key: 'dashboard', name: '仪表盘', icon: 'DataBoard', path: '/dashboard', module: 'print', permission: 'print:stats:read' },
-  {
-    key: 'print',
-    name: '打印',
-    icon: 'Printer',
-    module: 'print',
-    children: [
-      { key: 'print-jobs', name: '打印任务', icon: 'List', path: '/print-jobs', module: 'print', permission: 'print:job:read' },
-      { key: 'printers', name: '打印机', icon: 'Printer', path: '/printers', module: 'print' },
-      { key: 'print', name: '打印', icon: 'Promotion', path: '/print', module: 'print', permission: 'print:job:write' },
-    ],
-  },
   // 模板中心：设计器与模板库独立于打印分组（两者属 templates 模块，与 print 无关）。
   // 分组门 templates：未订阅时整组消失；叶子各自再看 template:write / template:read。
   {
@@ -36,6 +25,17 @@ export const MENU_CATALOG: MenuNode[] = [
     children: [
       { key: 'designer', name: '标签设计器', icon: 'Edit', path: '/designer', module: 'templates', permission: 'template:write' },
       { key: 'templates', name: '模板库', icon: 'Document', path: '/templates', module: 'templates', permission: 'template:read' },
+    ],
+  },
+  {
+    key: 'print',
+    name: '打印',
+    icon: 'Printer',
+    module: 'print',
+    children: [
+      { key: 'print-jobs', name: '打印任务', icon: 'List', path: '/print-jobs', module: 'print', permission: 'print:job:read' },
+      { key: 'printers', name: '打印机', icon: 'Printer', path: '/printers', module: 'print' },
+      { key: 'print', name: '打印', icon: 'Promotion', path: '/print', module: 'print', permission: 'print:job:write' },
     ],
   },
   {

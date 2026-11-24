@@ -26,7 +26,7 @@ test('模块订阅 + 权限点都齐时，返回完整菜单', () => {
     'datasource:read', 'sys:user:read', 'audit:read', 'backup:read',
   ];
   const tree = buildMenus(modules, permissions);
-  assert.deepEqual(keys(tree), ['dashboard', 'print', 'template-center', 'data', 'udi', 'system', 'subscription']);
+  assert.deepEqual(keys(tree), ['dashboard', 'template-center', 'print', 'data', 'udi', 'system', 'subscription']);
   assert.deepEqual(childKeys(tree, 'print'), ['print-jobs', 'printers']);
   // 医疗 UDI 走独立加购模块 udi.compliance（不随 print 套餐）
   assert.deepEqual(childKeys(tree, 'udi'), ['udi-trace', 'udi-compliance', 'udi-registry']);
