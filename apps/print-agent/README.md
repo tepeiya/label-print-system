@@ -1,5 +1,12 @@
 # LabelFlow 本地打印代理（Windows）
 
+> **本目录不含 exe / zip（构建产物不进源码库）。**
+> 要拿到可运行的 `LabelFlow.PrintAgent.exe`，走这三条任一条：
+> 1. 租户控制台「打印机」页右上「下载本地代理」（整包 zip，含 exe + install 脚本）；
+> 2. 仓库 `backend/assets/print-agent/labelflow-print-agent-win64-<ver>.zip`（服务端就是发这个包）；
+> 3. 自己构建：`dotnet publish apps/print-agent -c Release -r win-x64 --self-contained -o publish`。
+> 直接在本目录 `src/` 找 exe 是找不到的 —— 这里只有 C# 源码和 PowerShell 安装脚本。
+
 云端没有 USB 口，也没有本机打印队列。**凡是"贴着机器的那台打印机"，都必须由本机的一个小程序去调 Windows spooler**。这个目录就是那个小程序。
 
 ## 它解决什么
