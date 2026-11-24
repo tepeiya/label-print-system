@@ -255,6 +255,13 @@ export const apiDeletePrinter = (id: number) => http.delete(`/printers/${id}`);
 export const apiCalibratePrinter = (id: number, data: any) => http.post(`/printers/${id}/calibrate`, data);
 export const apiTestPrinter = (id: number) => http.post(`/printers/${id}/test`);
 export const apiTestPrintPrinter = (id: number) => http.post(`/printers/${id}/test-print`);
+
+// ========== Windows 本地打印代理（租户自助下载） ==========
+// 后端 HardwareController：GET /hardware/agents/release（清单）/ .../release/download（zip 流）。
+// 下载走 blob：拦截器对"非信封"响应原样透传（见文件顶部说明），拿到的就是 Blob。
+export const apiGetPrintAgentRelease = (): Promise<any> => http.get('/hardware/agents/release');
+export const apiDownloadPrintAgent = (): Promise<Blob> =>
+  http.get('/hardware/agents/release/download', { responseType: 'blob', timeout: 120_000 });
 export const apiTestCommandsPrinter = (id: number, protocol?: string) =>
   http.post(`/printers/${id}/test-commands`, protocol ? { protocol } : {});
 

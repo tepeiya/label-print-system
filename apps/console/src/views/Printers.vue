@@ -2,7 +2,13 @@
   <div class="page">
     <div class="page-head">
       <h2>打印机</h2>
-      <el-button type="primary" @click="openCreate">+ 添加打印机</el-button>
+      <div class="head-actions">
+        <el-button v-if="agentRelease.available" @click="agentHelp = true">本地代理怎么用</el-button>
+        <el-button :loading="downloading" @click="downloadAgent">
+          {{ agentRelease.available ? `下载本地代理 v${agentRelease.version}（${agentSizeText}）` : '下载本地代理' }}
+        </el-button>
+        <el-button type="primary" @click="openCreate">+ 添加打印机</el-button>
+      </div>
     </div>
 
     <el-table :data="list" v-loading="loading" border stripe>
@@ -131,16 +137,36 @@
     <el-dialog v-model="cmdDialog" title="测试标签指令" width="680px">
       <pre class="cmd">{{ cmdText }}</pre>
     </el-dialog>
+
+    <!-- 本地代理使用说明 -->
+    <el-dialog v-model="agentHelp" title="本地代理怎么用" width="620px">
+      <ol class="agent-steps">
+        <li><b>下载</b>：点右上「下载本地代理」，解压得到一个自包含 exe + install 脚本（客户机不用装 .NET）。</li>
+        <li><b>装机</b>：把解压后的文件夹拷到装打印机的那台 Windows，管理员 PowerShell 里执行
+          <pre class="cmd small">.\install\install-agent.ps1 -ServerBaseUrl {{ serverHint }} -TenantId {{ tenantHint }} -Username 代理账号 -AgentId 机器名 -DriverName "本机打印队列全名"</pre>
+          脚本会复制程序、生成配置、让你输一次密码（存 DPAPI 不落明文）、注册开机自启。
+          <div class="agent-tip">上面 -ServerBaseUrl 自动填的是当前浏览器地址；若前后端分域名部署，改成后端 API 地址再执行。</div></li>
+        <li><b>体检</b>：<pre class="cmd small">LabelFlow.PrintAgent.exe --doctor</pre>四项全 ✓（登录 / 注册 / 本机队列 / 拉取通道）才算装好。</li>
+        <li><b>建打印机</b>：类型选「本地代理 (windows_spooler)」，<b>驱动名必须与本机打印队列名逐字符一致</b>（代理不会自动替换成别的队列）。</li>
+      </ol>
+      <p class="agent-tip">装好后本页该打印机下发即 5 秒内出纸；代理在线状态见右下角日志或 <code>--doctor</code> 输出。一台机器挂多台打印机时，建议每台起一个代理实例（不同 AgentId / DriverName）。</p>
+      <template #footer>
+        <el-button @click="agentHelp = false">关闭</el-button>
+        <el-button type="primary" @click="downloadAgent">现在就下载</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
   apiListPrinters, apiCreatePrinter, apiUpdatePrinter, apiDeletePrinter,
   apiCalibratePrinter, apiTestPrinter, apiTestPrintPrinter, apiTestCommandsPrinter,
+  apiGetPrintAgentRelease, apiDownloadPrintAgent,
 } from '@/api';
+import { useAuthStore } from '@/store/auth';
 
 const list = ref<any[]>([]);
 const loading = ref(false);
@@ -153,6 +179,46 @@ const form = reactive({
   driverName: '', dpi: 203, labelWidthMm: 40, labelHeightMm: 30, orientation: 0,
   offsetXMm: 0, offsetYMm: 0, density: undefined as number | undefined, speed: undefined as number | undefined,
 });
+
+// ---- 本地打印代理下载 ----
+const agentRelease = ref<any>({ available: false });
+const downloading = ref(false);
+const agentHelp = ref(false);
+const authStore = useAuthStore();
+const agentSizeText = computed(() => {
+  const b = Number(agentRelease.value?.sizeBytes || 0);
+  if (!b) return '';
+  return b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(0)}MB` : `${(b / 1024).toFixed(0)}KB`;
+});
+// 安装脚本提示里用当前租户信息，减少租户自己算
+// /auth/me 把租户 ID 挂在 user 上（store/auth.ts 的 me.tenantId），这里直接取，省得租户自己查
+const tenantHint = computed(() => String((authStore as any)?.user?.tenantId ?? '你的租户ID'));
+const serverHint = computed(() => location.origin);
+
+async function loadRelease() {
+  try { agentRelease.value = (await apiGetPrintAgentRelease()) || { available: false }; }
+  catch { agentRelease.value = { available: false }; }
+}
+
+async function downloadAgent() {
+  if (!agentRelease.value?.available) {
+    ElMessage.warning(agentRelease.value?.reason || '发行包未就位，请联系管理员运行 scripts/print-agent-release.sh');
+    return;
+  }
+  downloading.value = true;
+  try {
+    const blob: any = await apiDownloadPrintAgent();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = agentRelease.value.fileName || 'labelflow-print-agent.zip';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    ElMessage.success('已开始下载');
+  } finally { downloading.value = false; }
+}
 
 const calibDialog = ref(false);
 const calibPrinter = ref<any>(null);
@@ -280,7 +346,7 @@ async function showCommands(row: any) {
   cmdDialog.value = true;
 }
 
-onMounted(load);
+onMounted(() => { load(); loadRelease(); });
 // 暴露给模板（测试指令按钮可选）
 defineExpose({ showCommands });
 </script>
@@ -288,5 +354,9 @@ defineExpose({ showCommands });
 <style scoped>
 .page { padding: 16px 20px; }
 .page-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.head-actions { display: flex; align-items: center; gap: 8px; }
+.agent-steps { line-height: 1.9; padding-left: 18px; }
+.agent-steps .cmd.small { margin: 6px 0 0; font-size: 12px; padding: 8px 10px; max-height: none; background: #f5f7fa; color: #303133; border: 1px solid #e4e7ed; }
+.agent-tip { color: #909399; font-size: 12px; line-height: 1.8; margin-top: 8px; }
 .cmd { background: #0d1117; color: #c9d1d9; padding: 12px; border-radius: 6px; max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
 </style>

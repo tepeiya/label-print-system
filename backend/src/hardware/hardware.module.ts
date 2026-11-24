@@ -6,7 +6,11 @@
 // 不注册的话 Provider 会明确返回 ok:false（而不是静默丢任务）。
 // 该静态桥接是「静态 Provider 注册表」与「Nest DI」之间唯一的一处适配。
 // =============================================================================
-import { Module, OnModuleInit, Controller, Get, Post, Body, Param, Headers, UseGuards } from '@nestjs/common';
+import {
+  Module, OnModuleInit, Controller, Get, Post, Body, Param, Headers, Res, UseGuards,
+} from '@nestjs/common';
+import type { Response } from 'express';
+import { createReadStream } from 'fs';
 import { Roles, RoleName } from '../common/roles.guard';
 import { RequireModule } from '../common/module.guard';
 import { TenantGuard } from '../common/tenant.guard';
@@ -32,6 +36,32 @@ export class HardwareController {
   @Roles(...HW_WRITE)
   @Get('agents')
   listAgents() { return this.svc.listAgents(); }
+
+  /**
+   * 租户自助下载：发行包清单（版本/大小/sha256）。
+   * 前端打印页用它渲染「下载本地代理 v1.0（29MB）」而不是硬编码版本号。
+   */
+  @Roles(...HW_WRITE)
+  @Get('agents/release')
+  agentRelease() { return this.svc.printAgentRelease(); }
+
+  /**
+   * 发行包本体（zip）。用 @Res 自己 pipe：29MB 不塞进内存也不走 ResponseInterceptor。
+   * 鉴权仍是 TenantGuard + print 模块 + admin/operator —— 不设 @Public，避免白拿。
+   */
+  @Roles(...HW_WRITE)
+  @Get('agents/release/download')
+  downloadAgent(@Res() res: Response) {
+    const { path: filePath, release } = this.svc.printAgentReleaseFile();
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Length', String(release.sizeBytes));
+    res.setHeader('Content-Disposition', `attachment; filename="${release.fileName}"`);
+    res.setHeader('X-LabelFlow-Release-Version', release.version);
+    res.setHeader('X-LabelFlow-Release-Sha256', release.sha256);
+    const stream = createReadStream(filePath);
+    stream.on('error', () => { if (!res.headersSent) res.status(500).end('发行包读取失败'); else res.end(); });
+    stream.pipe(res);
+  }
 
   @Roles(...HW_WRITE)
   @Post('agents/:agentId/heartbeat')

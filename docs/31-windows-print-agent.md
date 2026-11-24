@@ -108,7 +108,40 @@ OpenPrinter → StartDocPrinter → StartPagePrinter → WritePrinter → EndDoc
 
 单测新增 2 例（env 覆盖与脏值夹取、放宽租约后不回收），`agent-protocol.calc.test.ts` 13 例全绿。
 
-## 6. 装机与验收
+## 6. 分发：租户自助下载
+
+代理不能靠"运维私发 zip"，否则客户一多就变成人肉分发。这一版把它做进控制台：
+
+| 组成部分 | 位置 |
+| --- | --- |
+| 发布脚本 | `backend/scripts/print-agent-release.sh`（publish → 组装 → zip → 写 `release.json`） |
+| 发行包与清单 | `backend/assets/print-agent/labelflow-print-agent-win64-<ver>.zip` + `release.json` |
+| 清单接口 | `GET /api/v1/hardware/agents/release` → `{available, version, sizeBytes, sha256, builtAt, reason?}` |
+| 下载接口 | `GET /api/v1/hardware/agents/release/download` → zip 流（`Content-Disposition` + `X-LabelFlow-Release-Sha256`） |
+| 前端入口 | 租户后台「打印机」页右上：`下载本地代理 v1.0（29MB）` + 「本地代理怎么用」三步说明（`docs/images/d7-*`） |
+
+出包与升级只有一条命令：
+
+```bash
+bash backend/scripts/print-agent-release.sh                    # 版本 1.0
+VERSION=1.1 bash backend/scripts/print-agent-release.sh         # 升版本
+DOTNET_BIN=$HOME/.dotnet8/dotnet bash backend/scripts/print-agent-release.sh   # SDK 不在 PATH 时
+```
+
+**鉴权取舍**：两个端点都挂在 `TenantGuard` + `@RequireModule('print')` + `@Roles('admin','operator')` 之下 —— 不做 `@Public`。代价是租户必须登录才能下载（curl 要带 Bearer）；好处是没人能从公网白拿安装包，也不会被当成 CDN 刷流量。
+
+**清单可信度**（`agent-release.calc.ts`，纯函数 + 单测）：
+
+- 清单缺失 / JSON 损坏 / zip 已丢 → `available:false` + `reason`（前端按钮点了给提示，不产生坏链接）；
+- `fileName` 白名单（只允许 `[A-Za-z0-9._-]` 且 `.zip` 结尾、不含 `..`）—— 清单被改坏也无法做路径穿越；
+- `sha256` 必须 64 位小写 hex，`version` 必须数字点段；
+- `sizeBytes` 以磁盘实际文件为准（清单比文件旧时不至于报错的大小）。
+
+![打印机页：下载入口与说明弹窗](images/d7-printers-agent-help.png)
+
+**部署注意**：发行包随代码走 `backend/assets/print-agent/`（约 29MB zip / 66MB exe）。容器镜像若不带该目录，用 `PRINT_AGENT_ASSET_DIR` 指向挂载卷；目录里没有 `release.json` 时接口返回 `available:false`，不影响其它功能。
+
+## 7. 装机与验收
 
 装机三步：`dotnet publish` → `install-agent.ps1`（四件事：复制程序、生成配置、设密码存 DPAPI、注册计划任务）→ `--doctor` 体检。
 
@@ -120,7 +153,7 @@ OpenPrinter → StartDocPrinter → StartPagePrinter → WritePrinter → EndDoc
 4. 云端下发真实作业，5 秒内出纸，回执 `succeeded` 且 `printedCount` 正确；
 5. 拔网线 90s → 代理显示离线、任务不再派发；插回 → 恢复在线并补打。
 
-## 7. 已知未做 / 遗留
+## 8. 已知未做 / 遗留
 
 | 项 | 说明 |
 | --- | --- |
@@ -129,10 +162,13 @@ OpenPrinter → StartDocPrinter → StartPagePrinter → WritePrinter → EndDoc
 | 多打印机并行 | 建议一台机一个实例（不同 `AgentId` / `DriverName`） |
 | 真机矩阵 | ZDesigner / TSC / Godex 三类 profile 仍为 `POC`，需现场逐台过扫码 |
 | ISO 15415 分级 | 不评估条码质量等级，只保证"能扫出来" |
-| 真库实跑 sweep | 本轮沙箱内 PG 不可用，定时回收只过了 `tsc` 与单测，未做真库定时器实跑 |
+| 真库实跑 sweep | 定时回收只过了 `tsc` 与单测，未做真库定时器实跑（沙箱 PG 反复丢失） |
+| 发行包灰度 | 只有"当前一个版本可下"，没有旧版本留存/回滚列表；升级出错只能重跑脚本覆盖 |
 
-## 8. 代码位置
+## 9. 代码位置
 
 - 代理：`apps/print-agent/`（`src/` 七个类 + `install/` 两个 PowerShell 脚本 + `agent.example.json`）
+- 发行包：`backend/assets/print-agent/`（zip + `release.json`），生成脚本 `backend/scripts/print-agent-release.sh`
 - 服务端加固：`backend/src/hardware/agent-protocol.calc.ts`、`backend/src/hardware/hardware.service.ts`
-- 单测：`backend/src/hardware/__tests__/agent-protocol.calc.test.ts`
+- 自助下载：`backend/src/hardware/agent-release.calc.ts`（清单校验）、`hardware.module.ts`（两个 GET 端点）、`apps/console/src/views/Printers.vue`（下载按钮 + 说明弹窗）
+- 单测：`backend/src/hardware/__tests__/agent-protocol.calc.test.ts`、`agent-release.calc.test.ts`

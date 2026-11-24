@@ -20,6 +20,8 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import { tenantStorage, useTenantId, type TenantCtx } from '../common/tenant.context';
 import { AuditService } from '../audit/audit.module';
 import { encrypt, decrypt } from '../datasource/sql-crypto';
@@ -33,6 +35,7 @@ import {
   verifyAgentSignature, verifyReceipt, type AgentJobSource, type AgentJobStatus,
 } from './agent-protocol.calc';
 import { encodeSgtin96, decodeSgtin96, rfidWriteJob, verifyEpcWrite } from './epc.calc';
+import { parseReleaseManifest, type PrintAgentRelease } from './agent-release.calc';
 import {
   INKJET_MAX_CHARS_PER_LINE, INKJET_MAX_ITEMS, INKJET_MAX_LINES, TRIGGER_MODES,
   inkjetJob, inkjetPayload, validateInkjetJob,
@@ -341,6 +344,43 @@ export class HardwareService implements AgentEnqueuePort, OnModuleInit, OnModule
     };
   }
 
+  // ------------------------------ 代理发行包（租户自助下载） ------------------------------
+
+  /**
+   * 发行包清单：读 backend/assets/print-agent/release.json + 磁盘实际大小。
+   * 清单缺失/损坏一律 available:false（带原因），不把坏链接丢给前端。
+   * 这里不校验租户：包内容对所有租户相同，鉴权由 Controller 的 TenantGuard + Roles 负责。
+   */
+  printAgentRelease(): PrintAgentRelease {
+    const dir = resolveReleaseDir();
+    const metaPath = path.join(dir, 'release.json');
+    let jsonText: string | null = null;
+    try { jsonText = fs.readFileSync(metaPath, 'utf8'); } catch { jsonText = null; }
+
+    // 先按清单里的 fileName 探测 zip 大小；文件名不合法就交给 parseReleaseManifest 判死
+    let zipSize: number | null = null;
+    try {
+      const probe = JSON.parse(jsonText ?? '{}');
+      const zipPath = path.join(dir, String(probe?.fileName ?? ''));
+      if (path.dirname(zipPath) === dir) {
+        const st = fs.statSync(zipPath);
+        if (st.isFile()) zipSize = st.size;
+      }
+    } catch { zipSize = null; }
+
+    return parseReleaseManifest(jsonText, zipSize);
+  }
+
+  /** 下载用的真实文件路径：文件名再次走白名单（parseReleaseManifest 已校验过一次） */
+  printAgentReleaseFile(): { path: string; release: PrintAgentRelease } {
+    const release = this.printAgentRelease();
+    if (!release.available) throw new NotFoundException(release.reason || '发行包不可用');
+    const dir = resolveReleaseDir();
+    const filePath = path.join(dir, release.fileName);
+    if (path.dirname(filePath) !== dir) throw new NotFoundException('发行包路径非法');
+    return { path: filePath, release };
+  }
+
   inkjetBuild(dto: any) {
     const j = inkjetJob(useTenantId(), Number(dto?.jobId) || 0, Array.isArray(dto?.rows) ? dto.rows : [], dto?.config ?? {});
     const v = validateInkjetJob(j);
@@ -360,4 +400,22 @@ function systemTenantCtx(tenantId: number): TenantCtx | null {
     tenantId, userId: 0, roles: ['system'], modules: ['print'], permissions: [],
     plan: null, features: {}, dataScopes: null, dataSourceKey: 'default',
   };
+}
+
+/**
+ * 发行包目录候选：优先 env（容器里挂载），否则按进程 cwd 与编译产物相对位置探测。
+ * 只要该目录有 release.json 就用它——部署方式不同（dist / 源码直接跑 / 容器挂卷）都能命中。
+ */
+function resolveReleaseDir(): string {
+  const candidates = [
+    process.env.PRINT_AGENT_ASSET_DIR,
+    path.join(process.cwd(), 'assets', 'print-agent'),
+    path.join(__dirname, '..', '..', '..', 'assets', 'print-agent'),
+    path.join(__dirname, '..', '..', 'assets', 'print-agent'),
+  ].filter((p): p is string => typeof p === 'string' && p.length > 0);
+
+  for (const dir of candidates) {
+    try { if (fs.existsSync(path.join(dir, 'release.json'))) return dir; } catch { /* 忽略不可读候选 */ }
+  }
+  return candidates[1] ?? candidates[0] ?? '';
 }

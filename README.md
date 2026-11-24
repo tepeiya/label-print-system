@@ -10,7 +10,7 @@
 > - ✅ 主前端：`apps/console`（Vue 3 + TypeScript + Vite + Element Plus + Pinia）租户后台 `:5173`
 > - ✅ 平台运营后台：`apps/platform` `:5181`；Agent/MCP Server：`apps/mcp-server` `:3300`
 > - ✅ WMS 收货作业 PDA（移动端 H5）：`apps/pda` `:5185`（zxing-wasm 摄像头扫码 + 盲收/按单收 + 上架确认，需租户订阅 `wms.inbound`）
-> - ✅ Windows 本地打印代理：`apps/print-agent`（C# net8.0 控制台，自包含单文件 exe；winspool RAW 直发，装成计划任务开机自启）——补上 USB / 本机共享打印机无法从云端直接打印的缺口，见 `docs/31-windows-print-agent.md`
+> - ✅ Windows 本地打印代理：`apps/print-agent`（C# net8.0 控制台，自包含单文件 exe；winspool RAW 直发，装成计划任务开机自启）——补上 USB / 本机共享打印机无法从云端直接打印的缺口；租户可在「打印机」页自助下载安装包，见 `docs/31-windows-print-agent.md`
 > - ⚠️ `web/`（原生 HTML5）**已弃用（DEPRECATED）**，仅作行为对照，不再新增功能，待新前端完善后删除。
 
 ---
@@ -118,7 +118,7 @@ dots → mm  : mm   = dots * 25.4 / dpi
 | 码制专业性（第三层） | ✅ GS1 AI 官方全量字典（541 项）、打印后解码验证闭环（bwip→zxing）、HIBC Mod43 / PZN Mod11 校验、MaxiCode 原生 `^BD` 构造器（opt-in） | `core/{gs1-ai.full,industrial-checksum,maxicode}.ts`、`src/print/verify.*`；指令/真机通道仍待硬件验收，见下方边界 |
 | 设计器交互精度（第四层） | ✅ 富文本 runs（逐段样式/上下标）、表格合并单元格（rowSpan/colSpan 单一真源）、DB 字段元素（字段绑定/格式/空值占位） | `core/{rich-text,table-layout}.ts` + 前端 parity、`src/print/render.service.ts` 与各渲染器；指令/矢量通道富文本降级为纯文本，见下方边界 |
 | 数据绑定/工具（第五层） | ✅ 公式 LOOKUP/VLOOKUP 查表函数（变价表/物料映射，JSON 对象/行数组/KV 文本）、前后端 parity | `core/lookup-table.ts` + 前端 parity、`formula-engine.ts` 白名单注册；`ai.*` 工具为有意推迟的产品决策（需图片入参+计费联动），非缺口 |
-| 打印通道 | ✅ 浏览器打印 / 9100 Raw TCP / 本地代理 / 服务端出图 | 4 类 Provider |
+| 打印通道 | ✅ 浏览器打印 / 9100 Raw TCP / 本地代理（Windows 代理已交付，可自助下载） / 服务端出图 | 4 类 Provider |
 | 输出 | ✅ ZPL / TSPL / EPL 指令 + 位图 PNG + 整标签矢量 SVG / PDF | golden 快照测试 |
 | 设计/打印止血（第一层） | ✅ 旋转条码/二维码打印（printRotateStyle 统一口径 + 外层盒承载旋转）、右对齐/底对齐、双面打印 duplex（正反面交替页，多联拼版按 sheet 交替） | `engine/print.ts`、`store.ts`、`PropsPanel.vue`、`html-renderer.ts`；双面依赖打印机短边翻转，真机套准未验，见交接文档 §10.35 |
 | 印刷级输出（第二层） | ✅ 真矢量 PDF（条码/图形/拉丁文本）、出血/裁切线/套准线/CMYK 色标、collate 交叉/堆叠、PDF 拆分、弧形文字/条码、缩略图 DPI 自适应 | `src/print/{vector-pdf,print-marks,impose}.ts`；二维码与中文文本块为高-DPI 位图，专色为 CMYK 近似（非真分色），见下方边界 |

@@ -138,6 +138,7 @@ D5 是销售动作，不是开发动作。
 | D4 流程闭合 | ✅ 完成 | `docs/28-d4-flow-closure.md`（D4-1…D4-3 真库五门全绿） |
 | D5 演示与报价 | ✅ 完成 | `docs/29-d5-demo-capability.md`（DEMO-1 / U6 门通过，能力清单 §4） |
 | D6 自助答疑 | ✅ 完成 | 平台端知识库（16 篇）+ AI 助手悬浮球；`/kb/*` 平台身份守卫；配置四级回退 + 无模型降级；`docs/30` |
+| D7 打印代理 | ✅ 完成（`6f59de4`…） | Windows 本地代理（`apps/print-agent`，winspool RAW 直发）+ 租约 TTL/拉取上限可配 + 过期任务定时回收；租户控制台自助下载发行包（`/hardware/agents/release[/download]`）；`docs/31` |
 
 最新全量验收：**39 门 → 39 pass / 0 fail / 0 skip**（G8 收货侧 UDI 拦截已补真库夹具），`docs/acceptance/latest.json`。
 
