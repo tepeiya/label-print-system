@@ -24,10 +24,32 @@ import { fingerprint, verifySignature } from '../jobs/trigger.calc';
 export const AGENT_PROTOCOL_VERSION = '1.0';
 /** 超过该秒数没心跳即视为离线，不再派发新任务 */
 export const AGENT_HEARTBEAT_TIMEOUT_SEC = 90;
-/** 单次拉取最多下发多少个任务，防止代理被一次压垮 */
+/** 单次拉取最多下发多少个任务，防止代理被一次压垮（默认值，可用 AGENT_MAX_PULL 覆盖） */
 export const AGENT_MAX_PULL = 10;
-/** 任务被认领后多久未完成可回收重派（防代理进程崩溃导致任务永久卡住） */
+/** 任务被认领后多久未完成可回收重派（默认值，可用 AGENT_CLAIM_TTL_SEC 覆盖） */
 export const AGENT_CLAIM_TTL_SEC = 300;
+
+/** 环境变量读取（非数字/越界一律落回默认，绝不因为配置脏了就放宽约束） */
+function envInt(name: string, dflt: number, min: number, max: number): number {
+  const raw = process.env[name];
+  const n = Number(raw);
+  if (!raw || !Number.isFinite(n)) return dflt;
+  return Math.max(min, Math.min(max, Math.floor(n)));
+}
+
+/**
+ * 实际生效的认领租约（秒）：默认 300s，可 60–3600 调。
+ * 客户现场若一张标签在队列里排队很久（老旧 USB 打印机 + 大批量），把这里调大，
+ * 否则任务会在打印途中被回收重派，出现"同一张打两遍"。
+ */
+export function claimTtlSec(): number {
+  return envInt('AGENT_CLAIM_TTL_SEC', AGENT_CLAIM_TTL_SEC, 60, 3600);
+}
+
+/** 实际生效的单次拉取上限：默认 10，可 1–50 调；代理侧并发打不过来就调小 */
+export function maxPullLimit(): number {
+  return envInt('AGENT_MAX_PULL', AGENT_MAX_PULL, 1, 50);
+}
 /** 单任务最大重试次数 */
 export const AGENT_JOB_MAX_ATTEMPTS = 3;
 /** 签名时间窗（秒），与 Webhook 同口径 */
@@ -325,11 +347,12 @@ export function verifyAgentSignature(body: string, secret: string, tsHeader: str
 /** 任务是否可回收重派：被认领超过 TTL 且未到终态、未超最大重试 */
 export function claimExpired(
   claimedAt: string | number | Date | null | undefined, status: AgentJobStatus, attempts: number, now: Date,
+  ttlSec = claimTtlSec(),
 ): boolean {
   if (status === 'succeeded' || status === 'failed' || status === 'expired') return false;
   if (Number(attempts) >= AGENT_JOB_MAX_ATTEMPTS) return false;
   if (!claimedAt) return false;
   const t = new Date(claimedAt).getTime();
   if (!Number.isFinite(t)) return false;
-  return now.getTime() - t >= AGENT_CLAIM_TTL_SEC * 1000;
+  return now.getTime() - t >= ttlSec * 1000;
 }

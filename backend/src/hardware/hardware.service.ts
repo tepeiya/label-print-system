@@ -13,11 +13,14 @@
 //   新增强制维度默认不影响存量租户。开启后代理需按 JSON.stringify(payload) 构造
 //   签名串，服务端复用 P8.1 Webhook 的 HMAC 真源校验，见 verifyAgentSignature。
 // =============================================================================
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException,
+  type OnModuleDestroy, type OnModuleInit,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
-import { useTenantId } from '../common/tenant.context';
+import { tenantStorage, useTenantId, type TenantCtx } from '../common/tenant.context';
 import { AuditService } from '../audit/audit.module';
 import { encrypt, decrypt } from '../datasource/sql-crypto';
 import type { AgentEnqueuePort, PrintJobInput } from '../../printer/printer-provider.interface';
@@ -25,8 +28,8 @@ import { generateZpl } from '../../core/zpl-generator';
 import { buildJob as buildTsplJob } from '../../core/tspl-generator';
 import { HardwareAgent, HardwareAgentJob, RfidWriteLog } from './hardware.entity';
 import {
-  AGENT_JOB_MAX_ATTEMPTS, AGENT_MAX_PULL, agentJobEnvelope, agentOnline,
-  agentStatus, claimExpired, normalizeAgentRegistration, normalizeHeartbeat,
+  AGENT_JOB_MAX_ATTEMPTS, agentJobEnvelope, agentOnline, agentStatus, claimExpired,
+  maxPullLimit, normalizeAgentRegistration, normalizeHeartbeat,
   verifyAgentSignature, verifyReceipt, type AgentJobSource, type AgentJobStatus,
 } from './agent-protocol.calc';
 import { encodeSgtin96, decodeSgtin96, rfidWriteJob, verifyEpcWrite } from './epc.calc';
@@ -36,8 +39,32 @@ import {
 } from './inkjet.calc';
 
 @Injectable()
-export class HardwareService implements AgentEnqueuePort {
+export class HardwareService implements AgentEnqueuePort, OnModuleInit, OnModuleDestroy {
   private logger = new Logger('HardwareService');
+  private sweepTimer: NodeJS.Timeout | null = null;
+
+  /**
+   * 代理任务回收定时器：不跑的话，代理崩溃/断电后任务会永远停在 claimed，
+   * 客户看到的是"任务排队但不动"。默认 60s 扫一次，`HARDWARE_AGENT_SWEEP_MS=0` 可关。
+   */
+  onModuleInit(): void {
+    const raw = Number(process.env.HARDWARE_AGENT_SWEEP_MS ?? 60_000);
+    if (!Number.isFinite(raw) || raw <= 0) {
+      this.logger.log('代理任务回收定时器已关闭（HARDWARE_AGENT_SWEEP_MS<=0）');
+      return;
+    }
+    const ms = Math.max(10_000, Math.min(600_000, Math.floor(raw)));
+    this.sweepTimer = setInterval(() => {
+      this.sweepAllTenants().catch((e) => this.logger.warn(`代理任务回收失败：${String(e?.message ?? e)}`));
+    }, ms);
+    this.sweepTimer.unref?.();
+    this.logger.log(`代理任务回收定时器已启动：每 ${ms}ms 一次`);
+  }
+
+  onModuleDestroy(): void {
+    if (this.sweepTimer) clearInterval(this.sweepTimer);
+    this.sweepTimer = null;
+  }
 
   constructor(
     @InjectRepository(HardwareAgent) private agents: Repository<HardwareAgent>,
@@ -134,7 +161,8 @@ export class HardwareService implements AgentEnqueuePort {
     }
     const caps = agent.capabilities ?? [];
     if (!caps.length) return { ok: true, jobs: [], reason: '代理未声明能力' };
-    const take = Math.max(1, Math.min(AGENT_MAX_PULL, Math.floor(Number(dto?.limit) || AGENT_MAX_PULL)));
+    const cap = maxPullLimit();
+    const take = Math.max(1, Math.min(cap, Math.floor(Number(dto?.limit) || cap)));
     // 能力匹配用内存过滤：caps 数组来自 jsonb，跨驱动 SQL 写法不一致，量级很小
     const candidates = await this.jobs.find({
       where: { tenantId: useTenantId(), status: 'pending' },
@@ -174,6 +202,26 @@ export class HardwareService implements AgentEnqueuePort {
       }, undefined, 'hardware_agent_job', j.id);
     }
     return { ok: true, jobKey: j.jobKey, status: v.normalized.status };
+  }
+
+  /**
+   * 定时入口：定时器里没有请求上下文，先反查"有在途任务的租户"，再逐个建最小租户上下文扫描。
+   * 用 manager.query 而不是租户 Repository —— Repository 会被 where 注入当前租户，无上下文直接抛错。
+   */
+  async sweepAllTenants() {
+    const rows: Array<{ tenant_id: string | number }> = await this.jobs.manager.query(
+      `SELECT DISTINCT tenant_id FROM hardware_agent_jobs WHERE status IN ('claimed','printing') LIMIT 200`,
+    );
+    let released = 0, expired = 0;
+    for (const r of rows) {
+      const ctx = systemTenantCtx(Number(r.tenant_id));
+      if (!ctx) continue;
+      const out = await tenantStorage.run(ctx, () => this.sweepExpired());
+      released += out.released;
+      expired += out.expired;
+    }
+    if (rows.length) this.logger.log(`代理任务回收：${rows.length} 个租户，回退 ${released}，过期 ${expired}`);
+    return { ok: true, tenants: rows.length, released, expired };
   }
 
   /** 回收超时认领的任务（代理进程崩溃后任务不会永久卡住），可由运维端点或定时任务触发 */
@@ -303,4 +351,13 @@ export class HardwareService implements AgentEnqueuePort {
       ...(dto?.includePayload === true ? { payload: inkjetPayload(j) } : {}),
     };
   }
+}
+
+/** 定时任务用的最小租户上下文：只做"回收任务"这一件事，不带用户身份与权限 */
+function systemTenantCtx(tenantId: number): TenantCtx | null {
+  if (!Number.isInteger(tenantId) || tenantId <= 0) return null;
+  return {
+    tenantId, userId: 0, roles: ['system'], modules: ['print'], permissions: [],
+    plan: null, features: {}, dataScopes: null, dataSourceKey: 'default',
+  };
 }

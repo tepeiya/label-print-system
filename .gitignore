@@ -42,3 +42,8 @@ backend/assets/tessdata/*.traineddata.gz
 backend/*.traineddata
 dump.rdb
 docs/acceptance/.jest-integration.json
+
+# .NET 打印代理：源码进库，编译/发布产物不进库（客户机用 dotnet publish 现场生成）
+apps/print-agent/bin/
+apps/print-agent/obj/
+apps/print-agent/publish/

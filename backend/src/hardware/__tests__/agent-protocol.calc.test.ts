@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import { signatureHeaders } from '../../jobs/trigger.calc';
 import {
   AGENT_CLAIM_TTL_SEC, AGENT_JOB_MAX_ATTEMPTS, AGENT_PROTOCOL_VERSION,
-  agentJobEnvelope, agentJobKey, agentOnline, agentStatus, claimExpired,
-  normalizeAgentRegistration, normalizeHeartbeat, selectAgentForJob,
+  agentJobEnvelope, agentJobKey, agentOnline, agentStatus, claimExpired, claimTtlSec,
+  maxPullLimit, normalizeAgentRegistration, normalizeHeartbeat, selectAgentForJob,
   transitionReceipt, verifyAgentSignature, verifyReceipt,
 } from '../agent-protocol.calc';
 
@@ -150,4 +150,36 @@ test('claimExpired：认领超时可重派，终态/超重试/无认领时间不
   assert.equal(claimExpired(claimed, 'claimed', AGENT_JOB_MAX_ATTEMPTS, NOW), false);
   assert.equal(claimExpired(null, 'claimed', 0, NOW), false);
   assert.equal(claimExpired(new Date(NOW.getTime() - 1000).toISOString(), 'claimed', 0, NOW), false);
+});
+
+test('claimTtlSec / maxPullLimit：环境变量可覆盖，越界一律夹回边界', () => {
+  const oldTtl = process.env.AGENT_CLAIM_TTL_SEC;
+  const oldPull = process.env.AGENT_MAX_PULL;
+  try {
+    process.env.AGENT_CLAIM_TTL_SEC = '900';
+    process.env.AGENT_MAX_PULL = '1';
+    assert.equal(claimTtlSec(), 900);
+    assert.equal(maxPullLimit(), 1);
+
+    // 太小/太大都夹回：租约最短 60s（再短必然误回收）、拉取上限最多 50
+    process.env.AGENT_CLAIM_TTL_SEC = '5';
+    process.env.AGENT_MAX_PULL = '999';
+    assert.equal(claimTtlSec(), 60);
+    assert.equal(maxPullLimit(), 50);
+
+    // 脏值（非数字）落回默认，不放宽
+    process.env.AGENT_CLAIM_TTL_SEC = 'abc';
+    process.env.AGENT_MAX_PULL = '';
+    assert.equal(claimTtlSec(), AGENT_CLAIM_TTL_SEC);
+    assert.equal(maxPullLimit(), 10);
+  } finally {
+    if (oldTtl === undefined) delete process.env.AGENT_CLAIM_TTL_SEC; else process.env.AGENT_CLAIM_TTL_SEC = oldTtl;
+    if (oldPull === undefined) delete process.env.AGENT_MAX_PULL; else process.env.AGENT_MAX_PULL = oldPull;
+  }
+});
+
+test('claimExpired：租约可按参数放宽（大批量排队时不误回收）', () => {
+  const claimed = new Date(NOW.getTime() - 900_000).toISOString();   // 15 分钟前认领
+  assert.equal(claimExpired(claimed, 'printing', 1, NOW), true, '默认 300s 下应回收');
+  assert.equal(claimExpired(claimed, 'printing', 1, NOW, 3600), false, '租约放宽到 1h 后不回收');
 });
