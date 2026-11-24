@@ -12,6 +12,17 @@ import {
 /** 平台级 AI 配置存放在 ai_model_configs 的 tenant_id = 0（平台自己不是一个租户） */
 export const PLATFORM_AI_TENANT = 0;
 
+/**
+ * 知识库可见范围。同一张 kb_articles，靠 scope 分给两拨人：
+ *   platform —— 平台运营内容（套餐/用量/审计），租户端看不到；
+ *   tenant   —— 产品使用内容，租户 AI 助手只检索这一层。
+ */
+export type KbScope = 'platform' | 'tenant';
+
+function normalizeScope(v?: string | null): KbScope {
+  return v === 'tenant' ? 'tenant' : 'platform';
+}
+
 export interface EffectiveAiConfig {
   baseUrl: string;
   apiKey: string;
@@ -34,8 +45,11 @@ export class KbService {
   ) {}
 
   // ------------------------------------------------------------------ 文章
-  async list(q: { category?: string; keyword?: string; limit?: number } = {}) {
-    const qb = this.articles.createQueryBuilder('a').where('a.published = true');
+  async list(q: { category?: string; keyword?: string; limit?: number; scope?: string } = {}) {
+    const scope = normalizeScope(q.scope);
+    const qb = this.articles.createQueryBuilder('a')
+      .where('a.published = true')
+      .andWhere('a.scope = :scope', { scope });
     if (q.category) qb.andWhere('a.category = :c', { c: String(q.category) });
     if (q.keyword) {
       const kw = `%${String(q.keyword).trim()}%`;
@@ -49,20 +63,27 @@ export class KbService {
         summary: r.summary, sortOrder: r.sort, updatedAt: r.updatedAt,
         // 列表接口不带全文，避免一次拉几万字
       })),
-      categories: await this.categories(),
+      categories: await this.categories(scope),
     };
   }
 
-  async categories() {
+  async categories(scope?: string) {
+    const sc = normalizeScope(scope);
     const rows: Array<{ category: string; n: string }> = await this.articles.query(
-      `SELECT category, count(*)::text AS n FROM kb_articles WHERE published = true GROUP BY category ORDER BY min(sort)`,
+      `SELECT category, count(*)::text AS n FROM kb_articles
+        WHERE published = true AND scope = $1
+        GROUP BY category ORDER BY min(sort)`,
+      [sc],
     );
     return rows.map((r) => ({ category: r.category, count: Number(r.n) }));
   }
 
-  async getBySlug(slug: string) {
+  async getBySlug(slug: string, scope?: string) {
     const row = await this.articles.findOne({ where: { slug: String(slug) } });
-    if (!row || !row.published) throw new NotFoundException(`知识库文章不存在：${slug}`);
+    if (!row || !row.published || row.scope !== normalizeScope(scope)) {
+      // 不泄露另一层是否存在：统一报"不存在"
+      throw new NotFoundException(`知识库文章不存在：${slug}`);
+    }
     return {
       slug: row.slug, title: row.title, category: row.category, tags: row.tags,
       summary: row.summary, content: row.content, updatedAt: row.updatedAt,
@@ -70,17 +91,17 @@ export class KbService {
   }
 
   // ------------------------------------------------------------------ 检索
-  private async loadAll(): Promise<KbArticleShape[]> {
-    const rows = await this.articles.find({ where: { published: true } });
+  private async loadAll(scope?: string): Promise<KbArticleShape[]> {
+    const rows = await this.articles.find({ where: { published: true, scope: normalizeScope(scope) } });
     return rows.map((r) => ({
       slug: r.slug, title: r.title, category: r.category, tags: r.tags,
       summary: r.summary, content: r.content, sort: r.sort,
     }));
   }
 
-  async search(question: string, limit = 5): Promise<KbHit[]> {
+  async search(question: string, limit = 5, scope?: string): Promise<KbHit[]> {
     if (!String(question ?? '').trim()) throw new BadRequestException('问题不能为空');
-    return searchArticles(await this.loadAll(), question, limit);
+    return searchArticles(await this.loadAll(scope), question, limit);
   }
 
   // ------------------------------------------------------------------ AI 配置
@@ -165,13 +186,13 @@ export class KbService {
   }
 
   // ------------------------------------------------------------------ 问答
-  async ask(question: string, opts: { tenantId?: number | null; limit?: number } = {}) {
+  async ask(question: string, opts: { tenantId?: number | null; limit?: number; scope?: string } = {}) {
     const q = String(question ?? '').trim();
     if (!q) throw new BadRequestException('问题不能为空');
     if (q.length > 1000) throw new BadRequestException('问题过长（≤1000 字）');
     const t0 = Date.now();
 
-    const all = await this.loadAll();
+    const all = await this.loadAll(opts.scope);
     const hits = searchArticles(all, q, Math.min(5, Number(opts.limit ?? 4)));
     const confident = isConfident(hits);
     const cfg = await this.resolveAiConfig(opts.tenantId ?? null);

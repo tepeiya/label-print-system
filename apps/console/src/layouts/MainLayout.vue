@@ -76,10 +76,14 @@
         </router-view>
       </div>
     </main>
+
+    <!-- 租户端 AI 助手：只答产品用法，不碰业务数据与配置 -->
+    <AiAssistant />
   </div>
 </template>
 
 <script setup lang="ts">
+import AiAssistant from '@/components/AiAssistant.vue';
 import { computed, ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/store/auth';

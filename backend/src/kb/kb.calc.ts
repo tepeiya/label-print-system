@@ -113,7 +113,7 @@ export const KB_SYSTEM_PROMPT = [
   '2. 回答用中文，先给结论，再给可执行步骤（1. 2. 3.）。单个问题不超过 300 字。',
   '3. 涉及具体数据（某张工单、某个库存数量）时，告诉用户去哪个页面查，不要假装能查到。',
   '4. 不要编造按钮名、接口名、错误码。',
-  '5. 末尾用一行标注你依据的文章编号，如“依据：K1、K3”。',
+  '5. 末尾另起一行写“依据：见下方参考文章”，不要写 K1/K3 这类内部编号（用户看不到编号）。',
 ].join('\n');
 
 /** 拼 user message：把命中文章编号化，便于模型引用、也便于前端对齐 */
@@ -156,10 +156,10 @@ export function composeKbAnswer(question: string, hits: KbHit[], articles: KbArt
     `**${top.title}**（${top.category}）`,
     lead,
     ...(others.length
-      ? ['', '**延伸阅读**', ...others.map((h, i) => `- K${i + 2} ${h.title}（${h.category}）${h.summary ? `—— ${h.summary}` : ''}`)]
+      ? ['', '**延伸阅读**', ...others.map((h) => `- ${h.title}（${h.category}）${h.summary ? `—— ${h.summary}` : ''}`)]
       : []),
     '',
-    `依据：${hits.slice(0, 4).map((_, i) => `K${i + 1}`).join('、')}`,
+    `依据：知识库 ${hits.slice(0, 4).length} 篇（见下方「参考文章」）`,
   ].join('\n');
 }
 

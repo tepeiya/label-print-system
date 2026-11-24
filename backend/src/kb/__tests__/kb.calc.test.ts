@@ -110,11 +110,13 @@ test('composeKbAnswer：无命中时给提问建议，而不是硬凑答案', ()
   assert.match(ans, /换成现象描述/);
 });
 
-test('composeKbAnswer：有命中时标明"未配置 AI"、列 3 篇以内、带依据编号', () => {
+test('composeKbAnswer：有命中时标明"未配置 AI"、列 3 篇以内、带依据说明', () => {
   const hits = searchArticles(ARTICLES, '发料 退料 扫码', 4);
   const ans = composeKbAnswer('退料怎么操作', hits, ARTICLES);
   assert.match(ans, /未配置 AI 模型/);
-  assert.match(ans, /依据：K1/);
+  // 租户端看不到 K 编号，依据行只给"见参考文章"，正文里也不应出现 K1/K2 前缀
+  assert.match(ans, /依据：知识库 \d+ 篇/);
+  assert.doesNotMatch(ans, /K\d/);
   assert.ok(ans.length < 2000, '降级答案不应把整篇文档贴进来');
 });
 

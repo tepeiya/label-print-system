@@ -1,8 +1,11 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
 
 /**
- * 平台端知识库文章。**没有 tenant_id** —— 内容归平台方维护，只经平台身份接口下发。
- * 表结构见 scripts/kb_p1_articles.sql。
+ * 知识库文章。**没有 tenant_id** —— 内容归平台方维护，不按租户隔离。
+ * `scope` 决定谁能看到：
+ *   platform —— 平台运营内容，只经平台身份接口下发（tenant token 打进来是 401）；
+ *   tenant   —— 产品使用内容，经租户身份接口下发（租户 AI 助手的知识来源）。
+ * 表结构见 scripts/kb_p1_articles.sql（scope 列见 scripts/kb_tenant_scope.sql）。
  */
 @Entity('kb_articles')
 @Index('ix_kb_articles_category', ['category', 'sort'])
@@ -16,6 +19,8 @@ export class KbArticle {
   @Column('text') content: string;
   @Column({ default: 100 }) sort: number;
   @Column({ default: true }) published: boolean;
+  /** 可见范围：platform（平台运营）/ tenant（租户自助答疑） */
+  @Column({ length: 16, default: 'platform' }) scope: string;
   @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
   @UpdateDateColumn({ name: 'updated_at' }) updatedAt: Date;
 }

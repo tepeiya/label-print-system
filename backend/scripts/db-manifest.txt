@@ -45,3 +45,5 @@ saas_p6_rls.sql                            # 第二遍：必须放在所有建�
 @demo seed-demo-hospital.sql               # 演示数据（医疗 UDI 场景：20 医用耗材/2 工单/50 UDI 码/一物料多码），仅 --seed-demo
 kb_p1_articles.sql                          # 平台端知识库表 kb_articles / kb_assistant_logs（无 tenant_id，平台身份守卫）
 kb_seed_articles.sql                        # 知识库种子内容（16 篇：功能说明+使用教程，按 slug 幂等 upsert）
+
+kb_tenant_scope.sql                          # 租户端知识库：kb_articles 加 scope 列 + 13 篇租户 FAQ（scope=tenant）
