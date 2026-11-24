@@ -10,6 +10,7 @@
 > - ✅ 主前端：`apps/console`（Vue 3 + TypeScript + Vite + Element Plus + Pinia）租户后台 `:5173`
 > - ✅ 平台运营后台：`apps/platform` `:5181`；Agent/MCP Server：`apps/mcp-server` `:3300`
 > - ✅ WMS 收货作业 PDA（移动端 H5）：`apps/pda` `:5185`（zxing-wasm 摄像头扫码 + 盲收/按单收 + 上架确认，需租户订阅 `wms.inbound`）
+> - ✅ Windows 本地打印代理：`apps/print-agent`（C# net8.0 控制台，自包含单文件 exe；winspool RAW 直发，装成计划任务开机自启）——补上 USB / 本机共享打印机无法从云端直接打印的缺口，见 `docs/31-windows-print-agent.md`
 > - ⚠️ `web/`（原生 HTML5）**已弃用（DEPRECATED）**，仅作行为对照，不再新增功能，待新前端完善后删除。
 
 ---
