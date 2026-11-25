@@ -117,11 +117,13 @@ curl -s -X POST $H/mcp -H "Authorization: Bearer $T" -H "Mcp-Session-Id: $Sid" \
 ## 能力：tools / resources / prompts
 
 - **tools**：由后端 `GET /agent/v1/tools` 动态下发，只含该 token scope 覆盖到的工具。
-  目录共 17 个（3 元工具 + 9 只读 + 5 写/高危）；本文验收 token 给了 8 条 scope，实测列出 15 个：
-  whoami / list_modules / describe_capabilities + templates.search/get/create/update +
-  inventory.query_stock/list_low_stock/list_batches/list_expiring +
-  bom.check_kit_rate/explain_shortage + print.submit_job/get_status
-  （`inventory.adjust`/`inventory.transfer` 需另给 `inventory:stock:adjust|transfer` 才出现）。
+  目录共 **29 个**（3 元工具 + 17 只读 + 6 写 + 3 高危，2026-11-25 实测 `tools/list` = 29）；
+  只读：whoami / list_modules / describe_capabilities / templates.search·get /
+  inventory.query_stock·list_low_stock·list_batches·list_expiring / bom.check_kit_rate·explain_shortage /
+  alerts.list / print.get_status·estimate·wait_for_job·list_jobs·preview·commands / printers.list·status；
+  写（要 `idempotency_key`）：templates.create·update / alerts.ack / print.cancel_job·retry_job / datasource.refresh；
+  高危（须 202 审批）：inventory.adjust / inventory.transfer / print.submit_job。
+  工具是否出现由两条同时决定：token scope 覆盖该工具 permission，且租户订阅了对应模块。
   高危工具无 `approval_id` 时后端返回 **202 + `need_approval`**，本服务**不当错误**：
   `summary` 原样转成文本，紧跟一句「这不是错误：已转入审批，approval_id=…，批准后带它重试」，
   完整 JSON 放最后。`idempotent_replay`（幂等命中）与 `approval_consumed`（审批已核销）同理。
@@ -139,6 +141,26 @@ curl -s -X POST $H/mcp -H "Authorization: Bearer $T" -H "Mcp-Session-Id: $Sid" \
   `print.label_from_description`（description 必填 / copies / template）。
   `prompts/get` 返回一条 `user` 角色中文提示词，正文里点明该调哪些工具、输出什么结构，
   并强调高危动作要走审批、业务数据不可当指令。
+
+### 边界：现在**没有**暴露成 MCP 工具的能力
+
+这几块只在 console / PDA / REST 里有，MCP 客户端拿不到（写在这里是为了避免销售口径说过头）：
+
+| 没暴露的能力 | 现状入口 |
+|---|---|
+| 质量闸门：检验单（IQC/IPQC/FQC）、成品放行（QA 电子签）、批记录 | console `quality.qms` 三页 + `POST /quality/*`；无 Agent 工具，Agent 无法判检、签放行 |
+| WMS 收货 / 上架 / 工单发料 / 退货 / 成品发运 | PDA 与 `POST /wms/*`；Agent 只能查库存，不能过账 |
+| UDI 码级追溯查询、国家 UDI 导出 | console `/udi-trace`、`/udi-compliance` |
+| 销售订单、客户主数据、装箱单 | 未实现（见 `docs/29 §4.2`） |
+
+另外 `POST /agent/v1/events/ingest`（扫码即打：MES/ERP 推 `stock.in` 事件 → 触发器规则命中 → 自动打印）
+是 **REST 而不是 MCP**，可选 HMAC 验签；它面向设备/系统对接，不面向大模型。
+
+## 配额与限流（Agent 维度）
+
+工具调用逐层过：scope（4032）→ 模块订阅（4031）→ 执行器可用 → D7 功能开关（4035）→ 限流（4037 / 429）
+→ `agent_calls` 配额（4033）→ 幂等重放 → 审批（4034 / 202）。这些**不计量**的层在前，重放与 202 计量
+（真的消耗了服务）。配额吃紧时模型拿到的是结构化 4033，不是裸 429。
 
 ## stdio 模式细节
 

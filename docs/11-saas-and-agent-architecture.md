@@ -855,7 +855,7 @@ Agent 调用 print.submit_job
 ### 11.11.2 验收标准（P4）
 
 > ✅ **2026-11-05 五条全部通过**（p0-acceptance.sh L 段 L.1–L.20 + M 段 M.1–M.22，实现与偏差见 docs/10 §10.20 / §10.21）：
-> inspector CLI 实测 `--cli node dist/index.js --method tools/list` 列出 11 个（P5 后目录共 17 个 = 3 元 + 9 只读 + 5 写/高危，写工具全部有执行器）；
+> inspector CLI 实测 `--cli node dist/index.js --method tools/list` 列出 11 个（截至 2026-11-25 目录共 **29 个** = 3 元 + 17 只读 + 6 写 + 3 高危，写工具全部有执行器；`apps/mcp-server/README.md` 有逐条清单与「未暴露能力」边界表）；
 > 第五条原归 P5 的 approval 流已于本轮落地（M.4 起）。
 
 - [x] `npx @modelcontextprotocol/inspector` 能列出全部工具（验收 L.14 stdio 自测 + inspector CLI 实测）
