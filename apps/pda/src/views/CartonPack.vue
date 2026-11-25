@@ -66,9 +66,10 @@
         </div>
       </div>
 
+      <div v-if="missing" class="notice warn" style="margin-bottom:12px">{{ missing }}</div>
       <div v-if="preview" class="notice ok" style="margin-bottom:12px">{{ preview }}</div>
 
-      <button v-if="spec" class="btn primary wide big" :disabled="!totalQty || !packQty || submitting"
+      <button v-if="spec" class="btn primary wide big" :disabled="submitting"
         @click="submit">{{ submitting ? '装箱中…' : '生成箱码' }}</button>
 
       <div v-if="submitting" class="muted" style="text-align:center;margin-top:10px">正在生成 SSCC{{ printOn ? ' 并打印箱标' : '' }}…</div>
@@ -133,6 +134,14 @@ const submitting = ref(false);
 const err = ref('');
 const result = ref<CartonPackResult | null>(null);
 
+const missing = computed(() => {
+  if (!spec.value) return '';
+  const lacks: string[] = [];
+  if (!(Number(packQty.value) > 0)) lacks.push('每箱件数（箱规）');
+  if (!(Number(totalQty.value) > 0)) lacks.push('总件数');
+  return lacks.length ? `还差：${lacks.join('、')}` : '';
+});
+
 const preview = computed(() => {
   const t = Number(totalQty.value);
   const p = Number(packQty.value);
@@ -167,7 +176,8 @@ function pickCarton(c: CartonPackOption) {
 }
 
 async function submit() {
-  if (!(Number(totalQty.value) > 0) || !(Number(packQty.value) > 0)) return;
+  if (!(Number(packQty.value) > 0)) { err.value = '请先选一个箱规，或直接在「每箱件数」里填数字'; return; }
+  if (!(Number(totalQty.value) > 0)) { err.value = '请填要装箱的总件数'; return; }
   err.value = '';
   submitting.value = true;
   try {
