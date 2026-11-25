@@ -65,8 +65,47 @@
 
 ## 5. 诚实边界
 
-1. **收货拦截无服务级单测**：`InboundService` 依赖 6 个 Repository，项目里没有它的测试夹具；本轮只做了纯函数穷举 + 发料侧服务测试。收货分支的实际行为需在真库联调时逐条验证（建议列为真库门 G8）。
+1. **收货拦截无服务级单测**：`InboundService` 依赖 6 个 Repository，项目里没有它的测试夹具。收货分支已在本机 PG14 真库逐条联调（见 §6.2 实测表），但**没有自动化测试**，回归仍需人工跑。
 2. **一个物料只能挂一个 GTIN**：同一 SKU 的多规格/多包装（中包、箱码）暂不支持；如需多码，下一步加 `material_gtins` 子表。
 3. **不校验 SSCC/包装码**：只比对单品码（GTIN14 + 批号/序列号）；扫箱码（SSCC）当单品处理会失败。
 4. **GTIN 未回填旧数据**：存量物料 `gtin` 为空，不比对；需要客户按物料维护，或从 BOM/供应商资料导入（未做导入）。
 5. **发料扫码是"校验"不是"门禁"**：`issue-scan` 不改库存，真正的拦截发生在 `issue-post`（必须带 `udiCodes` 才校验）；只扫不传码的客户端仍能过账（除非物料 `udi_required`）。
+
+---
+
+## 6. W5：扫 UDI 即收货（2026-11-25）
+
+### 6.1 改了什么
+
+| 位置 | 变更 |
+|---|---|
+| `InventoryGateway.resolveMaterialByGtin` | 新增：GTIN → 物料反查（先 `materials.gtin` 精确匹配，再 `material_gtins` 中包/托盘码）；只放行 `active=true`；命中 0 → 带原因；命中多物料 → 返回 `candidates` 要求显式 SKU |
+| `InboundService.receiveScan` | 无 `sku`、无 `lineId/lineNo`、只给 `udiCode` 时，解析码取 GTIN → 反查物料补出 SKU → 照原逻辑按 SKU 找单内行；审计 `wms.receive.udi.resolve_sku` |
+| 同上（重复扫码守卫） | UDI 事件**先记**再累加：同一单元在本单已记 RECEIVE（`idempotent=true`）→ 返回 `duplicate:true` + 「数量未重复累加」，审计 `wms.receive.udi.duplicate_scan` |
+| `apps/pda` `ReceiveScan.vue` | 识别 GS1（HRI `(01)…` 或元素串 `01…`）→ 只填 `udiCode`、SKU 留空；新增 UDI 输入框与「清空」；成功提示带箱码折算 / UDI 建档 / GTIN 匹配结果 |
+| `apps/pda` `apiReceiveScan` | 入参补 `udiCode / strictUdi / forceUdi`；返回补 `pack / udi / udiWarning / udiResolved` |
+
+扫码内容判定：`gs1Gtin()` 只认两种——HRI 括号含 `(01)` + 12~14 位，或元素串以 `01` 开头 + 14 位（先剔 FNC1 `\u001d/\u001e`）。认不出就按旧逻辑当 `SKU|数量|批次` 处理。
+
+### 6.2 真库实测（本机 PG14 + 后端 :3202，收货仓 WH-JX=2）
+
+| # | 操作 | 结果 |
+|---|---|---|
+| 1 | 物料 `M-PEAR-001` 登记 `gtin=06901234567892`，建单 `GRN-UDI-01`（`warehouseId=2`，应收 10） | 201 |
+| 2 | `receive-scan` 只传 `{"qty":5,"udiCode":"(01)06901234567892(10)LOT2611(17)271231(21)SN0001"}` | 200；`udiResolved.materialCode=M-PEAR-001`；行 `qtyReceived=5`；`udi.status=RECEIVED`、`created=true` |
+| 3 | 同码再扫一次 | `duplicate:true`，`qtyReceived` 仍 5；审计 `wms.receive.udi.duplicate_scan` |
+| 4 | 换序列号 `SN0002`（同 GTIN/批次） | 行累计 10 |
+| 5 | 合法但未登记 GTIN `16901234567899` | 400「GTIN 16901234567899 未匹配到物料（请先在物料主数据登记该 GTIN）」 |
+| 6 | 校验位错误的码 `(01)06901234567893` | 400「AI(01) 模 10 校验位错误：应为 2，实际 3」 |
+| 7 | `POST /wms/receipts/1/post` | 200；`movementId=WMS_RECEIPT:GRN-UDI-01:M-PEAR-001:LOT2611`，库位 `JX-A01`（兜底「最空库位」） |
+| 8 | 查 `stock_batches` | `WH-JX / LOT2611 / 11 / RELEASED / location=4` |
+| 9 | 物料改 `qc_required=true` 后建 `GRN-QC-02` 收 2kg | 批次 `LOT-QC1 / WH-JX / PENDING`（收货即待检） |
+
+### 6.3 边界（仍然存在）
+
+1. **收货仓不由扫码决定**：来自建单 `warehouseId`；扫码只累加行数量，过账才入库。
+2. **过账要求目标仓有可用库位**：无库位直接 400「仓库无可用库位，无法过账（禁止无库位库存）」——新仓上线前必须先建库位。
+3. **SSCC 箱码不能反查**：`(00)` 里没有 GTIN，扫 SSCC 仍需选行或输 SKU。
+4. **GTIN 唯一索引在 `materials`**（`ux_materials_tenant_gtin`），中包/托盘码在 `material_gtins` 无唯一约束；同码挂多物料时要求显式 SKU（防串料），不自动挑。
+5. **打印标签是旁路**：`WMS_SERVICE_TOKEN` 未配置时过账仍成功，只在 `results[].print` 记 `failed`。
+6. **PDA 摄像头需 HTTPS 或 localhost**；离线/弱网无补偿。

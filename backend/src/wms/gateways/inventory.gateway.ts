@@ -12,7 +12,7 @@
 // =============================================================================
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { InventoryService } from '../../inventory/inventory.service';
 import { Material, MaterialGtin, Warehouse, WarehouseLocation, Bom, BomItem } from '../../inventory/inventory.entity';
 import { KitOutcome, round3 } from '../../inventory/kit.calc';
@@ -237,6 +237,46 @@ export class InventoryGateway {
     const tenantId = this.resolveTenant(p.tenantId);
     const rows = await this.materialGtins.find({ where: { tenantId, materialId: Number(p.materialId) } });
     return rows.map((g) => ({ gtin: g.gtin, packLevel: g.packLevel, packQty: Number(g.packQty) || 1 }));
+  }
+
+  /**
+   * UDI/GS1 GTIN → 物料反查（PDA 扫 UDI 收货定位行用，W5）。
+   * 先查物料主数据 gtin（单品码），再查 material_gtins（中包/托盘码）。
+   * 命中 0 个 → ok=false 带原因；命中多个物料 → candidates>1，调用方必须要求显式 SKU（防串料）。
+   */
+  async resolveMaterialByGtin(p: { tenantId: string | number; gtin: string }): Promise<{
+    ok: boolean; reason?: string; gtin: string;
+    material: { id: number; code: string; name: string; unit: string } | null;
+    packLevel: 'UNIT' | 'CARTON' | 'PALLET' | null; packQty: number;
+    candidates: Array<{ id: number; code: string; name: string }>;
+  }> {
+    const tenantId = this.resolveTenant(p.tenantId);
+    const gtin = String(p.gtin ?? '').trim();
+    const empty = {
+      ok: false, gtin, material: null, packLevel: null, packQty: 1,
+      candidates: [] as Array<{ id: number; code: string; name: string }>,
+    };
+    if (!gtin) return { ...empty, reason: 'GTIN 为空' };
+    const packRows = await this.materialGtins.find({ where: { tenantId, gtin } });
+    const ids = new Set<number>(packRows.map((r) => Number(r.materialId)));
+    const primary = await this.materials.find({ where: { tenantId, gtin } });
+    for (const m of primary) ids.add(Number(m.id));
+    if (!ids.size) {
+      return { ...empty, reason: `GTIN ${gtin} 未匹配到物料（请先在物料主数据登记该 GTIN）` };
+    }
+    const mats = await this.materials.find({ where: { tenantId, id: In([...ids]), active: true } });
+    if (!mats.length) {
+      return { ...empty, reason: `GTIN ${gtin} 只匹配到已停用物料（请检查物料状态）` };
+    }
+    const candidates = mats.map((m) => ({ id: Number(m.id), code: m.code, name: m.name }));
+    const first = mats[0];
+    const row = packRows.find((r) => Number(r.materialId) === Number(first.id));
+    return {
+      ok: true, gtin,
+      material: { id: Number(first.id), code: first.code, name: first.name, unit: first.unit },
+      packLevel: row?.packLevel ?? 'UNIT', packQty: row ? Number(row.packQty) || 1 : 1,
+      candidates,
+    };
   }
 
   /** 仓库解析（编码或 ID → 基础字段） */

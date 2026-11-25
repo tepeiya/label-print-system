@@ -25,7 +25,7 @@
         <div class="scanner-tip">{{ scanner.error || '将条码对准框内，自动识别' }}</div>
       </div>
       <div v-if="!scannerOn" class="notice warn" style="margin-top:10px">
-        摄像头未开启 · 可手动输入 SKU 收货
+        摄像头未开启 · 可手动输入 SKU，或粘贴/扫 UDI 码
       </div>
 
       <div style="display:flex;gap:10px;margin:14px 0">
@@ -36,8 +36,18 @@
       <!-- 收货表单 -->
       <div class="card" v-if="showManual || lastScan">
         <div class="field">
-          <label>SKU（盲收可直接扫码填入）</label>
-          <input v-model.trim="form.sku" placeholder="扫码或输入 SKU" ref="skuInput" />
+          <label>UDI 码（GS1 DataMatrix / HRI，摄像头或扫码枪直接扫）</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input v-model.trim="form.udiCode" placeholder="(01)…(10)…(17)… 可留空" style="flex:1" />
+            <button v-if="form.udiCode" class="btn" style="min-height:38px;padding:0 10px;font-size:13px" @click="clearUdi">清空</button>
+          </div>
+          <div class="muted" v-if="udiGtin" style="margin-top:4px">
+            GTIN {{ udiGtin }} · 系统按该 GTIN 自动匹配收货行{{ isPackCode ? '（箱码，数量填包件数，自动折算）' : '' }}
+          </div>
+        </div>
+        <div class="field">
+          <label>SKU（扫 UDI 码时可留空）</label>
+          <input v-model.trim="form.sku" placeholder="扫码或输入 SKU，或只扫上面的 UDI 码" ref="skuInput" />
         </div>
         <div class="row">
           <div class="field" style="flex:1">
@@ -110,12 +120,35 @@ const submitting = ref(false);
 const posting = ref(false);
 const showManual = ref(true);
 
-const form = reactive({ sku: '', qty: 1 as number, batchNo: '', lineNo: undefined as number | undefined });
+const form = reactive({ sku: '', qty: 1 as number, batchNo: '', lineNo: undefined as number | undefined, udiCode: '' });
 
 const lastMessage = ref('');
 const lastOk = ref(true);
 const lastScan = ref(false);
 const lastResultClass = computed(() => lastOk.value ? 'ok' : 'warn');
+
+// --- GS1/UDI 识别（W5）：扫码内容含 GTIN 就当 UDI 码，不再当 SKU 用 ---
+/** HRI 括号格式或元素串里取 GTIN14；取不到返回 null（就不是 UDI 码） */
+function gs1Gtin(text: string): string | null {
+  const t = String(text ?? '').trim();
+  if (!t) return null;
+  const hri = t.match(/\(01\)(\d{12,14})/);
+  if (hri) return hri[1];
+  // 元素串：以 01 开头 + 14 位 GTIN（可带 FNC1 分隔符）
+  const es = t.replace(/[\u001d\u001e]/g, '');
+  if (/^01\d{14}/.test(es)) return es.slice(2, 16);
+  return null;
+}
+const udiGtin = computed(() => gs1Gtin(form.udiCode));
+const isPackCode = computed(() => {
+  // 只有服务端知道 pack_qty，这里仅按“箱码常见 AI(37) 或 SSCC(00)”给提示
+  const t = String(form.udiCode ?? '');
+  return /\(00\)|\(37\)|^00\d|^37\d/.test(t);
+});
+function clearUdi() {
+  form.udiCode = '';
+  scanner.resume();
+}
 
 const canPost = computed(() => {
   const lines = receipt.value?.lines || [];
@@ -139,6 +172,19 @@ async function loadDetail() {
 function onDetect(text: string) {
   lastScan.value = true;
   showManual.value = true;
+  const gtin = gs1Gtin(text);
+  if (gtin) {
+    // UDI 码：只填 udiCode，SKU 交给服务端按 GTIN 反查（避免 UDI 串被当 SKU 收错行）
+    form.udiCode = text;
+    form.sku = '';
+    beep('ok');
+    vibrate(30);
+    lastOk.value = true;
+    lastMessage.value = `已识别 UDI 码：GTIN ${gtin}，填实物件数后确认`;
+    scanner.pause();
+    return;
+  }
+  form.udiCode = '';
   const parts = text.split('|').map((s) => s.trim()).filter(Boolean);
   form.sku = parts[0] || text;
   if (parts[1] && !isNaN(Number(parts[1]))) form.qty = Number(parts[1]);
@@ -178,9 +224,9 @@ function toggleManual() {
 }
 
 async function submitScan() {
-  if (!form.sku && form.lineNo === undefined) {
+  if (!form.sku && !form.udiCode && form.lineNo === undefined) {
     lastOk.value = false;
-    lastMessage.value = '请扫码或输入 SKU（或指定行号）';
+    lastMessage.value = '请扫 UDI 码、或输入 SKU、或指定行号';
     return;
   }
   submitting.value = true;
@@ -190,15 +236,23 @@ async function submitScan() {
     if (form.sku) body.sku = form.sku;
     if (form.batchNo) body.batchNo = form.batchNo;
     if (form.lineNo !== undefined) body.lineNo = form.lineNo;
+    if (form.udiCode) body.udiCode = form.udiCode;
     const res = await apiReceiveScan(receiptId, body);
     beep(res.warning ? 'fail' : 'ok');
     vibrate(res.warning ? [60, 40, 60] : 40);
     lastOk.value = !res.warning;
+    const detail = [
+      res.pack ? `箱码 ${res.pack.packCount}×${res.pack.packQty} → ${res.pack.units}` : '',
+      res.udi?.gtin ? `UDI GTIN ${res.udi.gtin}${res.udi.lot ? ` / 批 ${res.udi.lot}` : ''}` : '',
+      res.udiResolved ? `按 GTIN 匹配到 ${res.udiResolved.materialCode}` : '',
+      res.udiWarning ? `UDI 未建档：${res.udiWarning}` : '',
+    ].filter(Boolean).join('；');
     lastMessage.value = res.warning
       ? `${res.warning}（已记录，请核对明细）`
-      : `收货成功：${res.line?.skuId || form.sku} 累计 ${res.line?.qtyReceived ?? ''}`;
+      : `收货成功：${res.line?.skuId || form.sku || form.udiCode} 累计 ${res.line?.qtyReceived ?? ''}${detail ? `（${detail}）` : ''}`;
     await loadDetail();
     form.qty = 1;
+    form.udiCode = '';
     scanner.resume();
   } catch (e) {
     beep('fail');

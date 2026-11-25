@@ -203,6 +203,13 @@ export interface ReceiveScanResult {
   ok: boolean;
   warning?: string;
   line: ReceiptLine;
+  /** 箱码折算结果（扫中包/托盘码时） */
+  pack?: { packCount: number; packQty: number; packLevel: string; units: number };
+  /** UDI 建档结果（扫 UDI 码时） */
+  udi?: Record<string, any>;
+  udiWarning?: string;
+  /** 只扫 UDI 码时，GTIN 反查出的 SKU 与命中方式 */
+  udiResolved?: { gtin: string; materialCode: string; matchedBy: string };
 }
 
 export interface RecommendResult {
@@ -220,7 +227,11 @@ export const apiReceiptList = (params: { status?: string; page?: number; pageSiz
 
 export const apiReceiptDetail = (id: number) => get<Receipt>(`/wms/receipts/${id}`);
 
-export const apiReceiveScan = (id: number, body: { sku?: string; batchNo?: string; qty: number; lineId?: number; lineNo?: number; remark?: string }) =>
+export const apiReceiveScan = (id: number, body: {
+  sku?: string; batchNo?: string; qty: number; lineId?: number; lineNo?: number; remark?: string;
+  /** UDI 码（HRI 或元素串）：只给码不给 SKU 时，服务端按码内 GTIN 反查物料与收货行 */
+  udiCode?: string; strictUdi?: boolean; forceUdi?: boolean;
+}) =>
   post<ReceiveScanResult>(`/wms/receipts/${id}/receive-scan`, body);
 
 export const apiPostReceipt = (id: number) => post(`/wms/receipts/${id}/post`);

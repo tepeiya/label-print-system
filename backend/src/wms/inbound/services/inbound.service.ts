@@ -169,10 +169,32 @@ export class InboundService {
     if (!(packCount > 0)) throw new BadRequestException('实收数量必须为正数');
     let qty = packCount;
     let packInfo: Record<string, unknown> | null = null;
-    const skuCode = String(dto.sku ?? '').trim();
-    const material = skuCode
+    let skuCode = String(dto.sku ?? '').trim();
+    let material = skuCode
       ? await this.materials.findOne({ where: { tenantId, code: skuCode } })
       : null;
+    // W5：只扫 UDI 码（无 SKU、不指定行）时，用码里的 GTIN 反查物料补出 SKU，
+    // 让「扫 UDI 即定位收货行」成立；命中多物料一律要求显式 SKU（防串料）。
+    let udiResolved: { gtin: string; materialCode: string; matchedBy: string } | null = null;
+    if (!skuCode && dto.udiCode && !dto.lineId && !dto.lineNo) {
+      const parsed = udiKeyFromCode(String(dto.udiCode));
+      if (!parsed.ok) throw new BadRequestException(`UDI 码解析失败：${parsed.errors.join('；')}`);
+      const byGtin = await this.inventoryGw.resolveMaterialByGtin({ tenantId, gtin: String(parsed.gtin) });
+      if (!byGtin.ok || !byGtin.material) {
+        throw new BadRequestException(byGtin.reason ?? `UDI 的 GTIN ${parsed.gtin} 未匹配到物料`);
+      }
+      if (byGtin.candidates.length > 1) {
+        throw new BadRequestException(
+          `GTIN ${byGtin.gtin} 对应多个物料（${byGtin.candidates.map((c) => c.code).join('、')}），请显式指定 SKU`,
+        );
+      }
+      skuCode = byGtin.material.code;
+      material = await this.materials.findOne({ where: { tenantId, code: skuCode } });
+      udiResolved = { gtin: byGtin.gtin, materialCode: skuCode, matchedBy: `GTIN→${skuCode}` };
+      void this.audit.write(tenantId, 'wms.receive.udi.resolve_sku', {
+        receiptId, gtin: byGtin.gtin, materialCode: skuCode, packLevel: byGtin.packLevel, packQty: byGtin.packQty,
+      });
+    }
 
     let target: WmsReceiptLine | null = null;
     if (dto.lineId || dto.lineNo) {
@@ -188,7 +210,9 @@ export class InboundService {
       }
     } else {
       // 盲收：按 SKU 找单内行
-      if (!material) throw new BadRequestException('盲收必须提供有效 SKU');
+      if (!material) {
+        throw new BadRequestException('盲收必须提供有效 SKU，或扫一个已在物料主数据登记 GTIN 的 UDI 码');
+      }
       target = await this.lines.findOne({ where: { tenantId, receiptId, skuId: Number(material.id) }, order: { lineNo: 'ASC' } });
       if (!target) {
         // 不在单内：新增 WRONG_SKU 差异行（lineNo 取最大值 +1）
@@ -244,6 +268,22 @@ export class InboundService {
       }
     }
 
+    // W5：先记 UDI 事件——同一单元在本收货单已记 RECEIVE（幂等回放）说明是重复扫码，
+    // 直接返回不再累加数量，避免连扫同一件把已收数算两遍。
+    let udiLink: Record<string, any> | null = null;
+    if (dto.udiCode) {
+      udiLink = await this.udiOnScan(r, dto, target, qty, packInfo, skuCode);
+      if (udiLink?.udi?.idempotent) {
+        void this.audit.write(tenantId, 'wms.receive.udi.duplicate_scan', {
+          receiptId, lineId: target.id, udiKey: udiLink.udi.udiKey,
+        });
+        return {
+          ok: true, duplicate: true, warning: '重复扫码：该 UDI 单元本单已记收货，数量未重复累加',
+          line: this.lineView(target), ...(udiLink ?? {}), ...(udiResolved ? { udiResolved } : {}),
+        };
+      }
+    }
+
     // 累加（同批次累加而非覆盖）
     const before = Number(target.qtyReceived);
     const after = before + qty;
@@ -259,18 +299,24 @@ export class InboundService {
     if (r.status === 'CREATED') await this.receipts.update({ id: r.id }, { status: 'RECEIVING' });
     void this.audit.write(tenantId, 'wms.receive.scan', { receiptId, lineId: target.id, scannedSku: skuCode, qty, cumulative: after });
     const refreshed = await this.lines.findOne({ where: { id: Number(target.id) } });
-    const udiLink = dto.udiCode ? await this.udiOnScan(r, dto, refreshed ?? target, qty, packInfo) : null;
-    return { ok: true, line: refreshed ? this.lineView(refreshed) : this.lineView(target), ...(packInfo ? { pack: packInfo } : {}), ...(udiLink ?? {}) };
+    return {
+      ok: true, line: refreshed ? this.lineView(refreshed) : this.lineView(target),
+      ...(packInfo ? { pack: packInfo } : {}), ...(udiLink ?? {}),
+      ...(udiResolved ? { udiResolved } : {}),
+    };
   }
 
   /** UDI 联动（U5）：扫码收货时建档 + 记 RECEIVE；默认不阻塞收货，strictUdi 时抛错 */
-  private async udiOnScan(r: WmsReceipt, dto: any, line: WmsReceiptLine, unitQty?: number, packInfo?: Record<string, unknown> | null): Promise<Record<string, any>> {
+  private async udiOnScan(
+    r: WmsReceipt, dto: any, line: WmsReceiptLine, unitQty?: number,
+    packInfo?: Record<string, unknown> | null, skuCode?: string,
+  ): Promise<Record<string, any>> {
     const tenantId = useTenantId();
     if (!this.udi) return { udiWarning: '服务端未启用 UDI 模块，已跳过建档' };
     try {
       const udi = await this.udi.receiveByScan({
         code: String(dto.udiCode), receiptNo: r.receiptNo,
-        lineNo: line.lineNo, skuCode: String(dto.sku ?? ''), qty: unitQty ?? Number(dto.qty),
+        lineNo: line.lineNo, skuCode: String(skuCode ?? dto.sku ?? ''), qty: unitQty ?? Number(dto.qty),
         packCount: packInfo?.packCount as number | undefined, packQty: packInfo?.packQty as number | undefined, packLevel: packInfo?.packLevel as string | undefined,
       });
       void this.audit.write(tenantId, 'wms.receive.udi', {
