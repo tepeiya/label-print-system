@@ -109,3 +109,53 @@
 4. **GTIN 唯一索引在 `materials`**（`ux_materials_tenant_gtin`），中包/托盘码在 `material_gtins` 无唯一约束；同码挂多物料时要求显式 SKU（防串料），不自动挑。
 5. **打印标签是旁路**：`WMS_SERVICE_TOKEN` 未配置时过账仍成功，只在 `results[].print` 记 `failed`。
 6. **PDA 摄像头需 HTTPS 或 localhost**；离线/弱网无补偿。
+
+---
+
+## 7. 收货标签"自动打印"的真实链路（2026-11-25 补测）
+
+### 7.1 触发方式
+
+`POST /wms/receipts/:id/post` **过账时逐行自动触发**，不需要人点：
+
+```
+每行 → PrintGateway.createJob({
+         templateCode: 'RECEIPT_LABEL_V1',
+         printerRoute: 'receipt-station',   // 阶段一仅作审计字段，不解析物理打印机
+         idempotencyKey: `GRN:{收货单号}:{行号}`,
+         copies: 1, source: 'wms.inbound.receipt'
+       })
+     → POST /api/v1/internal/print-jobs (Bearer WMS_SERVICE_TOKEN, 需 print:job:write)
+     → 按 (tenant_id, code) 取模板 → 幂等 claim → print.createJob
+     → print_jobs(status=queued) + Bull 队列 → worker 渲染/下发 → print_logs
+```
+
+- **每行一次、每次 1 份**（不是整单一张）。
+- 幂等键 `GRN:单号:行号`：重复过账/重试不会重复出纸（同 key 同参回放 `idempotent:true`，同 key 不同参 409）。
+- 超时 3 秒，超时视为未知结果**不重试**（防重复出纸）。
+- 失败**不阻塞**过账：结果里 `results[].print` 记状态，审计写 `wms.print.call`。
+- 补打走独立入口 `POST /wms/receipts/lines/:lineId/reprint-label`，新键 `GRN:单号:行号:reprint:{n}`，只允许已过账行。
+
+### 7.2 要真出纸，三个前置缺一不可
+
+| 前置 | 缺失时的表现 |
+|---|---|
+| `WMS_SERVICE_TOKEN`（Agent token，scope `print:job:write`） | `print.status=failed`，`WMS_SERVICE_TOKEN 未配置，无法调用打印服务` |
+| 租户里存在 `code=RECEIPT_LABEL_V1` 的模板 | 404 `PRINT_TEMPLATE_NOT_FOUND`（演示种子 **templates 表是空的**，必须自建） |
+| `printers` 绑定打印机 + 打印代理在线 | 任务仍会 `status=success`，但 `printer_id` 为空、**一张纸也没出**（image 通道兜底）★静默成功 |
+
+### 7.3 本轮修掉的 bug
+
+`Template` 实体漏映射 `code` 列，`/internal/print-jobs` 每次必 500：
+
+```
+EntityPropertyNotFoundError: Property "code" was not found in "Template"
+```
+
+即"token 和模板都配好了也打不出来"。已在 `backend/src/entities/template.entity.ts` 补 `code` 映射（对齐 DDL 的 `ux_templates_tenant_code`）。修复后实测：过账返回 `print={jobId:1,status:"queued"}`，`print_jobs` 1 张 `success`、`print_logs` 1 条 `success`。
+
+### 7.4 待办
+
+1. 种子加一份 `RECEIPT_LABEL_V1` 收货标签模板（现在为空，新租户过账必然 404）。
+2. 无打印机时不该报 `success`：建议任务标 `skipped_no_printer` 或在 `results[].print` 带 `warning`，避免"以为打了"。
+3. `printerRoute='receipt-station'` 尚未映射到物理打印机，多打印机场景只能靠默认策略，需要路由表。

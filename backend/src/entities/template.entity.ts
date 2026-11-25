@@ -9,6 +9,9 @@ export class Template {
   @Column({ name: 'tenant_id' }) tenantId: number;          // 租户隔离字段
   @Column('uuid', { unique: false }) uuid: string;
   @Column({ length: 160 }) name: string;
+  // 人可读模板编码（内部打印契约按 (tenant_id, code) 寻址：RECEIPT_LABEL_V1 等）。
+  // DDL 有 ux_templates_tenant_code 唯一索引；此前实体漏映射，导致 /internal/print-jobs 500。
+  @Column({ length: 60, type: 'varchar', nullable: true }) code: string | null;
   @Column({ length: 60, nullable: true }) category: string;
   @Column('text', { array: true, default: '{}' }) tags: string[];   // 对齐 DDL 的 TEXT[] 数组列
   @Column({ length: 500, nullable: true }) description: string;
