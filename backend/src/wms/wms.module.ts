@@ -19,21 +19,24 @@ import { ShipmentService } from './outbound/services/shipment.service';
 import { ShipmentController } from './outbound/controllers/shipment.controller';
 import { PrintGateway } from './gateways/print.gateway';
 import { InventoryGateway } from './gateways/inventory.gateway';
+import { CartonPackController } from './carton/carton-pack.controller';
+import { CartonPackService } from './carton/carton-pack.service';
+import { UdiPackage } from '../udi/entities/udi.entity';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([
       WmsReceipt, WmsReceiptLine, WmsPutawayTask, WmsPutawayRule,
       WmsShipment, WmsShipmentLine,
-      Material, MaterialGtin, Warehouse, WarehouseLocation, Bom, BomItem,
+      Material, MaterialGtin, Warehouse, WarehouseLocation, Bom, BomItem, UdiPackage,
     ]),
     InventoryModule,
     AgentModule,
     AuditModule,
     UdiModule,
   ],
-  controllers: [InboundController, ShipmentController],
-  providers: [InboundService, ShipmentService, PrintGateway, InventoryGateway],
-  exports: [InboundService, ShipmentService, PrintGateway, InventoryGateway],
+  controllers: [InboundController, ShipmentController, CartonPackController],
+  providers: [InboundService, ShipmentService, PrintGateway, InventoryGateway, CartonPackService],
+  exports: [InboundService, ShipmentService, PrintGateway, InventoryGateway, CartonPackService],
 })
 export class WmsModule {}

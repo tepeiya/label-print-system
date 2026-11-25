@@ -1,0 +1,255 @@
+// =============================================================================
+// CartonPackService —— 装箱出码（一箱一码）+ 尾箱 + 箱标打印
+//
+// 设计边界：
+//   · 只做"算箱 + 生成 SSCC + 登记包装 + 调打印"，不改库存、不建收货单；
+//   · 打印固定走 PrintGateway（HTTP /internal/print-jobs），不 import print 内部实现；
+//   · 箱码 = SSCC-18（GS1），序列来自 PG 序列 sscc_serial_seq，全局唯一；
+//   · 尾箱（不足一箱）默认也出一码，qty 记真实件数，标签上标「尾箱」。
+//
+// 表：udi_packages（sscc/level/gtin/qty/parent_sscc/work_order_no）
+// 模板：CARTON_LABEL_V1（scripts/wms_p10_carton_label.sql 种子）
+// =============================================================================
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, In } from 'typeorm';
+import { UdiPackage } from '../../udi/entities/udi.entity';
+import { Material, MaterialGtin } from '../../inventory/inventory.entity';
+import { AuditService } from '../../audit/audit.module';
+import { useTenant, useTenantId } from '../../common/tenant.context';
+import { PrintGateway } from '../gateways/print.gateway';
+import { buildSscc, planBoxes, normalizePrefix, DEFAULT_GS1_PREFIX } from '../../udi/udi.sscc.calc';
+
+export interface PackDto {
+  /** 物料编码（与 gtin 二选一） */
+  skuCode?: string;
+  /** 箱码 GTIN（material_gtins 里的 CARTON 条码；多档箱规时用它指定） */
+  gtin?: string;
+  /** 总件数（要装进箱子的总量，可以不是每箱件数的整数倍 → 自动出尾箱） */
+  totalQty: number;
+  /** 每箱件数；不传则取物料 CARTON 的 packQty（多档时必须传 gtin 或 packQty 指定） */
+  packQty?: number;
+  packLevel?: 'CARTON' | 'PALLET';
+  batchNo?: string;
+  /** 上级包装 SSCC（中箱→托盘） */
+  parentSscc?: string;
+  workOrderNo?: string;
+  /** 尾箱是否单独出一码，默认 true */
+  allowTail?: boolean;
+  /** 是否打印箱标，默认 false */
+  print?: boolean;
+  /** 打印路由，默认 carton-station */
+  printerRoute?: string;
+  /** 箱标模板 code，默认 CARTON_LABEL_V1 */
+  templateCode?: string;
+  /** 每箱标签份数 */
+  copies?: number;
+}
+
+@Injectable()
+export class CartonPackService {
+  private logger = new Logger('CartonPackService');
+
+  constructor(
+    @InjectRepository(UdiPackage) private packages: Repository<UdiPackage>,
+    @InjectRepository(Material) private materials: Repository<Material>,
+    @InjectRepository(MaterialGtin) private gtins: Repository<MaterialGtin>,
+    private printGateway: PrintGateway,
+    private audit: AuditService,
+  ) {}
+
+  async pack(dto: PackDto) {
+    const tenantId = useTenantId();
+    const { userId } = useTenant();
+    const totalQty = Number(dto.totalQty);
+    if (!(totalQty > 0)) throw new BadRequestException('totalQty 必须为正数');
+
+    // 1) 解析物料 / 箱规
+    const resolved = await this.resolvePackSpec(tenantId, dto);
+
+    // 2) 算箱（满箱 + 尾箱）
+    let plan: ReturnType<typeof planBoxes>;
+    try {
+      plan = planBoxes(totalQty, resolved.packQty, dto.allowTail !== false, 1000);
+    } catch (e: any) {
+      throw new BadRequestException(e?.message ?? '装箱参数不合法');
+    }
+
+    // 3) 逐箱生成 SSCC 并登记包装
+    const prefix = normalizePrefix(process.env.GS1_COMPANY_PREFIX || DEFAULT_GS1_PREFIX);
+    const extDigit = Number(process.env.SSCC_EXTENSION_DIGIT ?? 0) || 0;
+    const boxes: Array<{ sscc: string; qty: number; tail: boolean; boxNo: number }> = [];
+    for (let i = 0; i < plan.boxes.length; i++) {
+      const qty = plan.boxes[i];
+      const serial = await this.nextSerial();
+      const sscc = buildSscc(prefix, serial, extDigit);
+      await this.packages.save(this.packages.create({
+        tenantId,
+        sscc,
+        level: dto.packLevel ?? 'CARTON',
+        gtin: resolved.cartonGtin ?? null,
+        qty: String(qty),
+        parentSscc: dto.parentSscc ?? null,
+        workOrderNo: dto.workOrderNo ?? null,
+        createdBy: userId ?? null,
+      }));
+      boxes.push({ sscc, qty, tail: plan.tailQty > 0 && i === plan.boxes.length - 1, boxNo: i + 1 });
+    }
+
+    await this.audit.write(tenantId, 'wms.carton.pack', {
+      skuCode: resolved.skuCode, totalQty, packQty: resolved.packQty,
+      fullBoxes: plan.fullBoxes, tailQty: plan.tailQty, boxes: boxes.length,
+      printed: !!dto.print,
+    }, undefined, 'udi_package');
+
+    // 4) 可选打印（失败不阻塞装箱；结果逐箱回传）
+    let printInfo: any = null;
+    if (dto.print) {
+      printInfo = await this.printBoxes(resolved, plan, boxes, dto);
+    }
+
+    return {
+      skuCode: resolved.skuCode,
+      productName: resolved.productName,
+      unit: resolved.unit,
+      cartonGtin: resolved.cartonGtin,
+      packQty: resolved.packQty,
+      totalQty,
+      fullBoxes: plan.fullBoxes,
+      tailQty: plan.tailQty,
+      boxCount: boxes.length,
+      boxes: boxes.map((b) => ({
+        ...b,
+        printed: printInfo?.perBox?.find((p: any) => p.sscc === b.sscc) ?? null,
+      })),
+      print: printInfo ? { ok: printInfo.ok, errors: printInfo.errors, warnings: printInfo.warnings } : null,
+    };
+  }
+
+  /** 已装箱清单（最近的包装记录，供核对/补打箱标） */
+  async listPacks(limit = 50) {
+    const tenantId = useTenantId();
+    const rows = await this.packages.find({
+      where: { tenantId, level: In(['CARTON', 'PALLET']) },
+      order: { id: 'DESC' },
+      take: Math.max(1, Math.min(500, Number(limit) || 50)),
+    });
+    return rows.map((r) => ({
+      sscc: r.sscc, level: r.level, gtin: r.gtin, qty: Number(r.qty),
+      parentSscc: r.parentSscc, workOrderNo: r.workOrderNo, createdAt: r.createdAt,
+    }));
+  }
+
+  /** 解析物料：skuCode / gtin → material + packQty + 箱码 GTIN */
+  private async resolvePackSpec(tenantId: number, dto: PackDto) {
+    let material: Material | null = null;
+    let cartonGtin: string | null = dto.gtin ? String(dto.gtin).replace(/\D/g, '') : null;
+
+    if (dto.skuCode) {
+      material = await this.materials.findOne({ where: { tenantId, code: String(dto.skuCode).trim(), active: true } });
+      if (!material) throw new NotFoundException(`物料不存在或已停用：${dto.skuCode}`);
+    } else if (cartonGtin) {
+      const row = await this.gtins.findOne({ where: { tenantId, gtin: cartonGtin } });
+      if (!row) throw new NotFoundException(`未登记的箱码 GTIN：${cartonGtin}`);
+      material = await this.materials.findOne({ where: { tenantId, id: row.materialId } });
+      if (!material) throw new NotFoundException(`箱码 ${cartonGtin} 对应物料已删除`);
+    } else {
+      throw new BadRequestException('skuCode 与 gtin 至少传一个');
+    }
+
+    // 箱规：优先 dto.packQty；否则按 gtin 定位；否则要求物料只有一档 CARTON
+    let packQty = Number(dto.packQty);
+    const packRows = await this.gtins.find({
+      where: { tenantId, materialId: material.id, packLevel: dto.packLevel ?? 'CARTON' },
+      order: { packQty: 'ASC' },
+    });
+
+    if (cartonGtin) {
+      const hit = packRows.find((r) => r.gtin === cartonGtin);
+      if (!hit) throw new BadRequestException(`箱码 ${cartonGtin} 不是该物料的「${dto.packLevel ?? 'CARTON'}」条码`);
+      if (!(packQty > 0)) packQty = Number(hit.packQty);
+      else if (Math.abs(Number(hit.packQty) - packQty) > 1e-6) {
+        throw new BadRequestException(`packQty=${packQty} 与箱码 ${cartonGtin} 登记的 ${hit.packQty} 不一致`);
+      }
+    } else if (!(packQty > 0)) {
+      if (packRows.length === 0) {
+        throw new BadRequestException(`物料 ${material.code} 没有登记「${dto.packLevel ?? 'CARTON'}」条码，请先配包规（GTIN|CARTON|每箱件数）或直接传 packQty`);
+      }
+      if (packRows.length > 1) {
+        const opts = packRows.map((r) => `${r.gtin}=${r.packQty}`).join('、');
+        throw new BadRequestException(`物料 ${material.code} 有多档箱规（${opts}），请用 gtin 或 packQty 指定其中一档`);
+      }
+      packQty = Number(packRows[0].packQty);
+      cartonGtin = packRows[0].gtin;
+    }
+    if (!(packQty > 0)) throw new BadRequestException('每箱件数必须为正数');
+
+    // dto 直接给了 packQty：若该物料刚好有一条同件数的 CARTON 码，回填箱码 GTIN（多条则不猜）
+    if (!cartonGtin) {
+      const same = packRows.filter((r) => Math.abs(Number(r.packQty) - packQty) < 1e-6);
+      if (same.length === 1) cartonGtin = same[0].gtin;
+    }
+
+    return {
+      material,
+      skuCode: material.code,
+      productName: material.name,
+      unit: material.unit,
+      cartonGtin,
+      packQty,
+    };
+  }
+
+  /** SSCC 序列（PG 序列，全局唯一；DDL 见 wms_p10_carton_label.sql） */
+  private async nextSerial(): Promise<number> {
+    const rows: Array<{ v: string }> = await this.packages.manager.query("select nextval('sscc_serial_seq') as v");
+    return Number(rows[0]?.v);
+  }
+
+  /** 逐箱打箱标；单箱失败不阻塞其它箱 */
+  private async printBoxes(
+    resolved: { skuCode: string; productName: string; unit: string; cartonGtin: string | null },
+    plan: ReturnType<typeof planBoxes>,
+    boxes: Array<{ sscc: string; qty: number; tail: boolean; boxNo: number }>,
+    dto: PackDto,
+  ) {
+    const templateCode = dto.templateCode || 'CARTON_LABEL_V1';
+    const printerRoute = dto.printerRoute || 'carton-station';
+    const errors: Array<{ sscc: string; error: string }> = [];
+    const warnings: string[] = [];
+    const perBox: Array<{ sscc: string; jobId: any; status: string; message?: string }> = [];
+
+    for (const b of boxes) {
+      try {
+        const res = await this.printGateway.createJob({
+          templateCode,
+          printerRoute,
+          idempotencyKey: `CARTON:${b.sscc}`,
+          source: 'wms.carton.pack',
+          copies: Math.max(1, Math.min(10, Number(dto.copies) || 1)),
+          variables: {
+            gtin: resolved.cartonGtin ?? '',
+            sscc: b.sscc,
+            qty: b.qty,
+            packQty: plan.packQty,
+            unit: resolved.unit,
+            batchNo: dto.batchNo ?? '',
+            productName: resolved.productName,
+            skuCode: resolved.skuCode,
+            boxNo: b.boxNo,
+            boxTotal: boxes.length,
+            tailText: b.tail ? '尾箱' : '',
+          },
+        });
+        perBox.push({ sscc: b.sscc, jobId: res.jobId, status: res.status, message: res.message });
+        if (res.status === 'skipped_no_printer') {
+          warnings.push(`第 ${b.boxNo} 箱：${res.message ?? '未绑定打印机，箱标未下发'}`);
+        }
+      } catch (e: any) {
+        errors.push({ sscc: b.sscc, error: e?.message ?? String(e) });
+        this.logger.warn(`箱标打印失败 sscc=${b.sscc}：${e?.message ?? e}`);
+      }
+    }
+    return { ok: errors.length === 0, errors, warnings, perBox };
+  }
+}

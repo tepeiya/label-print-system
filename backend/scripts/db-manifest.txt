@@ -38,6 +38,7 @@ inventory_alert.sql                        # 呆滞预警（依赖 permissions/m
 wms_p1_inbound.sql                         # WMS 收货/上架
 wms_p9_print_route_and_skip.sql          # P9 打印路由表 print_printer_routes + print_jobs 允许 skipped_no_printer
 wms_receipt_label_template.sql          # 收货标签模板 RECEIPT_LABEL_V1（WMS 过账自动打印寻址）
+wms_p10_carton_label.sql               # 装箱出码：sscc_serial_seq + 箱标模板 CARTON_LABEL_V1
 wms_p2_issuing.sql                         # WMS 工单/发料/退料
 udi_p1_trace.sql                           # UDI 追溯三表（udi_units/udi_packages/udi_events）
 wms_u5_material_gtin.sql                   # materials 增 gtin / udi_required

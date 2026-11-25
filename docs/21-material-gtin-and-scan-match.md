@@ -180,3 +180,50 @@ EntityPropertyNotFoundError: Property "code" was not found in "Template"
 2. `requirePrinter` 只对 WMS 内部调用生效；前端手打的 `POST /print/jobs` 不传该参数，仍走旧的"无打印机也可入队"语义。
 3. 路由变更无审计事件（只有 upsert/delete 的普通接口日志）。
 4. `db-expected-tables.txt` 已补 `print_printer_routes`（88 条）。
+
+## 8. 装箱出码：箱码生成 / 箱标 / 尾箱（2026-11-25 第三轮）
+
+### 8.1 做了什么
+
+| 能力 | 入口 | 说明 |
+|---|---|---|
+| 箱码生成 | `POST /wms/carton/pack` | 总件数 + 箱规 → 满箱 + 尾箱，逐个生成 **SSCC-18**（GS1 全球唯一物流码） |
+| 尾箱 | 同一接口 | 不足一箱也出一码，`qty` 记真实件数（如每箱 10、共 17 件 → 10 + 7），标签印「尾箱」 |
+| 箱标打印 | 同一接口 `print:true` | 每箱一张 `CARTON_LABEL_V1`（100×70），走 `printerRoute='carton-station'`；单箱失败不阻塞其它箱 |
+| 装箱清单 | `GET /wms/carton/packs` | 最近包装记录（SSCC / 层级 / GTIN / 件数 / 父箱 / 工单） |
+
+代码：`backend/src/udi/udi.sscc.calc.ts`（纯函数 + 10 条单测）、`backend/src/wms/carton/carton-pack.service.ts`、`carton-pack.controller.ts`、`backend/scripts/wms_p10_carton_label.sql`（`sscc_serial_seq` 序列 + 箱标模板种子）。
+
+### 8.2 请求示例
+
+```json
+POST /api/v1/wms/carton/pack
+{ "skuCode": "M-PEAR-001", "totalQty": 27, "packQty": 10,
+  "batchNo": "LOT-C27", "print": true, "printerRoute": "carton-station" }
+```
+
+返回 `fullBoxes=2, tailQty=7, boxCount=3`，三箱 SSCC：`069012340000000016 / …023 / …030`（结构 = 扩展位0 + 前缀6901234 + 序列9位 + 校验位）。
+
+箱规解析规则：只传 `skuCode` 时要求该物料只有一档 CARTON；多档（如 10 装 + 1000 装）必须用 `gtin` 或 `packQty` 指定，否则 400 并把可选项列出来。`packQty` 与箱码登记的件数不一致也会 400（防止 10 装箱打出 1000 的标签）。
+
+### 8.3 实测（本机 PG14 + 后端 :3202）
+
+| 场景 | 入参 | 结果 |
+|---|---|---|
+| 满箱 + 尾箱 | 27 件 / 每箱 10 | 3 箱：10 / 10 / 7（第 3 箱 `tail:true`） |
+| 正好整箱 | 10 件 / 每箱 10 | 1 箱 10，`tailQty=0` |
+| 大箱规 | 2500 件，`gtin=…2305`（1000/箱） | 1000 / 1000 / 500 尾箱 |
+| 多档不指定 | 只传 `skuCode` + `totalQty` | 400「有多档箱规（…=10、…=1000），请用 gtin 或 packQty 指定」 |
+| 无打印机 | `print:true`，无 `carton-station` 路由 | 每箱 `skipped_no_printer` + 顶层 `warnings`，装箱本身成功 |
+| 配好路由 | 路由 `carton-station → printer#1(image)` | 箱标 `queued → success`，`print_logs success` |
+
+顺手修掉一个真 bug：`PrintGateway` 之前把响应当成扁平对象读，而内部接口实际返回 `{code,message,data:{jobId,status}}`，导致 `status` 永远是 `'ok'`——所有按 `status` 判断的逻辑（含收货打印）都失效。已统一解包（`data.data ?? data`），收货 `results[].print` 现在是 `{jobId,status,message,warnings}` 扁平结构。
+
+### 8.4 边界
+
+1. 箱码是 **SSCC 物流码**，不是新的产品 GTIN：箱内单品不自动关联（要看单品级父子关系仍走 UDI `POST /udi/packages` + `udi_units.package_sscc`）。
+2. 装箱 **不动库存**，只登记包装；库存数量仍以收货/发料为准。
+3. 箱标模板 `CARTON_LABEL_V1` 是通用箱标；医疗 UDI 合规箱标（DataMatrix + (17)效期）仍用代码常量 `UDI_CARTON_V1`，需自行导入。
+4. 尾箱默认允许（`allowTail:false` 时出现尾箱直接 400），没有"尾箱必须并入下一箱"的业务规则。
+5. SSCC 序列全局共享（`sscc_serial_seq`），不是按租户分段；公司前缀用 `GS1_COMPANY_PREFIX`（默认演示值 `6901234`），上线必须换成客户真实前缀。
+6. 装箱接口没有防连点幂等键：重复提交会生成新箱子（语义上是"又装了一箱"），前端要自己防抖。

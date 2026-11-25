@@ -62,15 +62,22 @@ export class PrintGateway {
         signal: controller.signal,
       });
       const data: any = await resp.json().catch(() => ({}));
+      // 全局响应拦截器把业务结果包在 data 里：{code,message,data:{jobId,status,...},idempotent}
+      // 这里统一解包，避免调用方拿到 status='ok' 而误判打印状态
+      const payload: any = data?.data ?? data ?? {};
       if (resp.ok) {
-        return { ...data, idempotent: data.idempotent === true } as PrintJobResult;
+        return {
+          ...payload,
+          idempotent: (payload?.idempotent ?? data?.idempotent) === true,
+          message: payload?.message ?? data?.message,
+        } as PrintJobResult;
       }
       // 4xx/5xx：带 errorCode 返回，交给调用方记 failed 审计
       return {
-        jobId: data?.jobId ?? '',
-        status: 'failed',
-        errorCode: data?.errorCode || data?.code || `HTTP_${resp.status}`,
-        message: data?.message ?? '打印服务返回错误',
+        jobId: payload?.jobId ?? '',
+        status: payload?.status ?? 'failed',
+        errorCode: payload?.errorCode || data?.code || `HTTP_${resp.status}`,
+        message: payload?.message ?? data?.message ?? '打印服务返回错误',
       };
     } catch (e: any) {
       const timedOut = e?.name === 'AbortError';
