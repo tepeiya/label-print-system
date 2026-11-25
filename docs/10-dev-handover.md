@@ -2925,3 +2925,13 @@ MaxiCode/HIBC/PZN 已有 bwip 位图通道 + 能力表登记（§10.29.2），GS
 - 前端：`/quality/inspections`、`/quality/releases`、`/quality/batch-records`；菜单「质量管理」（`quality` / `CircleCheck` / 模块门 `quality.qms`）。
 - 验证：新增 21 例定向单测（`src/quality/__tests__/quality-gates.test.ts`）；`/tmp/verify_quality.py` 46 请求 0 断言失败（含 400 拦截 + 库存零变动、错密码 401、检验 PASS 后批次仍 PENDING）。
 - 未做（写在 `docs/36 §8`）：不合格品处置单、放行强制绑定批记录 APPROVED、PDA 检验页、FROZEN 批量操作页。
+
+### 10.43 MCP 入口容器化：Dockerfile + compose `mcp` + nginx 反代（2026-11-25，已实施）
+
+> 承接「MCP 服务怎么起」这个部署空洞：之前 `apps/mcp-server` 只有 npm 启动方式，`docker-compose.yml` 里没有这个服务，客户问「容器里怎么起」只能手工教。
+
+- 新增 `apps/mcp-server/Dockerfile`：多阶段（deps `npm ci` → build `tsc` + `test -f dist/http.js` → runner 只留 `dist` + `npm ci --omit=dev`），非 root `mcp:10002`，健康检查用 node `fetch` 打 `/health`（不额外装 curl）。配套 `.dockerignore`（排除 node_modules/dist）。
+- `docker-compose.yml` 新增 **`mcp`** 服务：只 `depends_on api`（**不接 postgres/redis**，进程无库凭据），宿主 `3300:3300`，`AGENT_API_BASE=http://api:3200/api/v1`，`SESSION_IDLE_MS` / `MAX_BODY_BYTES` 走 `.env` 可覆盖；顺手把 `db-init` 注释里的旧表数 77 改为 87/91。
+- 新增 `deploy/nginx/mcp.conf`：`/mcp` 反代片段，硬要求三条 —— `proxy_buffering off`（SSE 不缓冲，否则「initialize 成功、之后无消息」）、透传 `Authorization`、读超时 3600s；另给 `/mcp-health`。**版本坑**：`http2 on;` 仅 nginx ≥1.25 可用，1.18 会 `unknown directive`，片段默认用 `listen 443 ssl http2;` 兼容旧版。
+- 验证（本环境无 docker daemon，按 `docs/25 §5` 同口径做等价实证）：`npm ci` 98 包 2s；`tsc` 产出两入口；`npm ci --omit=dev` 29MB，`node dist/http.js` 起得来、`/health` 200、`initialize`+`tools/list` = 29 工具；`mcp.conf` 用自签证书真加载到 nginx 1.18，经 `https://…/mcp` 再来一遍：`/mcp-health` 200、`initialize` 200 `text/event-stream` + 会话号、`tools/list` 29、无 token 401。
+- 未做：真 `docker build` / 镜像推送（无 daemon）、生产域名与真证书联调。

@@ -13,7 +13,9 @@
 | `backend/Dockerfile` | 多阶段构建（deps → tsc build → prod 运行层），非 root 用户，产物 `dist/src/main.js` / `dist/worker.js` |
 | `deploy/frontend.Dockerfile` | console / platform / pda 共用模板，`--build-arg APP=console\|platform\|pda` |
 | `deploy/nginx/frontend.conf` | 静态资源 + history 路由回落 + `/api` 反代到 `api:3200` |
-| `docker-compose.yml` | 重写：`db-init` 一次性建库 → `api`/`worker` → 三个前端；老 web 收进 `profiles: legacy` |
+| `apps/mcp-server/Dockerfile`、`.dockerignore` | MCP 入口镜像（多阶段，非 root，只留 dist + 生产依赖 29MB） |
+| `deploy/nginx/mcp.conf` | MCP 反代片段：`/mcp` 透传 Authorization、`proxy_buffering off`（SSE）、读超时 3600s |
+| `docker-compose.yml` | 重写：`db-init` 一次性建库 → `api`/`worker` → 三个前端；老 web 收进 `profiles: legacy`；2026-11-25 增 `mcp`（只依赖 api，3300） |
 | `backend/.dockerignore`、`.dockerignore` | 排除 node_modules / dist / web vendor |
 | `backend/scripts/db-manifest.txt` | **建库顺序唯一真源**（32 步） |
 | `backend/scripts/db-init.sh` | 按清单执行；`--seed-demo` / `--dry-run` / `--verify-only` |
@@ -33,6 +35,7 @@
 | 3 | console `:5173` / platform `:5181` 能登录进菜单 | **等价实证（静态+反代）** | 独立 nginx 实例加载 `deploy/nginx/frontend.conf`：`/` 200、`/templates` 200（history 回落）、`POST /api/v1/auth/login` 201 取到 token |
 | 4 | `pnpm build` 零报错产出 `dist`，`node dist/src/main.js` 能起服务 | **实证** | `tsc` 产出 256 个 js / 256 文件；`node dist/src/main.js` 监听 3200，`POST /auth/login` 返回 201 + `accessToken` |
 | 5 | 建库顺序固化在 manifest、幂等、缺表检测返回 0 | **实证** | 连续 3 次重跑全绿；`--verify-only` 输出 `PASS: 期望 87 张表，实际 91 张（87 张业务表 + 4 张框架表），全部命中` |
+| 6 | MCP 入口镜像可构建可运行（2026-11-25 补） | **等价实证（无 docker daemon）** | 按 `apps/mcp-server/Dockerfile` 三层分别执行：`npm ci` 98 包 2s；`tsc` 产出 `dist/http.js`/`dist/index.js`；`npm ci --omit=dev` 仅 29MB，`node dist/http.js` 起服务，`/health` 200，真实 `initialize`+`tools/list` = 29 工具 |
 
 > **未实证部分须在真 docker 环境补验**（一条命令）：`docker compose up -d --build && curl -s -X POST localhost:3200/api/v1/auth/login -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin123"}'`
 > 属于 `BLOCKED(缺 docker daemon)`，不是"已验证"。
@@ -69,5 +72,7 @@
 ## 6. 本阶段未做（留给后续阶段）
 
 - `/health` 端点（D2）——当前 compose 用 TCP 探活
-- 镜像真实 build / 推送（需 docker 环境）
+- 镜像真实 build / 推送（需 docker 环境）；含 `api` / 前端 / **`mcp`** 三个镜像
+- `deploy/nginx/mcp.conf` **已在本机 nginx 1.18 真加载并跑通**（自签证书 + 反代到 3399：`/mcp-health` 200、
+  `initialize` 200 text/event-stream 拿到会话号、`tools/list` 29 个、无 token 401）；仍未做的只是「生产域名 + 真证书」那层
 - 前端镜像的 `.dockerignore` 实测（未跑过 build）

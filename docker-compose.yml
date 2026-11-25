@@ -7,6 +7,7 @@
 # 端口约定（与 docs/10-dev-handover.md §10.1.2 一致）：
 #   后端 API 3200 / PostgreSQL 5433 / Redis 6380
 #   console 租户后台 5173 / platform 平台后台 5181 / pda 手持 5185
+#   MCP 入口（Streamable HTTP）3300 —— 只给外部 Agent 用，浏览器/前端没必要暴露
 #   老前端 web 5180 仅在 profiles=legacy 时启动（已弃用，只作行为对照）
 #   端口 3000 属其他项目，禁止占用。
 #
@@ -49,7 +50,7 @@ services:
       retries: 20
 
   # 一次性建库任务：按 backend/scripts/db-manifest.txt 的固定顺序执行全部 SQL（全部幂等），
-  # 结束后自检 77 张表是否齐全。api / worker 必须等它成功退出再启动。
+  # 结束后自检 87 张表是否齐全（实际 91 张 = 87 业务表 + 4 框架表）。api / worker 必须等它成功退出再启动。
   db-init:
     image: postgres:16-bookworm
     depends_on:
@@ -101,6 +102,33 @@ services:
     depends_on:
       db-init: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  # MCP 入口（apps/mcp-server）：给外部 Agent（Claude Desktop / Code / 客户自有 Agent）接的通道。
+  # - 只依赖 api：不接 postgres/redis，进程无数据库凭据；一 token 一会话一租户，token 由租户后台签发。
+  # - 不在容器里做 TLS：生产前面挂一层反代，把 https://<域名>/mcp → mcp:3300/mcp（示例见 apps/mcp-server/README.md）。
+  # - stdio 传输不进容器：本地 Claude Desktop 用 `node apps/mcp-server/dist/index.js` 直接拉起。
+  mcp:
+    build:
+      context: ./apps/mcp-server
+      dockerfile: Dockerfile
+    image: labelflow/mcp:dev
+    environment:
+      AGENT_API_BASE: http://api:3200/api/v1
+      PORT: "3300"
+      HOST: 0.0.0.0
+      SESSION_IDLE_MS: ${MCP_SESSION_IDLE_MS:-1800000}
+      MAX_BODY_BYTES: ${MCP_MAX_BODY_BYTES:-1048576}
+      NODE_ENV: ${NODE_ENV:-development}
+    depends_on:
+      api: { condition: service_healthy }
+    ports: ["3300:3300"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3300/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
   # 租户后台（Vue 3，nginx 反代 /api → api:3200）

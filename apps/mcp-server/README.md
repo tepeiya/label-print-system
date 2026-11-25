@@ -36,6 +36,43 @@ npm run selftest:http                       # 自拉 http 进程做端到端断�
 | `SESSION_IDLE_MS` | `1800000` | 空闲会话回收阈值（客户端只断连不发 DELETE 时兜底） |
 | `MAX_BODY_BYTES` | `1048576` | 单次 JSON-RPC 请求体上限 |
 
+## Docker / compose 部署（推荐给客户环境）
+
+仓库根 `docker-compose.yml` 里的 **`mcp`** 服务就是这个镜像（`apps/mcp-server/Dockerfile`，多阶段
+deps → tsc → 只留 `dist` + 生产依赖，非 root 用户 `mcp:10002`）：
+
+```bash
+docker compose up -d --build mcp        # 依赖 api 健康后才启动；不依赖 postgres/redis
+docker compose logs -f mcp
+curl -s http://localhost:3300/health    # {"ok":true,"sessions":N}
+```
+
+容器内环境（compose 已配好，改宿主 `.env` 即可覆盖）：
+
+| 变量 | compose 默认 | 说明 |
+| --- | --- | --- |
+| `AGENT_API_BASE` | `http://api:3200/api/v1` | 走 compose 内网，**不要**写宿主 IP |
+| `PORT` / `HOST` | `3300` / `0.0.0.0` | 宿主映射 `3300:3300` |
+| `SESSION_IDLE_MS` | `${MCP_SESSION_IDLE_MS:-1800000}` | 空闲会话回收 |
+| `MAX_BODY_BYTES` | `${MCP_MAX_BODY_BYTES:-1048576}` | 请求体上限 |
+
+**TLS 在反代层**：镜像自身不带 https。`deploy/nginx/mcp.conf` 是可直接改域名用的片段，
+关键三行是 `proxy_buffering off`（SSE 不缓冲）、透传 `Authorization`、读超时 3600s。
+反代就绪后客户端 URL 写 `https://<域名>/mcp`，探活用 `/mcp-health`。
+
+**stdio 不进容器**：`index.js` 要由客户端的 MCP 进程直接拉起，容器跑的是 `http.js`。
+
+镜像没有 docker daemon 可跑时，做过等价验证（2026-11-25，本机 PG14 + 后端 :3202 + nginx 1.18）：
+按 Dockerfile 三层分别执行 —— `npm ci` 98 包 2s 成功、`tsc` 产出 `dist/http.js`+`dist/index.js`、
+`npm ci --omit=dev` 仅 29MB 且 `node dist/http.js` 起得来、`GET /health` 200、
+真实 `initialize`+`tools/list` = **29 个**工具；再把 `deploy/nginx/mcp.conf` 用自签证书加载起来，
+经 `https://…/mcp` 走一遍：`/mcp-health` 200、`initialize` 200 `text/event-stream` + 会话号、
+`tools/list` 29、无 token 401（Authorization 透传正常）。**仍未做**：真 `docker build` / 镜像推送
+（环境无 daemon，与 `docs/25 §5` 同口径）。
+
+版本坑：`http2 on;` 是 nginx ≥1.25 的写法，1.18/1.20 会报 `unknown directive`；片段里默认用
+`listen 443 ssl http2;`（兼容旧版），换新版时按文件内注释改。
+
 ## Streamable HTTP 模式（SaaS 客户接入自有 Agent）
 
 ```bash

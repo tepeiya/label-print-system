@@ -188,6 +188,7 @@ docker compose up -d --build
 | 后端 API | http://localhost:3200/api/v1 | 直连调试用 |
 | PostgreSQL | localhost:5433 | 宿主映射，容器内 `postgres:5432` |
 | Redis | localhost:6380 | 宿主映射，容器内 `redis:6379` |
+| MCP 入口 | http://localhost:3300/mcp | 外部 Agent 接入（Streamable HTTP），探活 `/health`；生产须套 TLS 反代 |
 
 默认账号：`admin / admin123`（租户 `default`）；`operator / admin123`。
 
@@ -202,6 +203,9 @@ curl -s -X POST http://localhost:3200/api/v1/auth/login \
 # 期望 201 + {"code":0,...,"accessToken":"eyJ..."}
 ```
 
+> MCP 入口说明：租户末开通 `agent` 模块时 `/agents` 会返回 4031，MCP 客户端也拿不到工具——先在「Agent 接入 → Agent 客户端」签一个 `lfagent_` token。
+> 它不接数据库、进程无库凭据，`docker compose up -d --build mcp` 单独起/重启即可；对外暴露务必走反代（`deploy/nginx/mcp.conf`），token 不要写进前端。
+>
 > 老前端 `web/` 已弃用，仅在需要行为对照时启动：`docker compose --profile legacy up -d web`（5180）。
 
 ### 4.2 本地分进程（改代码时）
