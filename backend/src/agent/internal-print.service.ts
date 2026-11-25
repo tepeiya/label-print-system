@@ -16,6 +16,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Template } from '../entities/template.entity';
+import { PrintPrinterRoute } from '../entities/print.entity';
 import { PrintService } from '../print/print.service';
 import { tenantStorage } from '../common/tenant.context';
 import { argsHash } from './agent.calc';
@@ -29,6 +30,8 @@ export interface InternalPrintResult {
   status: string;
   idempotent?: boolean;
   warnings?: string[];
+  /** status=skipped_no_printer 时给调用方的说明 */
+  message?: string;
 }
 
 @Injectable()
@@ -39,6 +42,7 @@ export class InternalPrintService {
 
   constructor(
     @InjectRepository(Template) private templates: Repository<Template>,
+    @InjectRepository(PrintPrinterRoute) private routes: Repository<PrintPrinterRoute>,
     private print: PrintService,
     private agent: AgentService,
     private idem: IdempotencyService,
@@ -108,13 +112,30 @@ export class InternalPrintService {
       this.logger.warn(`幂等占坑接管重试 key=${idemKey}`);
     }
 
-    // 6) 组变量：variables 即模板数据行；printerRoute 阶段一仅作审计记录，
-    //    物理路由解析在打印服务内（当前 createJob 用 printerId，逻辑路由无映射时留空由打印机默认策略兜底）
+    // 6) 逻辑路由 → 物理打印机（P9：print_printer_routes，按 priority 取第一台）
+    //    无映射时不兜底"默认打印机"，而是明确 skipped_no_printer，避免以为打了其实没出纸。
+    let resolvedPrinterId: number | null = null;
+    if (body.printerRoute) {
+      const routeRows = await this.routes.find({
+        where: { tenantId: ctx.tenantId, routeCode: body.printerRoute, enabled: true },
+        order: { priority: 'ASC', id: 'ASC' },
+      });
+      resolvedPrinterId = routeRows.length ? Number(routeRows[0].printerId) : null;
+      if (!routeRows.length) {
+        warnings.push(`printerRoute「${body.printerRoute}」未配置打印机映射（print_printer_routes），本次标记 skipped_no_printer`);
+      }
+    } else {
+      warnings.push('未指定 printerRoute，内部打印需要逻辑路由才能定位物理打印机');
+    }
+
+    // 7) 组变量：variables 即模板数据行
     const rows = [body.variables ?? {}];
     const createDto: any = {
       templateId: tpl.id,
       rows,
       copies: body.copies ?? 1,
+      printerId: resolvedPrinterId ?? undefined,
+      requirePrinter: true,
       params: { source: body.source ?? 'wms', printerRoute: body.printerRoute ?? null, wmsIdemKey: idemKey },
     };
 
@@ -126,10 +147,11 @@ export class InternalPrintService {
         roles: [], modules: [], permissions: [], plan: null, features: {}, dataScopes: null, dataSourceKey: 'default',
       }, () => this.print.createJob(createDto));
       const result: InternalPrintResult = {
-        jobId: job.jobId, status: job.status,
+        jobId: (job as any).jobId, status: (job as any).status,
+        ...((job as any).message ? { message: (job as any).message } : {}),
         ...(warnings.length ? { warnings } : {}),
       };
-      await this.idem.finish(claim.row.id, { jobId: job.jobId, status: job.status });
+      await this.idem.finish(claim.row.id, { jobId: (job as any).jobId, status: (job as any).status });
       void this.agent.touch(Number(rec.token.id));
       return result;
     } catch (e) {

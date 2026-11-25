@@ -141,8 +141,8 @@
 | 前置 | 缺失时的表现 |
 |---|---|
 | `WMS_SERVICE_TOKEN`（Agent token，scope `print:job:write`） | `print.status=failed`，`WMS_SERVICE_TOKEN 未配置，无法调用打印服务` |
-| 租户里存在 `code=RECEIPT_LABEL_V1` 的模板 | 404 `PRINT_TEMPLATE_NOT_FOUND`（演示种子 **templates 表是空的**，必须自建） |
-| `printers` 绑定打印机 + 打印代理在线 | 任务仍会 `status=success`，但 `printer_id` 为空、**一张纸也没出**（image 通道兜底）★静默成功 |
+| 租户里存在 `code=RECEIPT_LABEL_V1` 的模板 | 404 `PRINT_TEMPLATE_NOT_FOUND`（**已由种子脚本补齐**，见 §7.4 #1；老库跑一次 `wms_receipt_label_template.sql` 即可） |
+| `printers` 绑定打印机 + 打印代理在线 | WMS 内部调用（`requirePrinter=true`）标 `skipped_no_printer` 且 `printer_id` 为空；前端手打仍是旧语义（见 §7.4 边界 2） |
 
 ### 7.3 本轮修掉的 bug
 
@@ -154,8 +154,29 @@ EntityPropertyNotFoundError: Property "code" was not found in "Template"
 
 即"token 和模板都配好了也打不出来"。已在 `backend/src/entities/template.entity.ts` 补 `code` 映射（对齐 DDL 的 `ux_templates_tenant_code`）。修复后实测：过账返回 `print={jobId:1,status:"queued"}`，`print_jobs` 1 张 `success`、`print_logs` 1 条 `success`。
 
-### 7.4 待办
+### 7.4 三件待办已全部落地（2026-11-25 第二轮）
 
-1. 种子加一份 `RECEIPT_LABEL_V1` 收货标签模板（现在为空，新租户过账必然 404）。
-2. 无打印机时不该报 `success`：建议任务标 `skipped_no_printer` 或在 `results[].print` 带 `warning`，避免"以为打了"。
-3. `printerRoute='receipt-station'` 尚未映射到物理打印机，多打印机场景只能靠默认策略，需要路由表。
+| # | 待办 | 落地方案 | 真库实测 |
+|---|---|---|---|
+| 1 | 种子没有收货标签模板 | `backend/scripts/wms_receipt_label_template.sql`：按租户 upsert `code=RECEIPT_LABEL_V1`（50×30mm、7 元素、变量 `skuCode/skuName/batchNo/qty/unit/receiptNo/lineNo`）；存量只覆盖"仍是种子描述"的行，客户改过的不动 | 建库后 `templates` 自动有 1 行，`jsonb_array_length(elements)=7` |
+| 2 | 无打印机静默 success | `PrintService.createJob` 新增 `requirePrinter`；取不到 printerId 就**不入队**，直接落 `print_jobs.status='skipped_no_printer'`（`params.skipReason=no_printer`）+ 审计 `print.job.skipped_no_printer`，返回带 `message`/`warnings`；`InternalPrintService` 传 `requirePrinter:true`；`wms_p9_print_route_and_skip.sql` 扩 status CHECK | 过账返回 `print.data.status=skipped_no_printer`，`print_jobs.printer_id` 为空，主链路照常 RECEIVED |
+| 3 | printerRoute 没有物理映射 | 新表 `print_printer_routes(tenant_id,route_code,printer_id,enabled,priority,remark)` + 实体 `PrintPrinterRoute` + `GET/POST/DELETE /print/printer-routes`（`print:job:read` / `print:job:write` + admin/operator）；解析规则：同租户同 routeCode、`enabled=true`，取 `priority` 最小的一台 | 建路由后过账 `status=queued` → 异步 `success`；priority=0 的新路由抢过 priority=1；`enabled=false` 时回落 `skipped_no_printer` |
+
+**顺手查出的第二个真 bug**：模板首版条码框宽 30mm，而 `M-PEAR-001`（10 字符 CODE128）实测需 41.3mm，被 `barcode-guard` 拦下，任务直接 `failed`（错误：`条码自检未通过…会溢出被切`）。改成条码横贯 46mm + 自带明文后，同一单据 `success`。
+
+修前后对照（同一台 `image` 打印机、同一 SKU）：
+
+| 单据 | 模板版式 | 结果 |
+|---|---|---|
+| GRN-R10 | 无打印机/无路由 | `skipped_no_printer`（job 1） |
+| GRN-R11 | 条码框 30mm | `failed`（条码溢出 41.3 > 30mm） |
+| GRN-R13 | 条码框 46mm | `success`（done=1） |
+| GRN-R14 | 两台打印机、priority 0/1 | 命中 priority=0 那台，`success` |
+| GRN-R15 | 路由 `enabled=false` | 回落 `skipped_no_printer` |
+
+**仍然没做的边界**（别当成已具备）：
+
+1. 路由表没有按"标签尺寸/模板"匹配，也不支持多台同时出纸（一台标签只落一台机）。
+2. `requirePrinter` 只对 WMS 内部调用生效；前端手打的 `POST /print/jobs` 不传该参数，仍走旧的"无打印机也可入队"语义。
+3. 路由变更无审计事件（只有 upsert/delete 的普通接口日志）。
+4. `db-expected-tables.txt` 已补 `print_printer_routes`（88 条）。

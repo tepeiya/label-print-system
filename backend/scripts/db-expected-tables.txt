@@ -85,3 +85,4 @@ qa_releases
 batch_records
 batch_record_steps
 qc_status_log
+print_printer_routes

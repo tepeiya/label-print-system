@@ -110,7 +110,14 @@ export class PrintService {
   }
 
   /** 创建批量打印任务：预分配流水号段 → 入队 → 立即返回 */
-  async createJob(dto: { templateId?: number; printerId?: number; rows?: any[]; copies?: number; params?: any; templateContent?: any; serialMap?: Record<string, string[]> }) {
+  /**
+   * @param requirePrinter P9：WMS 自动打印等"必须落到物理打印机"的场景传 true。
+   *   无 printerId 时不投队列、直接落一条 skipped_no_printer 任务（避免静默 success 让人以为已出纸）。
+   */
+  async createJob(dto: {
+    templateId?: number; printerId?: number; rows?: any[]; copies?: number; params?: any;
+    templateContent?: any; serialMap?: Record<string, string[]>; requirePrinter?: boolean;
+  }) {
     const tenantId = useTenantId();
     const tpl = dto.templateContent
       ? { id: dto.templateId ?? 0, content: dto.templateContent }
@@ -145,6 +152,27 @@ export class PrintService {
     if (dto.printerId) {
       printer = await this.printers.findOne({ where: { id: dto.printerId, tenantId } });
       if (!printer) throw new NotFoundException('打印机不存在');
+    }
+
+    // P9：必须有物理打印机才继续。此前无打印机也会走 image 通道并标记 success，造成"以为打了"。
+    if (dto.requirePrinter && !printer) {
+      const { userId } = useTenant();
+      const skippedJob = await this.jobs.save({
+        tenantId, templateId: dto.templateId ?? 0,
+        total: count, status: 'skipped_no_printer',
+        params: { ...(dto.params ?? {}), copies, skipReason: 'no_printer', requirePrinter: true },
+        dataRef: { rows, serialMap: {}, templateContent: tpl.content },
+        createdBy: userId,
+      });
+      await this.audit.write(tenantId, 'print.job.skipped_no_printer', {
+        jobId: skippedJob.id, templateId: dto.templateId ?? 0, total: count,
+        printerRoute: (dto.params as any)?.printerRoute ?? null, reason: 'no printer bound',
+      }, undefined, 'print_job', skippedJob.id);
+      return {
+        jobId: skippedJob.id, status: 'skipped_no_printer', total: count, quotaWarn,
+        governanceWarnings: gov.warnings, skipped: true,
+        message: '未绑定打印机（printerRoute 无映射或未指定 printerId），标签未下发；收货主链路不阻塞',
+      };
     }
 
     // 为每个 serial 元素预分配号段（行锁+一次性号段，保证不重号）

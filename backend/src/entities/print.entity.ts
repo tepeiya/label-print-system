@@ -116,3 +116,22 @@ export class TenantBackup {
   /** 实际备份数据（gzip(JSON)），最小实现直接存 DB；未来可迁移到对象存储 */
   @Column({ type: 'bytea', nullable: true }) data: Buffer;
 }
+
+/**
+ * 逻辑打印路由 → 物理打印机（P9）。
+ * WMS 只认识 routeCode（如 receipt-station），打印侧按 (tenant, route_code) 解析到 printer_id；
+ * 一个路由可挂多台打印机，按 priority 升序取第一台（主备/多工位扩展）。
+ */
+@Entity('print_printer_routes')
+@Index('ux_print_routes_tenant_route_printer', ['tenantId', 'routeCode', 'printerId'], { unique: true })
+export class PrintPrinterRoute {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ name: 'tenant_id' }) tenantId: number;
+  @Column({ name: 'route_code', length: 80 }) routeCode: string;
+  @Column({ name: 'printer_id' }) printerId: number;
+  @Column({ default: true }) enabled: boolean;
+  @Column({ default: 10 }) priority: number;
+  @Column({ length: 200, type: 'varchar', nullable: true }) remark: string | null;
+  @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
+  @UpdateDateColumn({ name: 'updated_at' }) updatedAt: Date;
+}

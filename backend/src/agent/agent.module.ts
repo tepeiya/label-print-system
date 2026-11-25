@@ -27,6 +27,7 @@ import { SaasModule } from '../saas/saas.module';
 import { BillingModule } from '../billing/billing.module';
 import { AuditModule } from '../audit/audit.module';
 import { TemplateModule } from '../template/template.module';
+import { PrintPrinterRoute } from '../entities/print.entity';
 import { PrintModule } from '../print/print.module';
 import { PrinterModule } from '../printer/printer.module';
 import { DataSourceModule } from '../datasource/datasource.module';
@@ -37,6 +38,7 @@ import { JobsModule } from '../jobs/jobs.module';
   imports: [
     TypeOrmModule.forFeature([
       AgentClient, AgentToken, AgentApproval, ToolIdempotency, AgentPrompt, AgentPromptVersion, Tenant, Template,
+      PrintPrinterRoute,
     ]),
     InventoryModule, SaasModule, BillingModule, AuditModule, TemplateModule, PrintModule,
     PrinterModule, DataSourceModule, JobsModule,
