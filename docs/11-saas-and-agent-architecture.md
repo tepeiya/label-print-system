@@ -744,6 +744,8 @@ Prompt 是差异化卖点：客户开箱即用，无需自己写提示词。
 
 ### 11.7.6 审计与审批流
 
+> 高危接口的完整风险清单、七道防线与上线配置项见 `docs/37-mcp-high-risk-guardrails.md`（2026-11-25，含 `inventory.transfer` 质量状态洗白缺口的修复记录）。
+
 ```
 Agent 调用 print.submit_job
    ├─ 有有效 approval_id → 校验 args_hash 一致 → 执行 → 置 consumed

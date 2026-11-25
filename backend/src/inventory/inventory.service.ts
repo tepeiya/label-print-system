@@ -1571,6 +1571,16 @@ export class InventoryService {
         `${from.name} 没有可调拨的「${material.name}」批次${onlyBatch ? `（批次 ${onlyBatch}）` : ''}`,
       );
     }
+    // 质量闸门（P0-1 对齐）：FIFO 分支只挑 RELEASED，但「指定批次」分支不过滤，
+    // 若不显式拦截，待检/不合格批次可经调拨流出，且目标仓新建行的 quality_status 默认 RELEASED → 状态被洗白。
+    if (onlyBatch) {
+      const qc = ((valid[0] as any).qualityStatus ?? 'RELEASED') as string;
+      if (qc !== 'RELEASED') {
+        throw new BadRequestException(
+          `批次 ${valid[0].batchNo} 质量状态为「${qcStatusLabel(qc)}」，不允许调拨（需先检验/放行）`,
+        );
+      }
+    }
     const plan = onlyBatch
       ? this.allocate([{ batch: valid[0], before: Number(valid[0].qty) }], qty, material)
       : this.allocate(valid.map((b) => ({ batch: b, before: Number(b.qty) })), qty, material);
@@ -1635,7 +1645,7 @@ export class InventoryService {
             await repo.save(repo.create({
               tenantId, materialId: material.id, warehouseId: to.id, batchNo: b.batchNo,
               qty: String(p.take), unitCostCents: b.unitCostCents, producedAt: b.producedAt, expiresAt: b.expiresAt,
-              locationId: toLocationId,
+              qualityStatus: ((b as any).qualityStatus ?? 'RELEASED'), locationId: toLocationId,
             }));
             moveLines.push({
               batchNo: b.batchNo, warehouseId: Number(to.id), qty: p.take,
