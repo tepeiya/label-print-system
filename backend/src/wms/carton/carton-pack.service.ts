@@ -126,6 +126,26 @@ export class CartonPackService {
     };
   }
 
+  /** 箱规查询：PDA/PC 选物料后拉档位，避免盲填 packQty */
+  async specs(skuCode: string) {
+    const tenantId = useTenantId();
+    if (!skuCode) throw new BadRequestException('skuCode 必填');
+    const material = await this.materials.findOne({ where: { tenantId, code: String(skuCode).trim(), active: true } });
+    if (!material) throw new NotFoundException(`物料不存在或已停用：${skuCode}`);
+    const rows = await this.gtins.find({ where: { tenantId, materialId: material.id }, order: { packQty: 'ASC' } });
+    const cartons = rows.filter((r) => r.packLevel === 'CARTON');
+    const pallets = rows.filter((r) => r.packLevel === 'PALLET');
+    return {
+      skuCode: material.code,
+      productName: material.name,
+      spec: material.spec,
+      unit: material.unit,
+      unitGtin: rows.find((r) => r.packLevel === 'UNIT')?.gtin ?? material.gtin ?? null,
+      cartons: cartons.map((r) => ({ gtin: r.gtin, packQty: Number(r.packQty), label: `${Number(r.packQty)}${material.unit}/箱` })),
+      pallets: pallets.map((r) => ({ gtin: r.gtin, packQty: Number(r.packQty), label: `${Number(r.packQty)}${material.unit}/托` })),
+    };
+  }
+
   /** 已装箱清单（最近的包装记录，供核对/补打箱标） */
   async listPacks(limit = 50) {
     const tenantId = useTenantId();

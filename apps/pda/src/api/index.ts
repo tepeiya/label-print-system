@@ -431,3 +431,48 @@ export const apiShipmentSign = (id: number, receiver?: string) =>
 export const shipStatusLabel = (s?: string) => ({
   CREATED: '待拣货', PICKING: '拣货中', PICKED: '已拣完', SHIPPED: '已出库', SIGNED: '已签收', CANCELLED: '已作废',
 } as Record<string, string>)[String(s)] || String(s ?? '—');
+
+// ---------- 装箱出码（SSCC / 箱标 / 尾箱） ----------
+export interface CartonPackOption { gtin: string; packQty: number; label: string }
+
+export interface CartonSpec {
+  skuCode: string;
+  productName: string;
+  spec: string | null;
+  unit: string;
+  unitGtin: string | null;
+  cartons: CartonPackOption[];
+  pallets: CartonPackOption[];
+}
+
+export interface CartonBox {
+  sscc: string;
+  qty: number;
+  tail: boolean;
+  boxNo: number;
+  printed: { sscc: string; jobId?: any; status?: string; message?: string } | null;
+}
+
+export interface CartonPackResult {
+  skuCode: string;
+  productName: string;
+  unit: string;
+  cartonGtin: string | null;
+  packQty: number;
+  totalQty: number;
+  fullBoxes: number;
+  tailQty: number;
+  boxCount: number;
+  boxes: CartonBox[];
+  print: { ok: boolean; errors: Array<{ sscc: string; error: string }>; warnings: string[] } | null;
+}
+
+/** 箱规档位：选完物料查一次，避免盲填每箱件数 */
+export const apiCartonSpec = (skuCode: string) => get<CartonSpec>('/wms/carton/specs', { skuCode });
+
+/** 装箱出码：总件数 + 箱规 → 满箱/尾箱 SSCC，可选打箱标 */
+export const apiCartonPack = (body: {
+  skuCode?: string; gtin?: string; totalQty: number; packQty?: number;
+  batchNo?: string; workOrderNo?: string; parentSscc?: string;
+  allowTail?: boolean; print?: boolean; printerRoute?: string; copies?: number;
+}) => post<CartonPackResult>('/wms/carton/pack', body);

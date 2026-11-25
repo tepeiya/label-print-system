@@ -33,6 +33,11 @@
           <span class="nm">成品发运</span>
           <span class="ds">发货单拣货、扫码核对、出库过账、签收</span>
         </button>
+        <button class="menu-tile" @click="router.push('/carton/pack')">
+          <span class="ic">🧰</span>
+          <span class="nm">装箱出码</span>
+          <span class="ds">按箱规装满箱 + 尾箱，一箱一码并打箱标</span>
+        </button>
         <button class="menu-tile" @click="router.push('/udi/verify')">
           <span class="ic">🧬</span>
           <span class="nm">UDI 复核</span>

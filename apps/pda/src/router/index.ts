@@ -11,6 +11,7 @@ import IssuingList from '@/views/IssuingList.vue';
 import IssuingDetail from '@/views/IssuingDetail.vue';
 import ShipmentList from '@/views/ShipmentList.vue';
 import ShipmentPick from '@/views/ShipmentPick.vue';
+import CartonPack from '@/views/CartonPack.vue';
 
 const router = createRouter({
   history: createWebHistory(),
@@ -25,6 +26,7 @@ const router = createRouter({
     { path: '/issuing/:id', name: 'issuing-detail', component: IssuingDetail, meta: { title: '发料作业' } },
     { path: '/shipments', name: 'shipments', component: ShipmentList, meta: { title: '成品发运' } },
     { path: '/shipments/:id', name: 'shipment-pick', component: ShipmentPick, meta: { title: '拣货出库' } },
+    { path: '/carton/pack', name: 'carton-pack', component: CartonPack, meta: { title: '装箱出码' } },
     { path: '/udi/verify', name: 'udi-verify', component: UdiVerify, meta: { title: 'UDI 扫码复核' } },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],

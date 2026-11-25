@@ -22,6 +22,12 @@ export class CartonPackController {
     return this.svc.pack(body ?? ({} as PackDto));
   }
 
+  /** 箱规档位（PDA 选完物料拉一次，决定 packQty / 箱码 GTIN） */
+  @Get('specs')
+  specs(@Query('skuCode') skuCode: string) {
+    return this.svc.specs(skuCode);
+  }
+
   @Get('packs')
   list(@Query('limit') limit?: string) {
     return this.svc.listPacks(Number(limit) || 50);
