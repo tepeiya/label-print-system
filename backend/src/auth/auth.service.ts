@@ -33,6 +33,19 @@ export class AuthService {
   ) {}
 
   /**
+   * 二次校验当前登录人密码（质量签批用）。
+   * 为什么需要：QA 放行是电子签名，必须证明"点下这个按钮的是这个人"，
+   * 只用 JWT 证明不了本人意愿（离开工位没锁屏就能被代签）。校验失败抛 401，由调用方转成业务错误提示。
+   */
+  async verifyPassword(userId: number, tenantId: number, password: string): Promise<boolean> {
+    const pwd = String(password ?? '');
+    if (!pwd) return false;
+    const user = await this.users.findOne({ where: { id: Number(userId), tenantId: Number(tenantId) } });
+    if (!user) return false;
+    return bcrypt.compare(pwd, user.passwordHash);
+  }
+
+  /**
    * 登录：按 tenantCode 查租户 → 租户内用户名+密码校验（密码 bcrypt 加盐哈希）。
    *
    * hostTenantCode（白标 D6，来自**已校验**自定义域名的解析结果）优先级高于请求体：

@@ -24,7 +24,7 @@ DB_PORT=5432 DB_NAME=labelflow_test ./scripts/db-acceptance.sh
 | 阶段 | 门 | 来源 | 结果 |
 |---|---|---|---|
 | 环境 | 数据库可连、Redis 可连 | psql / redis-cli | ✅ |
-| 库结构 | 77 张表全命中 | `scripts/db-verify.sh` | ✅ |
+| 库结构 | 87 张表全命中 | `scripts/db-verify.sh` | ✅ |
 | WMS 阶段二发料 | G1–G7 | `test/integration/wms-issuing.int.test.ts`（真 PG + 真 InventoryService/Gateway） | 7/7 ✅ |
 | WMS 阶段一收货 | T1–T5 | `test/integration/wms-inbound.int.test.ts`（真 PG，夹具自带） | 5/5 ✅ |
 | 打印网关 | P1–P4 + entity 探针 | `print-gateway-http` / `metadata-probe`（真 HTTP + 真库） | 5/5 ✅ |

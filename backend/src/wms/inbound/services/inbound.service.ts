@@ -351,6 +351,8 @@ export class InboundService {
         tenantId, skuId: line.skuId, warehouseId: r.warehouseId,
         locationId, batchNo: line.batchNo ?? undefined,
         qty, unit: sku.unit, refType: 'WMS_RECEIPT', refNo, idempotencyKey: stockIdemKey(r.receiptNo, line.lineNo),
+        // 质量闸门：qc_required 物料收货即入「待检」，检验合格前不可领料/发货
+        qcStatus: (sku as any).qcRequired ? 'PENDING' : undefined,
       });
 
       // 1) 行状态

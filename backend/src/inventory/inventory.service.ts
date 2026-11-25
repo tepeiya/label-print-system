@@ -882,6 +882,7 @@ export class InventoryService {
         .addSelect('w.id', 'warehouseId').addSelect('w.name', 'warehouse').addSelect('sb.batch_no', 'batchNo')
         .addSelect('to_char(sb.expires_at, \'YYYY-MM-DD\')', 'expiresAt')
         .addSelect('sb.qty', 'qty').addSelect('m.safety_stock', 'safetyStock')
+        .addSelect('sb.quality_status', 'qualityStatus')
         .orderBy('sb.expires_at', 'ASC', 'NULLS LAST').addOrderBy('sb.id', 'ASC')
         .limit(limit)
         .getRawMany();
@@ -932,13 +933,18 @@ export class InventoryService {
       .select('m.id', 'materialId').addSelect('m.code', 'code').addSelect('m.name', 'name')
       .addSelect('m.spec', 'spec').addSelect('m.unit', 'unit')
       .addSelect('SUM(sb.qty)', 'qty').addSelect('MAX(m.safety_stock)', 'safetyStock')
+      .addSelect(`COALESCE(SUM(CASE WHEN sb.quality_status = 'RELEASED' THEN sb.qty ELSE 0 END), 0)`, 'availableQty')
+      .addSelect(`COALESCE(SUM(CASE WHEN sb.quality_status <> 'RELEASED' THEN sb.qty ELSE 0 END), 0)`, 'lockedQty')
       .groupBy('m.id').addGroupBy('m.code').addGroupBy('m.name').addGroupBy('m.spec').addGroupBy('m.unit')
       .orderBy('m.code', 'ASC')
       .limit(limit)
       .getRawMany();
     const items = rows.map((r) => {
       const qty = Number(r.qty); const safety = Number(r.safetyStock ?? 0);
-      return { ...r, materialId: Number(r.materialId), qty, safetyStock: safety, belowSafety: qty < safety };
+      return {
+        ...r, materialId: Number(r.materialId), qty, safetyStock: safety, belowSafety: qty < safety,
+        availableQty: Number(r.availableQty ?? qty), lockedQty: Number(r.lockedQty ?? 0),
+      };
     });
     return { items, groupBy: 'sku', total: items.length };
   }
@@ -1248,12 +1254,19 @@ export class InventoryService {
   }
 
   /** 出库批次排序：先到期先出（NULLS LAST 由 Postgres ASC 默认保证），再按生产日期、再按 ID */
-  private fifoQb(tenantId: number, materialId: number, warehouseId: number, locationId?: number | null) {
+  private fifoQb(
+    tenantId: number, materialId: number, warehouseId: number,
+    locationId?: number | null, qualityStatuses?: string[] | null,
+  ) {
     const qb = this.batches.createQueryBuilder('sb')
       .where('sb.tenant_id = :tid', { tid: tenantId })
       .andWhere('sb.material_id = :mid', { mid: materialId })
       .andWhere('sb.warehouse_id = :wid', { wid: warehouseId })
       .andWhere('sb.qty > 0');
+    // 质量闸门：出库只能吃「合格」批次；传 null 表示不限（仓库间调拨等不涉及销售的场景）
+    if (qualityStatuses !== null) {
+      qb.andWhere('sb.quality_status IN (:...qcStatuses)', { qcStatuses: qualityStatuses ?? ['RELEASED'] });
+    }
     if (locationId != null) qb.andWhere('sb.location_id = :loc', { loc: Number(locationId) });
     return qb
       .orderBy('sb.expires_at', 'ASC')
@@ -1357,7 +1370,13 @@ export class InventoryService {
    */
   async adjustStock(
     tenantId: number,
-    args: { sku: string; warehouse?: string; batch_no?: string; delta: number; reason: string; location_id?: number | null },
+    args: {
+      sku: string; warehouse?: string; batch_no?: string; delta: number; reason: string; location_id?: number | null;
+      /** 入库时新建批次的初始质量状态（默认 RELEASED；qc 闸门下的收货传 PENDING） */
+      qc_status?: 'PENDING' | 'RELEASED' | 'REJECTED' | 'FROZEN';
+      /** 出库允许的质量状态（默认 ['RELEASED']；报废允许 ['RELEASED','REJECTED']） */
+      allow_qc?: string[];
+    },
     dryRun = false,
     operator = 'system',
   ): Promise<StockWriteOutcome> {
@@ -1367,6 +1386,8 @@ export class InventoryService {
     }
     const reason = String(args.reason ?? '').trim();
     if (reason.length < 2) throw new BadRequestException('reason 必填（至少 2 个字符，调整要留痕）');
+    const allowQc = args.allow_qc ?? ['RELEASED'];
+    const initQc: string = args.qc_status ?? 'RELEASED';
     const material = await this.findMaterial(tenantId, args.sku);
     const resolved = await this.resolveStockLocation(tenantId, material, args.warehouse, args.location_id);
     const warehouse = resolved.warehouse;
@@ -1387,7 +1408,7 @@ export class InventoryService {
             const repo = em.getRepository(StockBatch);
             await repo.save(repo.create({
               tenantId, materialId: material.id, warehouseId: warehouse.id,
-              batchNo, qty: String(delta), locationId,
+              batchNo, qty: String(delta), locationId, qualityStatus: initQc as any,
             }));
             await this.recordMoves(em, tenantId, 'in', material,
               [{ batchNo, warehouseId: Number(warehouse.id), qty: delta, before: 0, after: delta, locationId }], reason, operator);
@@ -1397,6 +1418,12 @@ export class InventoryService {
         return this.outcome(material, warehouse, dryRun, delta, [created], `批次 ${batchNo} 新建`);
       }
       const before = Number(batch.qty);
+      // 质量闸门：指定批次出库时先看状态（PENDING/REJECTED/FROZEN 一律不给走，除非调用方显式允许）
+      if (delta < 0 && !allowQc.includes(String((batch as any).qualityStatus ?? 'RELEASED'))) {
+        throw new BadRequestException(
+          `批次 ${batchNo} 质量状态为「${qcStatusLabel((batch as any).qualityStatus)}」，不允许出库（需先检验/放行）`,
+        );
+      }
       const after = round3(before + delta);
       if (after < -1e-9) {
         throw new BadRequestException(
@@ -1440,7 +1467,7 @@ export class InventoryService {
     }
 
     // 出库 FIFO：先算计划，再在事务里加锁复核（并发下不能被别的调用扣成负数）
-    const plan = await this.planFifo(tenantId, material, warehouse, Math.abs(delta), locationId);
+    const plan = await this.planFifo(tenantId, material, warehouse, Math.abs(delta), locationId, allowQc);
     const lines: StockMoveLine[] = plan.map((p) => ({
       batchNo: p.batch.batchNo, change: -p.take, before: p.before, after: round3(p.before - p.take),
       warehouse: warehouse.code, locationId: p.batch.locationId ?? null,
@@ -1469,6 +1496,47 @@ export class InventoryService {
       });
     }
     return this.outcome(material, warehouse, dryRun, delta, lines);
+  }
+
+  /**
+   * 批次质量状态变更（质量闸门唯一入口）
+   *   调用方：quality 模块（检验判定、放行签批、人工冻结/解冻）。
+   *   为什么放在 inventory：stock_batches 的写权限归库存 owner，质量模块不应直接 UPDATE 库存表；
+   *   每次变更同时落 qc_status_log（谁、从什么改成什么、依据哪张单），飞检要查这条链。
+   */
+  async setBatchQualityStatus(
+    tenantId: number,
+    args: {
+      sku: string; warehouse: string; batch_no: string;
+      status: 'PENDING' | 'RELEASED' | 'REJECTED' | 'FROZEN';
+      reason: string; ref_type?: string; ref_no?: string; operator?: string;
+    },
+  ): Promise<{ materialId: number; skuCode: string; batchNo: string; fromStatus: string; toStatus: string }> {
+    const reason = String(args.reason ?? '').trim();
+    if (reason.length < 2) throw new BadRequestException('质量状态变更必须写明原因（至少 2 个字符）');
+    const material = await this.findMaterial(tenantId, args.sku);
+    const warehouse = await this.findWarehouse(tenantId, args.warehouse);
+    const batchNo = String(args.batch_no ?? '').trim();
+    if (!batchNo) throw new BadRequestException('批次号必填');
+    const batch = await this.batches.findOne({
+      where: { tenantId, materialId: material.id, warehouseId: warehouse.id, batchNo },
+    });
+    if (!batch) throw new BadRequestException(`批次不存在：${batchNo}（仓库 ${warehouse.name}）`);
+    const fromStatus = String((batch as any).qualityStatus ?? 'RELEASED');
+    if (fromStatus === args.status) {
+      return { materialId: Number(material.id), skuCode: material.code, batchNo, fromStatus, toStatus: args.status };
+    }
+    await this.ds.transaction(async (em) => {
+      await em.getRepository(StockBatch).update({ id: batch.id }, { qualityStatus: args.status as any } as any);
+      await em.getRepository(QcStatusLog).save(em.getRepository(QcStatusLog).create({
+        tenantId, warehouseId: Number(warehouse.id), materialId: Number(material.id),
+        skuCode: material.code, batchNo,
+        fromStatus, toStatus: args.status, reason,
+        refType: args.ref_type ?? 'MANUAL', refNo: args.ref_no ?? null,
+        operator: args.operator ?? 'system',
+      }));
+    });
+    return { materialId: Number(material.id), skuCode: material.code, batchNo, fromStatus, toStatus: args.status };
   }
 
   /**
@@ -1584,15 +1652,29 @@ export class InventoryService {
 
   /** FIFO 出库计划（不足则抛错，带缺口数量） */
   private async planFifo(
-    tenantId: number, material: Material, warehouse: Warehouse, need: number, locationId?: number | null,
+    tenantId: number, material: Material, warehouse: Warehouse, need: number,
+    locationId?: number | null, qualityStatuses?: string[],
   ) {
-    const rows = await this.fifoQb(tenantId, material.id, warehouse.id, locationId).getMany();
+    const allowed = qualityStatuses ?? ['RELEASED'];
+    const rows = await this.fifoQb(tenantId, material.id, warehouse.id, locationId, allowed).getMany();
+    // 被质量状态挡住的数量：库存有货但不可出，报错要说清是「没货」还是「没过质量闸门」
+    const q = await this.batches.createQueryBuilder('sb')
+      .select('COALESCE(SUM(sb.qty), 0)', 'blocked')
+      .where('sb.tenant_id = :tid', { tid: tenantId })
+      .andWhere('sb.material_id = :mid', { mid: material.id })
+      .andWhere('sb.warehouse_id = :wid', { wid: warehouse.id })
+      .andWhere('sb.qty > 0')
+      .andWhere('sb.quality_status NOT IN (:...allowed)', { allowed })
+      .getRawOne();
+    const blocked = round3(Number(q?.blocked ?? 0));
     if (!rows.length) {
       throw new BadRequestException(
-        `${warehouse.name}${locationId ? `（指定库位 ${locationId}）` : ''} 没有「${material.name}」的可出库批次`,
+        `${warehouse.name}${locationId ? `（指定库位 ${locationId}）` : ''} 没有「${material.name}」的可出库批次`
+        + (blocked > 0 ? `：另有 ${blocked}${material.unit} 处于待检/不合格/冻结状态，未通过质量闸门` : ''),
       );
     }
-    return this.allocate(rows.map((b) => ({ batch: b, before: Number(b.qty) })), need, material, warehouse.name);
+    const where = warehouse.name + (blocked > 0 ? `，另有 ${blocked}${material.unit} 未通过质量闸门` : '');
+    return this.allocate(rows.map((b) => ({ batch: b, before: Number(b.qty) })), need, material, where);
   }
 
   private allocate(
@@ -1642,3 +1724,14 @@ function buildMoveNo(kind: 'in' | 'out' | 'transfer'): string {
   const prefix = kind === 'transfer' ? 'TR' : kind.toUpperCase();
   return `${prefix}-${stamp}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 }
+
+/** 质量状态中文标签（报错文案用，避免把英文枚举抛给仓库工人） */
+function qcStatusLabel(status?: string | null): string {
+  switch (String(status ?? 'RELEASED')) {
+    case 'PENDING': return '待检';
+    case 'REJECTED': return '不合格';
+    case 'FROZEN': return '冻结';
+    default: return '合格';
+  }
+}
+import { QcStatusLog } from '../quality/entities/quality.entity';

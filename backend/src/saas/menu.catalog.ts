@@ -87,6 +87,20 @@ export const MENU_CATALOG: MenuNode[] = [
       { key: 'udi-registry', name: 'UDI 合规申报', icon: 'Tickets', path: '/udi-registry', module: 'udi.compliance' },
     ],
   },
+  // 质量闸门（2026-11-25 P0-1/2/3）：检验单、成品放行、批记录。
+  // 分组门 = quality.qms（独立模块，演示租户走 manual 开通）；三叶子都不再要权限点，
+  // 因为这一组本身就是 GMP 硬闸门，能进模块就该能用（放行的电子签已由登录密码二次校验兜住）。
+  {
+    key: 'quality',
+    name: '质量管理',
+    icon: 'CircleCheck',
+    module: 'quality.qms',
+    children: [
+      { key: 'quality-inspections', name: '检验单', icon: 'DocumentChecked', path: '/quality/inspections', module: 'quality.qms' },
+      { key: 'quality-releases', name: '成品放行', icon: 'Stamp', path: '/quality/releases', module: 'quality.qms' },
+      { key: 'quality-batch-records', name: '批记录', icon: 'Notebook', path: '/quality/batch-records', module: 'quality.qms' },
+    ],
+  },
   // AI 工作台：BASIC 也含 ai 模块（历史种子，见 docs/10 §10.15.5 第 1 条）。
   // 生成与模型配置统一收进这个根菜单，叶子各自再判权限点：
   //   ai        —— 入口权限 ai:generate

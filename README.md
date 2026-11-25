@@ -250,7 +250,7 @@ bash backend/scripts/db-init.sh --verify-only   # 只做缺表自检
 - 顺序清单 `db-manifest.txt` 共 32 步（31 个脚本 + RLS 跑两遍）。实测踩到的两个坑已固化：`saas_p6_prompt_versions.sql` 要 GRANT 到 `labelflow_app`，所以 RLS 必须先跑一遍建角色；`inventory_masterdata.sql` 给 `stock_moves` 加库位列，必须排在 `inventory_stock_moves.sql` 之后。
 - `saas_p6_rls.sql` **跑两遍**：第一次建角色 + 给当时已存在的表挂策略，最后一次给后建的新表（WMS/UDI/多码）补挂。
 - 基础 DDL `docs/03-database.sql` 不幂等（19 张表无 `IF NOT EXISTS`），所以只在全新库执行一次；脚本会检测 `public.tenants` 是否存在来自动跳过。
-- 结束自动跑 `db-verify.sh`：对账 `db-expected-tables.txt`（77 张表），缺一张即失败。
+- 结束自动跑 `db-verify.sh`：对账 `db-expected-tables.txt`（87 张表），缺一张即失败。
 - 新增迁移脚本必须同时登记到 `db-manifest.txt`，否则自检会报缺表。
 
 > 加购模块（`inventory` 基础模块之上）：`masterdata` / `bom` / `alert` 等需给目标租户开通 `tenant_modules` 后，模块门才放行、菜单才出现：
@@ -271,7 +271,7 @@ bash backend/scripts/db-init.sh --verify-only   # 只做缺表自检
 | 后端 NestJS 全模块 | ✅ 完整实现 | `pnpm typecheck` + 全量单测 |
 | 前端三应用（console / platform / mcp-server） | ✅ 完整实现 | `vue-tsc -b` 类型检查 |
 | 多租户隔离 | ✅ 应用层 + RLS 兜底（可开关） | `DB_RLS_ENFORCE=1` 时 Repository 走 RLS 角色短事务（R1–R3 真库门全绿）；`createQueryBuilder` 路径仍走主连接（`docs/27 §2.3`）|
-| **交付化（D0）** | ✅ 装得上 | Dockerfile×2 + compose 编排出建库链 + `db-init.sh`（32 步 / 77 表自检）；真库实跑通过（`docs/25`） |
+| **交付化（D0）** | ✅ 装得上 | Dockerfile×2 + compose 编排出建库链 + `db-init.sh`（32 步 / 87 表自检）；真库实跑通过（`docs/25`） |
 | **交付化（D2）** | ✅ 运维接管 | `/health` 三层探针 + Redis 限流（登录严档）+ traceId 结构化日志 + 优雅停机 + CI 三 job + RLS 主链路开关（`DB_RLS_ENFORCE`）；真库 R1–R3 门全绿（`docs/27`） |
 | **交付化（D1）** | ✅ 验得出 | `backend/scripts/db-acceptance.sh` 一条命令跑全套门（WMS G1–G7 / T1–T5 / 打印 P1–P5 / UDI-U5 组 / 全量 885 例），产物 `docs/acceptance/latest.json`：当前 39 门 39 通过 0 失败 0 跳过（含 G8 收货侧 UDI 拦截，见 `docs/26 §4.1`） |
 | **交付化（D4）** | ✅ 流程闭合 | PDA 发料页（列表/详情 + 六步流程 + 扫码 + 退料）+ 发料侧包码折算（与收货同口径）+ 退料 RETURN 幂等；真库 D4-1…D4-3 五门全绿（`docs/28`）；D3 真机打印待打印机就位 |

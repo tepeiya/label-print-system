@@ -67,6 +67,8 @@ export class Material {
   // U5.1：GS1 GTIN14（UDI 联动比对用）；udi_required=true 时收货/发料必须扫 UDI 码
   @Column({ length: 14, type: 'varchar', nullable: true }) gtin: string | null;
   @Column({ name: 'udi_required', default: false }) udiRequired: boolean;
+  // 质量闸门（DDL: scripts/quality_p1_gates.sql）：true 时收货批次进「待检」，须检验合格才可出库
+  @Column({ name: 'qc_required', default: false }) qcRequired: boolean;
   // 自定义字段值（fieldKey -> value），字段定义在 material_field_definitions
   @Column('jsonb', { name: 'custom_fields', default: {} }) customFields: Record<string, any>;
   @Column({ default: true }) active: boolean;
@@ -119,6 +121,13 @@ export class StockBatch {
   @Column({ name: 'unit_cost_cents', type: 'bigint', nullable: true }) unitCostCents: string | null;
   @Column({ name: 'produced_at', type: 'date', nullable: true }) producedAt: string | null;
   @Column({ name: 'expires_at', type: 'date', nullable: true }) expiresAt: string | null;
+  /**
+   * 质量状态（DDL: scripts/quality_p1_gates.sql）：
+   * PENDING 待检 · RELEASED 合格（唯一可出库）· REJECTED 不合格（隔离）· FROZEN 冻结
+   * 存量默认 RELEASED：上线不会让现存库存突然不可用，只有显式收货置待检的批次会被拦。
+   */
+  @Column({ name: 'quality_status', type: 'varchar', length: 12, default: 'RELEASED' })
+  qualityStatus: 'PENDING' | 'RELEASED' | 'REJECTED' | 'FROZEN';
   @CreateDateColumn({ name: 'created_at' }) createdAt: Date;
   @UpdateDateColumn({ name: 'updated_at' }) updatedAt: Date;
 }

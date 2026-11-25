@@ -233,6 +233,8 @@ export class StockAdjustmentService {
         const outcome = await this.inv.adjustStock(tenantId, {
           sku: l.skuCode, warehouse: wh.code, batch_no: l.batchNo ?? undefined,
           location_id: l.locationId ?? undefined, delta: Number(l.qtyDelta), reason: tag.slice(0, 200),
+          // 报废是不合格品的合法去处：DAMAGE 允许 REJECTED；其余类型（盘亏/退货等）只吃合格品
+          allow_qc: doc.adjustType === 'DAMAGE' ? ['RELEASED', 'REJECTED'] : ['RELEASED'],
         }, false, `user#${userId ?? 0}`);
         const first = outcome.lines[0];
         const last = outcome.lines[outcome.lines.length - 1];
@@ -252,6 +254,13 @@ export class StockAdjustmentService {
     }
 
     const after = await this.lines.find({ where: { tenantId, adjustmentId: id } });
+    const doneCount = after.filter((l) => l.status === 'DONE').length;
+    // 一行都没过成（例如质量闸门拦下待检/不合格批次）→ 抛 400 带原因，
+    // 避免返回 201 让人误以为单子已经过账（与发货过账同一口径）。
+    if (doneCount === 0 && results.some((r) => r.status === 'FAILED')) {
+      const first = results.find((r) => r.status === 'FAILED');
+      throw new BadRequestException(`过账失败：${first?.message ?? '未知原因'}`);
+    }
     const docStatus = nextDocStatus(after.map((l) => l.status));
     const allDone = docStatus === 'POSTED';
     await this.docs.update({ id }, {

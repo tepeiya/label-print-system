@@ -31,6 +31,8 @@ export interface IncreaseStockParams {
   refType: string;
   refNo: string;
   idempotencyKey: string;
+  /** 质量闸门：新建批次的初始状态（qc_required 物料收货传 PENDING） */
+  qcStatus?: 'PENDING' | 'RELEASED' | 'REJECTED' | 'FROZEN';
 }
 
 export interface TransferStockParams {
@@ -69,6 +71,8 @@ export interface DecreaseStockParams {
   refType: string;
   refNo: string;
   idempotencyKey: string;
+  /** 质量闸门：允许出库的状态，默认只放行「合格」（报废可传 ['RELEASED','REJECTED']） */
+  allowQc?: string[];
 }
 
 export interface ExpandBomParams {
@@ -147,6 +151,7 @@ export class InventoryGateway {
       batch_no: p.batchNo,
       delta: qty,
       reason: `${p.refType}:${p.refNo}`,
+      qc_status: p.qcStatus,
     }, false, p.refType);
     const movementId = `${p.refType}:${p.refNo}:${material.code}:${p.batchNo ?? ''}`;
     await this.idem.finish(claim.row.id, { movementId });
@@ -292,10 +297,69 @@ export class InventoryGateway {
       batch_no: p.batchNo,
       delta: -qty,
       reason: `${p.refType}:${p.refNo}`,
+      allow_qc: p.allowQc ?? ['RELEASED'],
     }, false, p.refType);
     const movementId = `${p.refType}:${p.refNo}:${material.code}:${p.batchNo ?? ''}:out`;
     await this.idem.finish(claim.row.id, { movementId });
     return { movementId };
+  }
+
+  // ---- 质量闸门（quality 模块专用）----
+
+  /** 读批次当前质量状态（不存在时返回 null，由调用方决定是报错还是补开） */
+  async getBatchQuality(p: { tenantId: string | number; skuId: string | number; warehouseId: string | number; batchNo: string }): Promise<{
+    exists: boolean; batchNo: string; qualityStatus: string; qty: number;
+  }> {
+    const tenantId = this.resolveTenant(p.tenantId);
+    const material = await this.materialById(tenantId, p.skuId);
+    const warehouse = await this.warehouseById(tenantId, p.warehouseId);
+    const res = await this.inventory.queryStock(tenantId, {
+      keyword: material.code, warehouse: warehouse.code, groupBy: 'batch', limit: 200,
+    });
+    const row = (res.items as any[]).find(
+      (r) => String(r.batchNo ?? '') === String(p.batchNo) && Number(r.materialId) === Number(material.id),
+    );
+    return {
+      exists: !!row,
+      batchNo: String(p.batchNo),
+      qualityStatus: String(row?.qualityStatus ?? 'RELEASED'),
+      qty: round3(Number(row?.qty ?? 0)),
+    };
+  }
+
+  /** 批量读（同一物料同仓多批次）：检验单列表展示用 */
+  async listBatchQuality(p: { tenantId: string | number; skuId: string | number; warehouseId: string | number }): Promise<Array<{
+    batchNo: string; qualityStatus: string; qty: number;
+  }>> {
+    const tenantId = this.resolveTenant(p.tenantId);
+    const material = await this.materialById(tenantId, p.skuId);
+    const warehouse = await this.warehouseById(tenantId, p.warehouseId);
+    const res = await this.inventory.queryStock(tenantId, {
+      keyword: material.code, warehouse: warehouse.code, groupBy: 'batch', limit: 200,
+    });
+    return (res.items as any[])
+      .filter((r) => Number(r.materialId) === Number(material.id))
+      .map((r) => ({
+        batchNo: String(r.batchNo ?? ''),
+        qualityStatus: String(r.qualityStatus ?? 'RELEASED'),
+        qty: round3(Number(r.qty ?? 0)),
+      }))
+      .filter((r) => r.batchNo);
+  }
+
+  /** 变更批次质量状态（库存侧唯一写法，落 qc_status_log） */
+  async setBatchQualityStatus(p: {
+    tenantId: string | number; skuId: string | number; warehouseId: string | number; batchNo: string;
+    status: 'PENDING' | 'RELEASED' | 'REJECTED' | 'FROZEN';
+    reason: string; refType?: string; refNo?: string; operator?: string;
+  }) {
+    const tenantId = this.resolveTenant(p.tenantId);
+    const material = await this.materialById(tenantId, p.skuId);
+    const warehouse = await this.warehouseById(tenantId, p.warehouseId);
+    return this.inventory.setBatchQualityStatus(tenantId, {
+      sku: material.code, warehouse: warehouse.code, batch_no: p.batchNo,
+      status: p.status, reason: p.reason, ref_type: p.refType, ref_no: p.refNo, operator: p.operator,
+    });
   }
 
   /** 批次余量明细（只读）：按 SKU + 仓库列可用批次，供 D5 分配与缺料解释 */

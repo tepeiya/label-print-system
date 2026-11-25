@@ -66,7 +66,7 @@ REGISTERED ──PRINT──▶ PRINTED ──RECEIVE──▶ RECEIVED ──IS
 
 ## 6. 本轮**不能**证明的部分（诚实边界）
 
-1. **UDI 链路的真库验证仍不完整**（D1 已补 WMS/打印真库门，见 `docs/26`）：迁移已在真 PG 建过并通过 `db-verify`（77 表），但 `udi_events` 唯一键与 RLS 只有耦合在 G7 的 `wms_*` 侧证据，专属于 UDI 的用例仍是单测。上线前必须在有库环境执行以下 7 道门：
+1. **UDI 链路的真库验证仍不完整**（D1 已补 WMS/打印真库门，见 `docs/26`）：迁移已在真 PG 建过并通过 `db-verify`（87 表），但 `udi_events` 唯一键与 RLS 只有耦合在 G7 的 `wms_*` 侧证据，专属于 UDI 的用例仍是单测。上线前必须在有库环境执行以下 7 道门：
    - G1 `psql -f scripts/udi_p1_trace.sql` 可重复执行两次不报错
    - G2 重跑 `scripts/saas_p6_rls.sql` 后三张表有 `tenant_isolation` 策略
    - G3 `udi_key` 重复插入返回唯一冲突（幂等依赖）

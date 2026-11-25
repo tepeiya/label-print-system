@@ -64,6 +64,13 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'UDI 合规留痕', icon: 'DocumentChecked', module: 'udi.compliance' } },
       { path: 'udi-registry', component: () => import('@/views/UdiRegistry.vue'),
         meta: { title: 'UDI 合规申报', icon: 'Tickets', module: 'udi.compliance' } },
+      // 质量闸门（2026-11-25）：检验单 / 成品放行 / 批记录，模块门 quality.qms
+      { path: 'quality/inspections', component: () => import('@/views/QualityInspections.vue'),
+        meta: { title: '检验单', icon: 'DocumentChecked', module: 'quality.qms' } },
+      { path: 'quality/releases', component: () => import('@/views/QualityReleases.vue'),
+        meta: { title: '成品放行', icon: 'Stamp', module: 'quality.qms' } },
+      { path: 'quality/batch-records', component: () => import('@/views/QualityBatchRecords.vue'),
+        meta: { title: '批记录', icon: 'Notebook', module: 'quality.qms' } },
       // BOM 齐套率：bom 模块（依赖 inventory 自动展开），读权限用 bom:kit:read。
       { path: 'bom', component: () => import('@/views/BomKit.vue'),
         meta: { title: 'BOM 齐套率', icon: 'Connection', module: 'bom', permission: 'bom:kit:read' } },

@@ -79,3 +79,9 @@ wms_wo_returns
 wms_work_orders
 kb_articles
 kb_assistant_logs
+qc_inspections
+qc_inspection_items
+qa_releases
+batch_records
+batch_record_steps
+qc_status_log

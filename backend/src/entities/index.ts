@@ -33,3 +33,5 @@ export { WmsWorkOrder, WmsWoLine, WmsIssueRecord, WmsWoReturn } from '../wms/iss
 export { KbArticle, KbAssistantLog } from '../kb/kb.entity';
 // WMS 阶段三：成品发运（DDL: scripts/wms_p3_outbound.sql）
 export { WmsShipment, WmsShipmentLine } from '../wms/outbound/entities/shipment.entity';
+// 质量闸门（DDL: scripts/quality_p1_gates.sql）
+export { QcInspection, QcInspectionItem, QaRelease, BatchRecord, BatchRecordStep, QcStatusLog } from '../quality/entities/quality.entity';

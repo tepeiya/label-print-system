@@ -25,6 +25,7 @@ import { JobsModule } from './jobs/jobs.module';
 import { GovernanceModule } from './governance/governance.module';
 import { HardwareModule } from './hardware/hardware.module';
 import { WmsModule } from './wms/wms.module';
+import { QualityModule } from './quality/quality.module';
 import { IssuingModule } from './wms/issuing/issuing.module';
 import { UdiModule } from './udi/udi.module';
 import { KbModule } from './kb/kb.module';
@@ -59,6 +60,7 @@ const ENTITIES = Object.values(entities).filter((e) => typeof e === 'function');
     GovernanceModule,           // P8.3 企业治理：发布审批 / 防重 / 水印 / 数量策略
     HardwareModule,             // P8.5 硬件层：本地打印代理 / Windows Spooler / RFID / 喷码
     WmsModule,                  // WMS 阶段一：收货与上架（模块订阅 wms.inbound）
+    QualityModule,              // 质量闸门：检验单 / 成品放行 / 批记录（订阅 quality.qms）
     IssuingModule,              // WMS 阶段二：工单发料与齐套（模块订阅 wms.issuing）
     UdiModule,                  // UDI 医疗合规赋码：构造/解析/扫码复核/模板包
     KbModule,                   // 平台端知识库 + AI 助手（无 tenant_id，PlatformJwtGuard 把关）

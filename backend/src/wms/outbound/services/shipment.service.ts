@@ -390,6 +390,12 @@ export class ShipmentService {
         shippedBy: userId ?? null, shippedAt: new Date(),
       });
     }
+    // 一行都没发出去（例如质量闸门拦下、库存不足）→ 整单失败，抛 400 带原因。
+    // 之前会返回 201 + results 里埋 FAILED，前端看一眼就以为发货成功——质量闸门的拦截必须显性化。
+    if (!anyShipped && results.some((r) => r.status === 'FAILED')) {
+      const first = results.find((r) => r.status === 'FAILED');
+      throw new BadRequestException(`发货失败：${first?.message ?? '未知原因'}`);
+    }
     void this.audit.write(tenantId, 'wms.shipment.post', {
       shipmentId: id, shipmentNo: doc.shipmentNo, allDone, shippedQty, failed: results.filter((r) => r.status === 'FAILED').length,
     });

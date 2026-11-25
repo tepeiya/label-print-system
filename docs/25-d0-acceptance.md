@@ -17,7 +17,7 @@
 | `backend/.dockerignore`、`.dockerignore` | 排除 node_modules / dist / web vendor |
 | `backend/scripts/db-manifest.txt` | **建库顺序唯一真源**（32 步） |
 | `backend/scripts/db-init.sh` | 按清单执行；`--seed-demo` / `--dry-run` / `--verify-only` |
-| `backend/scripts/db-verify.sh` | 缺表自检（对账 77 张表） |
+| `backend/scripts/db-verify.sh` | 缺表自检（对账 87 张表） |
 | `backend/scripts/db-expected-tables.txt` | 期望表清单（从 DDL 抽取） |
 | `backend/package.json` | `build` 改为 `tsc -p tsconfig.json`；新增 `start:prod` / `worker:prod` / `clean` |
 | `README.md` §4 / §5 / §6 | 部署章重写，建库机制说明，进度表更新 |
@@ -29,10 +29,10 @@
 | # | 门 | 结果 | 证据 |
 |---|---|---|---|
 | 1 | 全新机器 `docker compose up -d` 5 分钟内可登录 | **未实证（无 docker daemon）** | 本环境无 docker/podman；镜像与编排为静态产出 |
-| 2 | `down -v` 后重建仍通过 | **等价实证** | 本地 `DROP DATABASE` + 重建后 `db-init.sh` 从零跑通 32 步、77 表全命中（5s） |
+| 2 | `down -v` 后重建仍通过 | **等价实证** | 本地 `DROP DATABASE` + 重建后 `db-init.sh` 从零跑通 32 步、87 表全命中（5s） |
 | 3 | console `:5173` / platform `:5181` 能登录进菜单 | **等价实证（静态+反代）** | 独立 nginx 实例加载 `deploy/nginx/frontend.conf`：`/` 200、`/templates` 200（history 回落）、`POST /api/v1/auth/login` 201 取到 token |
 | 4 | `pnpm build` 零报错产出 `dist`，`node dist/src/main.js` 能起服务 | **实证** | `tsc` 产出 256 个 js / 256 文件；`node dist/src/main.js` 监听 3200，`POST /auth/login` 返回 201 + `accessToken` |
-| 5 | 建库顺序固化在 manifest、幂等、缺表检测返回 0 | **实证** | 连续 3 次重跑全绿；`--verify-only` 输出 `PASS: 期望 77 张表，实际 77 张` |
+| 5 | 建库顺序固化在 manifest、幂等、缺表检测返回 0 | **实证** | 连续 3 次重跑全绿；`--verify-only` 输出 `PASS: 期望 87 张表，实际 91 张（87 张业务表 + 4 张框架表），全部命中` |
 
 > **未实证部分须在真 docker 环境补验**（一条命令）：`docker compose up -d --build && curl -s -X POST localhost:3200/api/v1/auth/login -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin123"}'`
 > 属于 `BLOCKED(缺 docker daemon)`，不是"已验证"。

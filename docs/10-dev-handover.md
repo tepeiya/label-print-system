@@ -2911,3 +2911,17 @@ MaxiCode/HIBC/PZN 已有 bwip 位图通道 + 能力表登记（§10.29.2），GS
 - 前端：console `/wms-shipments`（列表/建单/FIFO 推荐/拣货/过账/签收/作废）；PDA `/shipments` + `/shipments/:id`（扫码定位行 → 拣货 → 出库 → 签收）。
 - 真库实测：SH-20261125-0001 扣 400+100、库存 2400→2000 / 900→800、行 1 `SHORT` 缺 100；2 个 UDI 码 `RECEIVED→SHIPPED`；1 箱 SSCC 内 2 单元整包 `SHIPPED`；重复过账与已出库作废均 400。
 - 细节、API 表与遗留清单见 `docs/35-wms-outbound.md`。
+
+### 10.42 质量三闸门：检验单 / 成品放行 / 批记录（2026-11-25，已实施）
+
+> 承接 `docs/36` 与上轮闭环图的结论：物理流闭合、合规流不闭合。本小节把三个 GMP 硬闸门真做进系统。
+
+- 迁移 `backend/scripts/quality_p1_gates.sql`（排在 `saas_p6_rls.sql` 之前）：`materials.qc_required`、`stock_batches.quality_status`（CHECK PENDING/RELEASED/REJECTED/FROZEN + 索引），新表 `qc_inspections` / `qc_inspection_items` / `qa_releases` / `batch_records` / `batch_record_steps` / `qc_status_log`；模块 `quality.qms`（`tenant_modules.source` 只能 `manual`，`addon` 违反 CHECK）。存量批次一律保持 `RELEASED`，避免上线瞬间锁死老库存。
+- 库存层：`fifoQb` 第 5 参质量状态集（默认 `['RELEASED']`）；`adjustStock` 加 `qc_status`（入库初始态）与 `allow_qc`（出库允许态）；`planFifo` 区分「没货」与「被质量闸门挡住」；`queryStock` 拆 `availableQty` / `lockedQty`；新增 `setBatchQualityStatus`（事务内改批次 + 写 `qc_status_log`，幂等）。报废（`DAMAGE`）是唯一允许扣不合格批次的通道。
+- 收货：`qc_required` 物料过账 `qcStatus='PENDING'`。
+- 质量模块 `backend/src/quality/`：三域服务 + 三个纯计算文件（`iqc.calc` / `release.calc` / `batch-record.calc`，为 node:test 可跑而抽出，实体带装饰器不能被 tsx 直接 import）。判定口径：`FAIL→REJECTED`；`PASS & FQC/OQC→PENDING`（检验≠放行）；`PASS & IQC/IPQC→RELEASED`。
+- 电子签：`auth.service.verifyPassword(userId, tenantId, password)`（bcrypt 复核），签批失败 401。`release.calc.checkBeforeRelease` 给出 `canSign / signBlockReason`。
+- 修掉两处假成功：发货过账全行 FAILED 现在抛 400；库存调整单同理（原来 201 + 行 FAILED）。
+- 前端：`/quality/inspections`、`/quality/releases`、`/quality/batch-records`；菜单「质量管理」（`quality` / `CircleCheck` / 模块门 `quality.qms`）。
+- 验证：新增 21 例定向单测（`src/quality/__tests__/quality-gates.test.ts`）；`/tmp/verify_quality.py` 46 请求 0 断言失败（含 400 拦截 + 库存零变动、错密码 401、检验 PASS 后批次仍 PENDING）。
+- 未做（写在 `docs/36 §8`）：不合格品处置单、放行强制绑定批记录 APPROVED、PDA 检验页、FROZEN 批量操作页。
