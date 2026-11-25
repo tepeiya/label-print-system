@@ -8,7 +8,7 @@ import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { TenantGuard } from '../../common/tenant.guard';
 import { RequireModule } from '../../common/module.guard';
 import { Roles } from '../../common/roles.guard';
-import { CartonPackService, PackDto } from './carton-pack.service';
+import { CartonPackService, PackDto, ScanDto } from './carton-pack.service';
 
 @Controller('wms/carton')
 @UseGuards(TenantGuard)
@@ -20,6 +20,13 @@ export class CartonPackController {
   @Roles('admin', 'operator', 'warehouse_keeper')
   pack(@Body() body: PackDto) {
     return this.svc.pack(body ?? ({} as PackDto));
+  }
+
+  /** 扫码点数：扫单元码/箱码 GTIN → 折算件数；扫 SSCC → 提示已装箱（重扫守卫） */
+  @Post('scan')
+  @Roles('admin', 'operator', 'warehouse_keeper')
+  scan(@Body() body: ScanDto) {
+    return this.svc.scan(body ?? ({} as ScanDto));
   }
 
   /** 箱规档位（PDA 选完物料拉一次，决定 packQty / 箱码 GTIN） */

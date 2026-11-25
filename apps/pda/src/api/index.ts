@@ -476,3 +476,22 @@ export const apiCartonPack = (body: {
   batchNo?: string; workOrderNo?: string; parentSscc?: string;
   allowTail?: boolean; print?: boolean; printerRoute?: string; copies?: number;
 }) => post<CartonPackResult>('/wms/carton/pack', body);
+
+export interface CartonScanResult {
+  kind: 'GTIN' | 'SSCC';
+  code: string;
+  gtin: string | null;
+  sscc?: string;
+  skuCode: string | null;
+  productName: string | null;
+  unit: string | null;
+  packLevel: 'UNIT' | 'CARTON' | 'PALLET' | string;
+  packQty: number;
+  units: number;
+  alreadyPacked: boolean;
+  message?: string;
+}
+
+/** 扫码点数：扫单元码/箱码 GTIN 折算件数；扫 SSCC 提示已装箱（防重） */
+export const apiCartonScan = (code: string, skuCode?: string) =>
+  post<CartonScanResult>('/wms/carton/scan', { code, skuCode });

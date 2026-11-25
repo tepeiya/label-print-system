@@ -267,3 +267,36 @@ POST /api/v1/wms/carton/pack
 - 点击时按缺失项给出明确错误（`请先选一个箱规…` / `请填要装箱的总件数`）。
 
 验证：`npx vue-tsc --noEmit` 无错、`npx vite build` 通过；预览页同步修正。
+
+### 9.2 扫码点数（A 阶段：去掉手输总量）
+
+装箱的总量原来只能手打。新增 `POST /api/v1/wms/carton/scan`（`@RequireModule('wms.inbound')`）把"扫一下 = 几件"做实：
+
+- 入参 `{ code, skuCode? }`；`code` 支持 GS1 HRI（`(01)…`/`(00)…`），内部去括号只留数字；
+- GTIN 14 位 → 查 `material_gtins` 折算：UNIT=1 件，CARTON/PALLET=`pack_qty`；
+- 带 `skuCode` 时校验归属，扫到别的物料直接 400「扫到的是别的物料：…（防串料）」；
+- 同一 GTIN 反复扫是允许的（同规格多箱），去重只在 SSCC 层面；
+- SSCC 18 位 → 查 `udi_packages`：已登记回 `alreadyPacked=true` + 提示文案（同箱重扫守卫），未登记直接 400；
+- 位数非 14/18 → 400，不做模糊猜测。
+
+PDA 侧 `CartonPack.vue` 加「扫码点数」区：扫/输 → 累加件数 → `已扫 20kg（2 次）` → 「用已扫数量（20）」一键填总量，「清空」重来。`apiCartonScan` 在 `apps/pda/src/api/index.ts`。
+
+真库实测（`labelflow_test`，45 脚本 / 92 表）：
+
+| 请求 | 结果 |
+|---|---|
+| `06901234501018` + sku `MD-SYR-05` | CARTON / 24 / units 24 |
+| `(01)06901234501056` | CARTON / 100 / units 100 |
+| `06901234500011`（单元码） | UNIT / 1 / units 1 |
+| `06901234501018` + sku `MD-VAC-5` | 400 防串料 |
+| `06901234599999` | 400 未匹配物料 |
+| `(00)069012340000000016`（已装箱） | `alreadyPacked=true`，提示「这箱已经装过了（CARTON · 100PCS）」 |
+| `069012340000000099`（未登记 SSCC） | 400 未登记 |
+| `1234` | 400 位数不对 |
+
+边界（A 阶段明确的缺口）：
+
+1. 累加状态只在前端内存里，退出页面/换设备就清零；服务端不记"本次已扫"，所以不能在服务端拦重复 GTIN；
+2. 不接单据，扫多少就是多少，不会校验"这单还剩多少"，也不回写单据（B 阶段才做）；
+3. 扫 SSCC 只做"是否已登记/是否已装箱"判断，不解析箱内明细，也不支持托盘 SSCC 拆分；
+4. 修了一个真 bug：SSCC 反查物料时原来查 `materials.gtin`（单元码列），箱码 GTIN 只存在 `material_gtins`，导致 `skuCode/productName` 返回 null；改为先查 `material_gtins` 再取物料。

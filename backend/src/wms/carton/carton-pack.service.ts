@@ -46,6 +46,13 @@ export interface PackDto {
   copies?: number;
 }
 
+export interface ScanDto {
+  /** 扫到的码：单元码/箱码 GTIN（14 位），或已装箱的 SSCC（18 位） */
+  code: string;
+  /** 当前页面正在装的物料；传了就校验扫到的物料与之一致，防串料 */
+  skuCode?: string;
+}
+
 @Injectable()
 export class CartonPackService {
   private logger = new Logger('CartonPackService');
@@ -127,6 +134,79 @@ export class CartonPackService {
   }
 
   /** 箱规查询：PDA/PC 选物料后拉档位，避免盲填 packQty */
+  /**
+   * 扫码点数：PDA 装箱页扫单元码/箱码，折算成件数累加（A 阶段不做单据，只做计数）。
+   * - GTIN（14 位）→ material_gtins 折算：UNIT=1，CARTON/PALLET=packQty；
+   * - SSCC（18 位）已在 udi_packages 登记 → alreadyPacked=true，调用方不得再计入（同箱重扫守卫）；
+   * - 同一 GTIN 反复扫是正常的（同规格多箱），不做去重，由调用方按次数累加。
+   */
+  async scan(dto: ScanDto) {
+    const tenantId = useTenantId();
+    const raw = String(dto.code ?? '').trim();
+    if (!raw) throw new BadRequestException('code 必填');
+    // GS1 HRI 去括号： (01)0690... / (00)0690...
+    const digits = raw.replace(/\(\d{2,4}\)/g, '').replace(/[^0-9]/g, '');
+
+    // A) SSCC：18 位，且必须已登记（否则说明不是本系统出的箱码）
+    if (digits.length === 18) {
+      const pk = await this.packages.findOne({ where: { tenantId, sscc: digits } });
+      if (!pk) throw new BadRequestException(`SSCC ${digits} 未登记（不是本系统生成的箱码，或租户不对）`);
+      // 箱码 GTIN 存在 material_gtins（不是 materials.gtin），必须先反查到物料
+      let mat: Material | null = null;
+      if (pk.gtin) {
+        const g = await this.gtins.findOne({ where: { tenantId, gtin: pk.gtin } });
+        if (g) mat = await this.materials.findOne({ where: { tenantId, id: Number(g.materialId) } });
+      }
+      if (!mat) mat = await this.materials.findOne({ where: { tenantId, gtin: pk.gtin ?? '' } });
+      return {
+        kind: 'SSCC' as const, code: digits, sscc: digits, gtin: pk.gtin,
+        skuCode: mat?.code ?? null, productName: mat?.name ?? null, unit: mat?.unit ?? null,
+        packLevel: pk.level, packQty: Number(pk.qty), units: Number(pk.qty),
+        alreadyPacked: true,
+        message: `这箱已经装过了（${pk.level} · ${Number(pk.qty)}${mat?.unit ?? ''}）`,
+      };
+    }
+
+    // B) GTIN：只接受 14 位（与收货扫描口径一致，8/12/13 位需先补零）
+    if (digits.length !== 14) {
+      throw new BadRequestException(`无法识别该码（${digits.length} 位）：装箱点数只接受 14 位 GTIN 或 18 位 SSCC`);
+    }
+    const rows = await this.gtins.find({ where: { tenantId, gtin: digits } });
+    const ids = [...new Set(rows.map((r) => Number(r.materialId)))];
+    if (!ids.length) {
+      const byPrimary = await this.materials.find({ where: { tenantId, gtin: digits, active: true } });
+      if (!byPrimary.length) throw new BadRequestException(`GTIN ${digits} 未匹配到物料（请先在主数据登记）`);
+      const m0 = byPrimary[0];
+      return {
+        kind: 'GTIN' as const, code: digits, gtin: digits, skuCode: m0.code, productName: m0.name,
+        unit: m0.unit, packLevel: 'UNIT', packQty: 1, units: 1, alreadyPacked: false,
+      };
+    }
+    let mats = await this.materials.find({ where: { tenantId, id: In(ids), active: true } });
+    const wantSku = dto.skuCode ? String(dto.skuCode).trim() : '';
+    if (wantSku) {
+      mats = mats.filter((m) => m.code === wantSku);
+      if (!mats.length) {
+        throw new BadRequestException(`扫到的是别的物料：${digits} 不属于 ${wantSku}（防串料）`);
+      }
+    }
+    if (!mats.length) throw new BadRequestException(`GTIN ${digits} 只匹配到已停用物料`);
+    if (mats.length > 1) {
+      throw new BadRequestException(
+        `GTIN ${digits} 同时属于多个物料（${mats.map((m) => m.code).join('、')}），请带 skuCode 指定`,
+      );
+    }
+    const m = mats[0];
+    const row = rows.find((r) => Number(r.materialId) === Number(m.id));
+    const packLevel = row?.packLevel ?? 'UNIT';
+    const packQty = row ? Number(row.packQty) || 1 : 1;
+    return {
+      kind: 'GTIN' as const, code: digits, gtin: digits, skuCode: m.code, productName: m.name,
+      unit: m.unit, packLevel, packQty, units: packLevel === 'UNIT' ? 1 : packQty,
+      alreadyPacked: false,
+    };
+  }
+
   async specs(skuCode: string) {
     const tenantId = useTenantId();
     if (!skuCode) throw new BadRequestException('skuCode 必填');

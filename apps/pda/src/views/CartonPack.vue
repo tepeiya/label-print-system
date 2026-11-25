@@ -30,7 +30,32 @@
         </div>
       </div>
 
-      <!-- 2) 箱规 -->
+      <!-- 2) 扫码点数 -->
+      <div v-if="spec" class="field">
+        <label>扫码点数（扫单元码/箱码 GTIN，自动折算件数）</label>
+        <div style="display:flex;gap:8px">
+          <input v-model="scanCode" placeholder="扫 GTIN 或手输 14 位码，回车" autocomplete="off"
+            @keyup.enter="doScan" />
+          <button class="btn" style="min-width:72px" :disabled="scanning" @click="doScan">
+            {{ scanning ? '…' : '扫' }}
+          </button>
+        </div>
+        <div v-if="scanErr" class="notice err" style="margin-top:10px">{{ scanErr }}</div>
+        <div v-if="scannedQty > 0" class="notice ok" style="margin-top:10px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <span>已扫 <b>{{ scannedQty }}{{ spec.unit }}</b>（{{ scanLog.length }} 次）</span>
+            <span class="muted">{{ lastScanLabel }}</span>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn primary" style="min-height:44px;padding:0 16px" @click="useScanned">
+              用已扫数量（{{ scannedQty }}）
+            </button>
+            <button class="btn" style="min-height:44px;padding:0 16px" @click="clearScans">清空</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3) 箱规 -->
       <div v-if="spec" class="field">
         <label>每箱件数（箱规）</label>
         <div v-if="spec.cartons.length" style="display:flex;gap:8px;flex-wrap:wrap">
@@ -116,7 +141,7 @@
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import {
-  apiCartonPack, apiCartonSpec, errorMessage,
+  apiCartonPack, apiCartonScan, apiCartonSpec, errorMessage,
   type CartonPackOption, type CartonPackResult, type CartonSpec,
 } from '@/api';
 
@@ -141,6 +166,40 @@ const missing = computed(() => {
   if (!(Number(totalQty.value) > 0)) lacks.push('总件数');
   return lacks.length ? `还差：${lacks.join('、')}` : '';
 });
+
+// 扫码点数（A 阶段：只在本机累加，不涉及单据）
+const scanCode = ref('');
+const scanning = ref(false);
+const scanErr = ref('');
+const scannedQty = ref(0);
+const scanLog = ref<Array<{ label: string; units: number }>>([]);
+const lastScanLabel = computed(() => scanLog.value[0]?.label ?? '');
+
+async function doScan() {
+  const code = scanCode.value.trim();
+  if (!code) return;
+  if (!spec.value) { scanErr.value = '先扫/查物料，再扫码点数'; return; }
+  scanErr.value = '';
+  scanning.value = true;
+  try {
+    const r = await apiCartonScan(code, spec.value.skuCode);
+    if (r.alreadyPacked) {
+      scanErr.value = r.message || `这箱已经装过了（${r.sscc}）`;
+    } else {
+      scannedQty.value += Number(r.units) || 0;
+      scanLog.value.unshift({ label: `${r.packLevel} ${r.units}${r.unit ?? ''}`, units: Number(r.units) || 0 });
+      if (navigator.vibrate) navigator.vibrate(30);
+    }
+  } catch (e) {
+    scanErr.value = errorMessage(e);
+  } finally {
+    scanning.value = false;
+    scanCode.value = '';
+  }
+}
+
+function useScanned() { if (scannedQty.value > 0) totalQty.value = scannedQty.value; }
+function clearScans() { scannedQty.value = 0; scanLog.value = []; scanErr.value = ''; }
 
 const preview = computed(() => {
   const t = Number(totalQty.value);
@@ -202,6 +261,10 @@ function reset() {
   packQty.value = null;
   totalQty.value = null;
   batchNo.value = '';
+  scanCode.value = '';
+  scannedQty.value = 0;
+  scanLog.value = [];
+  scanErr.value = '';
   printOn.value = true;
   result.value = null;
   err.value = '';
