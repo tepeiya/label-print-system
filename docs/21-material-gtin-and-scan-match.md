@@ -300,3 +300,40 @@ PDA 侧 `CartonPack.vue` 加「扫码点数」区：扫/输 → 累加件数 →
 2. 不接单据，扫多少就是多少，不会校验"这单还剩多少"，也不回写单据（B 阶段才做）；
 3. 扫 SSCC 只做"是否已登记/是否已装箱"判断，不解析箱内明细，也不支持托盘 SSCC 拆分；
 4. 修了一个真 bug：SSCC 反查物料时原来查 `materials.gtin`（单元码列），箱码 GTIN 只存在 `material_gtins`，导致 `skuCode/productName` 返回 null；改为先查 `material_gtins` 再取物料。
+
+### 9.3 装箱来源（B 阶段：件数从单据来，可选不写死）
+
+来源不写死，做成装箱页上的三个按钮，每箱选一个（一箱只能挂一张单，避免重复计数）：
+
+| 来源 | 取数口径 | 剩余量 |
+|---|---|---|
+| 收货单 RECEIPT | `wms_receipt_lines.qty_received`（无实收才退回 `qty_expected`） | 应装 − 本单已装箱 |
+| 工单 WORK_ORDER | `wms_work_orders.demand_qty` | 需求 − 本工单已装箱 |
+| 自由装箱 FREE | 无 | 手填 / 扫码点数 |
+
+底座改动：`udi_packages` 原来只有 `work_order_no`，收货单侧无法追溯，新增 `source_type` / `source_no`（`scripts/wms_p11_carton_source.sql`，含索引，写入 `db-manifest.txt`）。
+
+新接口 `GET /api/v1/wms/carton/source?type=RECEIPT|WORK_ORDER&no=&skuCode=` 返回 `{basis, sourceQty, packedQty, remainingQty, batchNo, batches, status, lineCount}`；`POST /wms/carton/pack` 增 `sourceType`/`sourceNo`：给了单据就**先校验剩余量**，超出直接 400 不记账，装成功才写 `udi_packages.source_type/source_no`（工单同时双写 `work_order_no`，兼容历史数据）。
+
+真库实测：
+
+| 用例 | 结果 |
+|---|---|
+| `source?type=RECEIPT&no=GRN-SRC-01&skuCode=MD-VAC-5` | 应装 200（按实收）/ 已装 0 / 剩 200 |
+| 按该单装 100 | 1 箱；再查 → 已装 100 / 剩 100 |
+| 按该单再装 150 | 400「超出该单剩余可装箱数量：剩余 100PCS，本次要装 150PCS」 |
+| 收货单里没有该物料 | 404「收货单 GRN-SRC-01 里没有 MD-SYR-05 的行」 |
+| `source?type=WORK_ORDER&no=WO-DEMO-001` | 需求 100 / 已装 0 / 剩 100 |
+| 按该工单装 48 | 2 箱；再查 → 已装 48 / 剩 52 |
+| 用工单查别的物料 | 400「工单 WO-DEMO-001 的产出物料是 MD-SYR-05，不是 MD-VAC-5（防串料）」 |
+| `type=FOO` | 400 类型不支持 |
+
+PDA：装箱页加「装箱来源」三按钮 + 单号查询；查到后显示 `应装 200支（按实收）· 已装 0 · 还剩 200支`，「用剩余数量」一键填总量；单一批号时自动带出批号。`apiCartonSource` 在 `apps/pda/src/api/index.ts`。
+
+边界：
+
+1. 收货单剩余量按**整单该 SKU**汇总（不区分行）；同单多行同 SKU 会合并算，行级装箱暂不支持；
+2. 工单口径是 `demand_qty`，没扣报废/返工/已入库，严格意义上应是「产出 − 已入库」；
+3. 未做"装箱回写单据"（不更新收货单 `status`、不生成入库单），只是把箱子挂到单号上；
+4. 已装箱量按 `udi_packages` 现算（每次查询扫表），没有物化的"已装数量"列，数据量大时要加缓存/汇总表；
+5. 历史自由装箱数据 `source_type` 为 NULL，不做回溯归集。

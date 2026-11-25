@@ -495,3 +495,25 @@ export interface CartonScanResult {
 /** 扫码点数：扫单元码/箱码 GTIN 折算件数；扫 SSCC 提示已装箱（防重） */
 export const apiCartonScan = (code: string, skuCode?: string) =>
   post<CartonScanResult>('/wms/carton/scan', { code, skuCode });
+
+export interface CartonSourceInfo {
+  sourceType: 'RECEIPT' | 'WORK_ORDER';
+  sourceNo: string;
+  status: string;
+  skuCode: string | null;
+  productName: string | null;
+  unit: string | null;
+  basis: 'RECEIVED' | 'EXPECTED' | 'DEMAND';
+  expectedQty?: number;
+  receivedQty?: number;
+  sourceQty: number;
+  packedQty: number;
+  remainingQty: number;
+  batchNo: string | null;
+  batches: string[];
+  lineCount: number;
+}
+
+/** 来源单据剩余量：这单还能装多少 */
+export const apiCartonSource = (type: 'RECEIPT' | 'WORK_ORDER', no: string, skuCode?: string) =>
+  get<CartonSourceInfo>('/wms/carton/source', { type, no, skuCode });

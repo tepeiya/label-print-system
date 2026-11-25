@@ -30,7 +30,39 @@
         </div>
       </div>
 
-      <!-- 2) 扫码点数 -->
+      <!-- 2) 装箱来源 -->
+      <div v-if="spec" class="field">
+        <label>装箱来源</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" :class="sourceMode === 'FREE' ? 'primary' : ''"
+            style="min-height:44px;padding:0 14px" @click="setSourceMode('FREE')">自由装箱</button>
+          <button class="btn" :class="sourceMode === 'RECEIPT' ? 'primary' : ''"
+            style="min-height:44px;padding:0 14px" @click="setSourceMode('RECEIPT')">收货单</button>
+          <button class="btn" :class="sourceMode === 'WORK_ORDER' ? 'primary' : ''"
+            style="min-height:44px;padding:0 14px" @click="setSourceMode('WORK_ORDER')">工单</button>
+        </div>
+        <div v-if="sourceMode !== 'FREE'" style="display:flex;gap:8px;margin-top:10px">
+          <input v-model="sourceNo" autocomplete="off"
+            :placeholder="sourceMode === 'RECEIPT' ? '收货单号，如 GRN-…' : '工单号，如 WO-…'"
+            @keyup.enter="loadSource" />
+          <button class="btn" style="min-width:72px" :disabled="loadingSource" @click="loadSource">
+            {{ loadingSource ? '…' : '查' }}
+          </button>
+        </div>
+        <div v-if="sourceErr" class="notice err" style="margin-top:10px">{{ sourceErr }}</div>
+        <div v-if="sourceInfo" class="notice ok" style="margin-top:10px">
+          <div>{{ sourceInfo.sourceNo }} · 应装 <b>{{ sourceInfo.sourceQty }}{{ sourceInfo.unit }}</b>
+            （{{ sourceInfo.basis === 'RECEIVED' ? '按实收' : sourceInfo.basis === 'EXPECTED' ? '按应收' : '按工单需求' }}）</div>
+          <div style="margin-top:4px">已装 {{ sourceInfo.packedQty }} · <b>还剩 {{ sourceInfo.remainingQty }}{{ sourceInfo.unit }}</b></div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn primary" style="min-height:44px;padding:0 16px" @click="useRemaining">
+              用剩余数量（{{ sourceInfo.remainingQty }}）
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3) 扫码点数 -->
       <div v-if="spec" class="field">
         <label>扫码点数（扫单元码/箱码 GTIN，自动折算件数）</label>
         <div style="display:flex;gap:8px">
@@ -141,8 +173,8 @@
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import {
-  apiCartonPack, apiCartonScan, apiCartonSpec, errorMessage,
-  type CartonPackOption, type CartonPackResult, type CartonSpec,
+  apiCartonPack, apiCartonScan, apiCartonSource, apiCartonSpec, errorMessage,
+  type CartonPackOption, type CartonPackResult, type CartonSourceInfo, type CartonSpec,
 } from '@/api';
 
 const router = useRouter();
@@ -166,6 +198,47 @@ const missing = computed(() => {
   if (!(Number(totalQty.value) > 0)) lacks.push('总件数');
   return lacks.length ? `还差：${lacks.join('、')}` : '';
 });
+
+// 装箱来源（B 阶段：收货单 / 工单 / 自由装箱）
+const sourceMode = ref<'FREE' | 'RECEIPT' | 'WORK_ORDER'>('FREE');
+const sourceNo = ref('');
+const sourceInfo = ref<CartonSourceInfo | null>(null);
+const sourceErr = ref('');
+const loadingSource = ref(false);
+
+function setSourceMode(m: 'FREE' | 'RECEIPT' | 'WORK_ORDER') {
+  sourceMode.value = m;
+  sourceInfo.value = null;
+  sourceErr.value = '';
+  if (m === 'FREE') sourceNo.value = '';
+}
+
+async function loadSource() {
+  const no = sourceNo.value.trim();
+  if (sourceMode.value === 'FREE') return;
+  if (!no) { sourceErr.value = '先填单号'; return; }
+  if (!spec.value) { sourceErr.value = '先查物料再查单据'; return; }
+  sourceErr.value = '';
+  loadingSource.value = true;
+  try {
+    const info = await apiCartonSource(sourceMode.value, no, spec.value.skuCode);
+    sourceInfo.value = info;
+    // 单一批号时顺手带出批号，省一次手填
+    if (!batchNo.value.trim() && info.batchNo) batchNo.value = info.batchNo;
+    if (info.remainingQty <= 0) sourceErr.value = `这张单已经装完了（应装 ${info.sourceQty}，已装 ${info.packedQty}）`;
+  } catch (e) {
+    sourceInfo.value = null;
+    sourceErr.value = errorMessage(e);
+  } finally {
+    loadingSource.value = false;
+  }
+}
+
+function useRemaining() {
+  if (sourceInfo.value && sourceInfo.value.remainingQty > 0) {
+    totalQty.value = sourceInfo.value.remainingQty;
+  }
+}
 
 // 扫码点数（A 阶段：只在本机累加，不涉及单据）
 const scanCode = ref('');
@@ -221,6 +294,8 @@ async function loadSpec() {
   try {
     const s = await apiCartonSpec(code);
     spec.value = s;
+    sourceInfo.value = null;
+    sourceErr.value = '';
     // 只有一档箱规时自动选中，减少一步
     if (s.cartons.length === 1) pickCarton(s.cartons[0]);
   } catch (e) {
@@ -245,6 +320,8 @@ async function submit() {
       totalQty: Number(totalQty.value),
       packQty: Number(packQty.value),
       batchNo: batchNo.value.trim() || undefined,
+      sourceType: sourceMode.value === 'FREE' ? undefined : sourceMode.value,
+      sourceNo: sourceMode.value === 'FREE' ? undefined : sourceNo.value.trim() || undefined,
       print: printOn.value,
     });
     if (navigator.vibrate) navigator.vibrate(60);
@@ -261,6 +338,10 @@ function reset() {
   packQty.value = null;
   totalQty.value = null;
   batchNo.value = '';
+  sourceMode.value = 'FREE';
+  sourceNo.value = '';
+  sourceInfo.value = null;
+  sourceErr.value = '';
   scanCode.value = '';
   scannedQty.value = 0;
   scanLog.value = [];

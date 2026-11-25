@@ -29,6 +29,12 @@ export class CartonPackController {
     return this.svc.scan(body ?? ({} as ScanDto));
   }
 
+  /** 来源单据剩余量：这单还能装多少（收货单 / 工单） */
+  @Get('source')
+  source(@Query('type') type: string, @Query('no') no: string, @Query('skuCode') skuCode?: string) {
+    return this.svc.sourceInfo({ type, no, skuCode });
+  }
+
   /** 箱规档位（PDA 选完物料拉一次，决定 packQty / 箱码 GTIN） */
   @Get('specs')
   specs(@Query('skuCode') skuCode: string) {

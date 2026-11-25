@@ -7,6 +7,7 @@ import { TypeOrmModule } from '../common/tenant-typeorm.module';
 import {
   WmsReceipt, WmsReceiptLine, WmsPutawayTask, WmsPutawayRule,
 } from './inbound/entities/wms.entity';
+import { WmsWorkOrder } from './issuing/entities/wo.entity';
 import { WmsShipment, WmsShipmentLine } from './outbound/entities/shipment.entity';
 import { Material, MaterialGtin, Warehouse, WarehouseLocation, Bom, BomItem } from '../inventory/inventory.entity';
 import { InventoryModule } from '../inventory/inventory.module';
@@ -28,7 +29,7 @@ import { UdiPackage } from '../udi/entities/udi.entity';
     TypeOrmModule.forFeature([
       WmsReceipt, WmsReceiptLine, WmsPutawayTask, WmsPutawayRule,
       WmsShipment, WmsShipmentLine,
-      Material, MaterialGtin, Warehouse, WarehouseLocation, Bom, BomItem, UdiPackage,
+      Material, MaterialGtin, Warehouse, WarehouseLocation, Bom, BomItem, UdiPackage, WmsWorkOrder,
     ]),
     InventoryModule,
     AgentModule,

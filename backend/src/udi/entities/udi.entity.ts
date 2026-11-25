@@ -46,6 +46,10 @@ export class UdiPackage {
   @Column({ type: 'numeric', precision: 14, scale: 3, default: 0 }) qty: string;
   @Column({ name: 'parent_sscc', type: 'varchar', length: 18, nullable: true }) parentSscc: string | null;
   @Column({ name: 'work_order_no', type: 'varchar', length: 64, nullable: true }) workOrderNo: string | null;
+  /** 装箱来源：RECEIPT | WORK_ORDER；NULL = 自由装箱 */
+  @Column({ name: 'source_type', type: 'varchar', length: 16, nullable: true }) sourceType: string | null;
+  /** 来源单号：收货单号 / 工单号 */
+  @Column({ name: 'source_no', type: 'varchar', length: 64, nullable: true }) sourceNo: string | null;
   @Column({ name: 'created_by', type: 'bigint', nullable: true }) createdBy: number | null;
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' }) createdAt: Date;
 }

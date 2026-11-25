@@ -15,6 +15,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { UdiPackage } from '../../udi/entities/udi.entity';
 import { Material, MaterialGtin } from '../../inventory/inventory.entity';
+import { WmsReceipt, WmsReceiptLine } from '../inbound/entities/wms.entity';
+import { WmsWorkOrder } from '../issuing/entities/wo.entity';
 import { AuditService } from '../../audit/audit.module';
 import { useTenant, useTenantId } from '../../common/tenant.context';
 import { PrintGateway } from '../gateways/print.gateway';
@@ -33,6 +35,10 @@ export interface PackDto {
   batchNo?: string;
   /** 上级包装 SSCC（中箱→托盘） */
   parentSscc?: string;
+  /** 装箱来源：RECEIPT（收货单）/ WORK_ORDER（工单）；不给 = 自由装箱 */
+  sourceType?: 'RECEIPT' | 'WORK_ORDER';
+  /** 来源单号：收货单号 / 工单号（sourceType 给了就必填） */
+  sourceNo?: string;
   workOrderNo?: string;
   /** 尾箱是否单独出一码，默认 true */
   allowTail?: boolean;
@@ -61,6 +67,9 @@ export class CartonPackService {
     @InjectRepository(UdiPackage) private packages: Repository<UdiPackage>,
     @InjectRepository(Material) private materials: Repository<Material>,
     @InjectRepository(MaterialGtin) private gtins: Repository<MaterialGtin>,
+    @InjectRepository(WmsReceipt) private receipts: Repository<WmsReceipt>,
+    @InjectRepository(WmsReceiptLine) private receiptLines: Repository<WmsReceiptLine>,
+    @InjectRepository(WmsWorkOrder) private workOrders: Repository<WmsWorkOrder>,
     private printGateway: PrintGateway,
     private audit: AuditService,
   ) {}
@@ -73,6 +82,23 @@ export class CartonPackService {
 
     // 1) 解析物料 / 箱规
     const resolved = await this.resolvePackSpec(tenantId, dto);
+
+    // 1.5) 来源校验：选了单据就必须在剩余量内（超出直接 400，不记账）
+    let src: { type: 'RECEIPT' | 'WORK_ORDER'; no: string } | null = null;
+    if (dto.sourceType) {
+      const st = String(dto.sourceType).toUpperCase();
+      if (st !== 'RECEIPT' && st !== 'WORK_ORDER') {
+        throw new BadRequestException('sourceType 只支持 RECEIPT / WORK_ORDER（自由装箱请不要传）');
+      }
+      if (!dto.sourceNo) throw new BadRequestException('传了 sourceType 就必须传 sourceNo');
+      src = { type: st as 'RECEIPT' | 'WORK_ORDER', no: String(dto.sourceNo).trim() };
+      const info = await this.sourceInfo({ type: src.type, no: src.no, skuCode: resolved.skuCode });
+      if (totalQty > Number(info.remainingQty) + 1e-6) {
+        throw new BadRequestException(
+          `超出该单剩余可装箱数量：${src.no} 剩余 ${info.remainingQty}${info.unit ?? ''}，本次要装 ${totalQty}${info.unit ?? ''}`,
+        );
+      }
+    }
 
     // 2) 算箱（满箱 + 尾箱）
     let plan: ReturnType<typeof planBoxes>;
@@ -97,7 +123,9 @@ export class CartonPackService {
         gtin: resolved.cartonGtin ?? null,
         qty: String(qty),
         parentSscc: dto.parentSscc ?? null,
-        workOrderNo: dto.workOrderNo ?? null,
+        workOrderNo: dto.workOrderNo ?? (src?.type === 'WORK_ORDER' ? src.no : null),
+        sourceType: src?.type ?? null,
+        sourceNo: src?.no ?? null,
         createdBy: userId ?? null,
       }));
       boxes.push({ sscc, qty, tail: plan.tailQty > 0 && i === plan.boxes.length - 1, boxNo: i + 1 });
@@ -106,6 +134,7 @@ export class CartonPackService {
     await this.audit.write(tenantId, 'wms.carton.pack', {
       skuCode: resolved.skuCode, totalQty, packQty: resolved.packQty,
       fullBoxes: plan.fullBoxes, tailQty: plan.tailQty, boxes: boxes.length,
+      sourceType: src?.type ?? null, sourceNo: src?.no ?? null,
       printed: !!dto.print,
     }, undefined, 'udi_package');
 
@@ -125,6 +154,8 @@ export class CartonPackService {
       fullBoxes: plan.fullBoxes,
       tailQty: plan.tailQty,
       boxCount: boxes.length,
+      sourceType: src?.type ?? null,
+      sourceNo: src?.no ?? null,
       boxes: boxes.map((b) => ({
         ...b,
         printed: printInfo?.perBox?.find((p: any) => p.sscc === b.sscc) ?? null,
@@ -134,6 +165,84 @@ export class CartonPackService {
   }
 
   /** 箱规查询：PDA/PC 选物料后拉档位，避免盲填 packQty */
+  /**
+   * 来源单据查询：这单还能装多少（收货单 / 工单通用）。
+   * 口径：收货单取 qty_received（有过账实收就用实收，否则用 qty_expected）；
+   *     工单取 work_orders.demand_qty；已装箱量 = udi_packages 里挂该单的 qty 之和。
+   */
+  async sourceInfo(q: { type: string; no: string; skuCode?: string }) {
+    const tenantId = useTenantId();
+    const type = String(q.type ?? '').toUpperCase();
+    const no = String(q.no ?? '').trim();
+    if (!no) throw new BadRequestException('no 必填');
+    const wantSku = q.skuCode ? String(q.skuCode).trim() : '';
+    let mat: Material | null = null;
+    if (wantSku) {
+      mat = await this.materials.findOne({ where: { tenantId, code: wantSku, active: true } });
+      if (!mat) throw new NotFoundException(`物料不存在或已停用：${wantSku}`);
+    }
+
+    if (type === 'RECEIPT') {
+      const rc = await this.receipts.findOne({ where: { tenantId, receiptNo: no } });
+      if (!rc) throw new NotFoundException(`收货单不存在：${no}`);
+      const lines = await this.receiptLines.find({ where: { tenantId, receiptId: rc.id }, order: { lineNo: 'ASC' } });
+      const sel = mat ? lines.filter((l) => Number(l.skuId) === Number(mat!.id)) : lines;
+      if (mat && !sel.length) throw new NotFoundException(`收货单 ${no} 里没有 ${wantSku} 的行`);
+      const expected = Number(sel.reduce((a, l) => a + Number(l.qtyExpected || 0), 0).toFixed(3));
+      const received = Number(sel.reduce((a, l) => a + Number(l.qtyReceived || 0), 0).toFixed(3));
+      const basis = received > 0 ? 'RECEIVED' : 'EXPECTED';
+      const sourceQty = basis === 'RECEIVED' ? received : expected;
+      const batches = [...new Set(sel.map((l) => l.batchNo).filter(Boolean))] as string[];
+      const packedQty = await this.sumPacked({ tenantId, sourceType: 'RECEIPT', sourceNo: no, material: mat });
+      return {
+        sourceType: 'RECEIPT', sourceNo: no, status: rc.status,
+        skuCode: mat?.code ?? null, productName: mat?.name ?? null, unit: mat?.unit ?? null,
+        basis, expectedQty: expected, receivedQty: received, sourceQty,
+        packedQty, remainingQty: Math.max(0, Number((sourceQty - packedQty).toFixed(3))),
+        batchNo: batches.length === 1 ? batches[0] : null, batches, lineCount: sel.length,
+      };
+    }
+
+    if (type === 'WORK_ORDER') {
+      const wo = await this.workOrders.findOne({ where: { tenantId, woNo: no } });
+      if (!wo) throw new NotFoundException(`工单不存在：${no}`);
+      const prod = await this.materials.findOne({ where: { tenantId, id: Number(wo.productMaterialId) } });
+      if (mat && prod && mat.code !== prod.code) {
+        throw new BadRequestException(`工单 ${no} 的产出物料是 ${prod.code}，不是 ${mat.code}（防串料）`);
+      }
+      const demand = Number(wo.demandQty || 0);
+      const packedQty = await this.sumPacked({ tenantId, sourceType: 'WORK_ORDER', sourceNo: no, material: prod });
+      return {
+        sourceType: 'WORK_ORDER', sourceNo: no, status: wo.status,
+        skuCode: prod?.code ?? null, productName: prod?.name ?? null, unit: prod?.unit ?? null,
+        basis: 'DEMAND', sourceQty: demand, packedQty,
+        remainingQty: Math.max(0, Number((demand - packedQty).toFixed(3))),
+        batchNo: null, batches: [], lineCount: 0,
+      };
+    }
+
+    throw new BadRequestException('type 只支持 RECEIPT / WORK_ORDER');
+  }
+
+  /** 该来源单已装箱量（工单兼容历史 work_order_no 数据，按 sscc 去重） */
+  private async sumPacked(p: { tenantId: number; sourceType: string; sourceNo: string; material: Material | null }) {
+    const bySource = await this.packages.find({ where: { tenantId: p.tenantId, sourceType: p.sourceType, sourceNo: p.sourceNo } });
+    let rows = bySource;
+    if (p.sourceType === 'WORK_ORDER') {
+      const legacy = await this.packages.find({ where: { tenantId: p.tenantId, workOrderNo: p.sourceNo } });
+      const ids = new Set(bySource.map((r) => r.id));
+      rows = [...bySource, ...legacy.filter((r) => !ids.has(r.id))];
+    }
+    let sel = rows;
+    if (p.material) {
+      const gs = await this.gtins.find({ where: { tenantId: p.tenantId, materialId: Number(p.material.id) } });
+      const set = new Set<string>(gs.map((g) => g.gtin));
+      if (p.material.gtin) set.add(p.material.gtin);
+      sel = rows.filter((r) => !!r.gtin && set.has(r.gtin));
+    }
+    return Number(sel.reduce((a, r) => a + Number(r.qty || 0), 0).toFixed(3));
+  }
+
   /**
    * 扫码点数：PDA 装箱页扫单元码/箱码，折算成件数累加（A 阶段不做单据，只做计数）。
    * - GTIN（14 位）→ material_gtins 折算：UNIT=1，CARTON/PALLET=packQty；
