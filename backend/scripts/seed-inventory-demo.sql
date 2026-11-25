@@ -61,4 +61,18 @@ JOIN materials m ON m.tenant_id = :tid AND m.code = x.mat
 ON CONFLICT (bom_id, material_id) DO UPDATE SET
   qty_per = EXCLUDED.qty_per, loss_rate = EXCLUDED.loss_rate;
 
+-- 多档箱规（装箱出码演示：同一物料可挂多档箱规，扫描 (01) 14 位 GTIN 时按 pack_qty 折算）
+--   M-PEAR-001 雪梨：10kg/箱、1000kg/箱；UNIT 主码见 materials.gtin
+INSERT INTO material_gtins (tenant_id, material_id, gtin, pack_level, pack_qty, is_primary)
+SELECT :tid, m.id, x.gtin, x.lvl, x.qty, false
+FROM (VALUES
+  ('M-PEAR-001', '06901234501308', 'CARTON', 10),
+  ('M-PEAR-001', '06901234502305', 'CARTON', 1000)
+) AS x(mcode, gtin, lvl, qty)
+JOIN materials m ON m.tenant_id = :tid AND m.code = x.mcode
+WHERE NOT EXISTS (
+  SELECT 1 FROM material_gtins g
+  WHERE g.tenant_id = :tid AND g.material_id = m.id AND g.gtin = x.gtin
+);
+
 COMMIT;

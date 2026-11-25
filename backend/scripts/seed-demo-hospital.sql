@@ -206,6 +206,27 @@ WHERE u.tenant_id = :tid::bigint AND u.status = 'PRINTED'
     SELECT 1 FROM udi_events e WHERE e.tenant_id = u.tenant_id AND e.idem_key = format('DEMO:%s:PRINT', u.udi_key)
   );
 
+-- 9. 装箱来源演示：一张已过账的收货单（装箱页「选单据」要用到剩余量口径）----
+--    GRN-SRC-01：MD-VAC-5 × 200 全收，批号 LOT-R1，状态 PUTAWAY_DONE
+INSERT INTO wms_receipts (tenant_id, receipt_no, source_type, source_no, warehouse_id, status, remark, created_by)
+SELECT :tid::bigint, 'GRN-SRC-01', 'MANUAL', 'PO-2026-1103', w.id, 'PUTAWAY_DONE',
+       '演示：装箱来源（剩余量口径）', COALESCE((SELECT min(u.id) FROM users u WHERE u.tenant_id = :tid::bigint), 1)
+FROM warehouses w
+WHERE w.tenant_id = :tid::bigint AND w.code = 'WH-DEMO'
+  AND NOT EXISTS (
+    SELECT 1 FROM wms_receipts r WHERE r.tenant_id = :tid::bigint AND r.receipt_no = 'GRN-SRC-01'
+  );
+
+INSERT INTO wms_receipt_lines (tenant_id, receipt_id, line_no, sku_id, batch_no,
+                               qty_expected, qty_received, diff_type, diff_qty, status)
+SELECT :tid::bigint, r.id, 1, m.id, 'LOT-R1', 200, 200, NULL, 0, 'PUTAWAY_DONE'
+FROM wms_receipts r
+JOIN materials m ON m.tenant_id = r.tenant_id AND m.code = 'MD-VAC-5'
+WHERE r.tenant_id = :tid::bigint AND r.receipt_no = 'GRN-SRC-01'
+  AND NOT EXISTS (
+    SELECT 1 FROM wms_receipt_lines l WHERE l.tenant_id = r.tenant_id AND l.receipt_id = r.id
+  );
+
 -- 8. 模块订阅（演示要用 WMS 收货/发料与 UDI）------------------------------
 INSERT INTO tenant_modules (tenant_id, module_code, status, source)
 SELECT :tid::bigint, x.code, 'active', 'manual'
@@ -216,4 +237,5 @@ ON CONFLICT (tenant_id, module_code) DO NOTHING;
 SELECT 'seed ok: ' || :tid::bigint AS result,
        (SELECT count(*) FROM materials WHERE tenant_id = :tid::bigint) AS materials,
        (SELECT count(*) FROM wms_work_orders WHERE tenant_id = :tid::bigint) AS work_orders,
-       (SELECT count(*) FROM udi_units WHERE tenant_id = :tid::bigint) AS udi_units;
+       (SELECT count(*) FROM udi_units WHERE tenant_id = :tid::bigint) AS udi_units,
+       (SELECT count(*) FROM wms_receipts WHERE tenant_id = :tid::bigint AND receipt_no = 'GRN-SRC-01') AS src_receipt;

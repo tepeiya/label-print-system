@@ -77,7 +77,7 @@
 | 1 | 预览页写死物料/单据/SSCC 样例 | `pda-preview/carton-pack-demo.html` 内置 SPECS | 仅作内部评审，**不得作为交付或验收证据** |
 | 2 | 打印链路用占位 service token 验证 | 本轮未用真 agent token 下发过箱标 | 需补真 token + 真实打印机端到端记录 |
 | 3 | PDA 页面未在真机（Android PDA/手持）点过 | 只有桌面浏览器验证 | 需补真机截图与交互记录 |
-| 4 | 演示 GTIN / 演示收货单靠手工 INSERT | 重跑 `db-init.sh` 会丢 | 移入 `--seed-demo` 种子脚本 |
+| 4 | ~~演示 GTIN / 演示收货单靠手工 INSERT~~ | 已移入 `seed-inventory-demo.sql` / `seed-demo-hospital.sql`，空库 `--seed-demo` 一次生成 | **已清零**（`2d8da0e` 后第 1 项整改） |
 | 5 | 部分前端仅"构建通过"即视为完成 | 见 `docs/21` §9 旧记录 | 按本文件第 1 条重验并改写记录 |
 
 表中条目未清零前，相关功能对外只能描述为"开发中"，不能称"已交付"。

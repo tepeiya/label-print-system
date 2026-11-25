@@ -328,6 +328,20 @@ PDA 侧 `CartonPack.vue` 加「扫码点数」区：扫/输 → 累加件数 →
 | 用工单查别的物料 | 400「工单 WO-DEMO-001 的产出物料是 MD-SYR-05，不是 MD-VAC-5（防串料）」 |
 | `type=FOO` | 400 类型不支持 |
 
+**演示数据出处（不再手工 INSERT）**
+
+| 数据 | 落在哪个种子 | 内容 |
+|---|---|---|
+| `GRN-SRC-01` | `scripts/seed-demo-hospital.sql` §9 | `MD-VAC-5` 1 行，`qty_expected=qty_received=200`、批号 `LOT-R1`、状态 `PUTAWAY_DONE`、仓库 `WH-DEMO` |
+| `M-PEAR-001` 两档箱规 | `scripts/seed-inventory-demo.sql` | `material_gtins`：`06901234501308` CARTON 10kg、`06901234502305` CARTON 1000kg |
+| `WO-DEMO-001/002` | `seed-demo-hospital.sql` §5 | 需求 100 / 60，产出物料 `MD-SYR-05` |
+
+空库重建验证（2026-11-26）：`DROP DATABASE` → `db-init.sh --seed-demo` → 46 脚本 / 88 期望 92 实际表全命中；
+`GET source?type=RECEIPT&no=GRN-SRC-01&skuCode=MD-VAC-5` → `sourceQty=200, remainingQty=200, batchNo=LOT-R1`；
+按该单装 100 → 1 箱 `069012340000000016`，再查 `packedQty=100, remainingQty=100`；
+按该单再装 150 → `400 超出该单剩余可装箱数量`。验证后已重建为干净种子库存。
+
+
 PDA：装箱页加「装箱来源」三按钮 + 单号查询；查到后显示 `应装 200支（按实收）· 已装 0 · 还剩 200支`，「用剩余数量」一键填总量；单一批号时自动带出批号。`apiCartonSource` 在 `apps/pda/src/api/index.ts`。
 
 边界：
