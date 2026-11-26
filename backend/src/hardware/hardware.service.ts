@@ -40,6 +40,7 @@ import {
   parseReleaseManifest, planAgentPrinters, renderSetupScript,
   sanitizeBaseUrl, type PrintAgentRelease,
 } from './agent-release.calc';
+import { renderLabelPng } from '../print/label-png';
 import {
   INKJET_MAX_CHARS_PER_LINE, INKJET_MAX_ITEMS, INKJET_MAX_LINES, TRIGGER_MODES,
   inkjetJob, inkjetPayload, validateInkjetJob,
@@ -256,11 +257,16 @@ export class HardwareService implements AgentEnqueuePort, OnModuleInit, OnModule
 
   // ---------------------------------------------------------------- AgentEnqueuePort
 
-  /** PrintJobInput（渲染后的元素数组）→ 协议层输入（指令字符串），再统一过脱敏信封 */
-  private toJobSource(job: PrintJobInput): AgentJobSource {
+  /**
+   * PrintJobInput（渲染后的元素数组）→ 协议层输入，再统一过脱敏信封。
+   * · zpl / tspl：生成原生指令（矢量由打印机自己生成）；
+   * · 其他（驱动型/图型式）：把已渲染元素栅格化成 PNG 帧（png-base64），
+   *   代理端 SpoolerPrinter 支持该格式；旧实现这里会生成空 ZPL（打出来是空白）。
+   */
+  private async toJobSource(job: PrintJobInput): Promise<AgentJobSource> {
     const p = job.printer;
     const protocol = String(p.protocol ?? p.connection?.protocol ?? 'zpl');
-    const labels = (job.labels ?? []).map((f) => {
+    const labels = (await Promise.all((job.labels ?? []).map(async (f) => {
       if (f.pngBuffer) return { pngBase64: f.pngBuffer.toString('base64'), copies: job.copies };
       if (protocol === 'tspl') {
         const out = buildTsplJob(f.tspl ?? [], p.dpi, {
@@ -268,9 +274,17 @@ export class HardwareService implements AgentEnqueuePort, OnModuleInit, OnModule
         }, p.orientation);
         return { tspl: out.buffer.toString('ascii'), copies: job.copies };
       }
-      const { text } = generateZpl(f.zpl ?? [], p.dpi);
-      return { zpl: text, copies: job.copies };
-    });
+      if (protocol === 'zpl') {
+        const { text } = generateZpl(f.zpl ?? [], p.dpi);
+        return { zpl: text, copies: job.copies };
+      }
+      // 图型式：必须拿到已渲染元素，否则宁可明确失败也不发空帧
+      if (!Array.isArray(f.elements) || f.elements.length === 0) return null;
+      const { png } = await renderLabelPng({
+        elements: f.elements, widthMm: p.widthMm, heightMm: p.heightMm, dpi: p.dpi,
+      });
+      return { pngBase64: png.toString('base64'), copies: job.copies };
+    }))).filter(Boolean) as AgentJobSource['labels'];
     return {
       tenantId: job.tenantId, jobId: job.jobId, templateId: job.templateId,
       capability: 'windows_spooler', labels,
@@ -288,7 +302,7 @@ export class HardwareService implements AgentEnqueuePort, OnModuleInit, OnModule
    * 不抛异常给 Worker（由 Provider 转 ok:false 记失败日志），但错误要明确。
    */
   async enqueue(job: PrintJobInput): Promise<{ queued: boolean; agentJobId: string; error?: string }> {
-    const src = this.toJobSource(job);
+    const src = await this.toJobSource(job);
     if (!src.labels.length) return { queued: false, agentJobId: '', error: '没有可下发的标签帧' };
     const envelope = agentJobEnvelope(src, new Date());
     if (!envelope.labels.length) return { queued: false, agentJobId: '', error: '标签帧没有可用格式' };

@@ -130,11 +130,13 @@ export class PrintProcessor extends WorkerHost {
           if (warns.length) console.warn(`[print] job ${jobId} 条码自检告警：${warns.map((i) => `[${i.sym}] ${i.message}`).join('；')}`);
         }
 
-        let payload: any;
+        // 无论协议都带上已渲染元素：image / 代理的 png-base64 通道要靠它栅格化。
+        // 只带指令文本的话，图型式打印机收到的是空帧（旧实现即如此）。
+        const payload: any = { elements: rendered };
         if (protocol === 'zpl') {
-          payload = { zpl: this.render.toZplElements(rendered) };
+          payload.zpl = this.render.toZplElements(rendered);
         } else if (protocol === 'tspl') {
-          payload = { tspl: this.render.toTsplElements(rendered) };
+          payload.tspl = this.render.toTsplElements(rendered);
         }
 
         if (provider) {

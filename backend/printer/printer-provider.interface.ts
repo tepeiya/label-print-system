@@ -8,6 +8,7 @@
 import type { PrintResult } from '../core/types';
 import type { ZplElement } from '../core/zpl-generator';
 import type { TsplElement } from '../core/tspl-generator';
+import { renderLabelPng } from '../src/print/label-png';
 
 export type ProviderType = 'browser' | 'raw_tcp' | 'windows_spooler' | 'image';
 
@@ -43,6 +44,8 @@ export interface LabelFrame {
   // 一套元素，可同时包含 ZPL 与 TSPL 两种描述，由 Provider 选用其一
   zpl?: ZplElement[];
   tspl?: TsplElement[];
+  // 已渲染的元素（模板原生 x/y/w/h，mm）——栅格化通道（image / 代理的 png-base64）用
+  elements?: any[];
   // 服务端出图通道使用（ImageProvider）
   pngBuffer?: Buffer;
 }
@@ -126,7 +129,10 @@ export class RawTcpProvider implements PrinterProvider {
 // =============================================================================
 // 实现 2：ImageProvider —— 服务端渲染 PNG/PDF（存档 & 第三方集成 & 本地代理）
 // 适用：需要矢量 PDF 精确归档、或没有物理打印机时的预览/留档。
-// 这里演示 PNG 出图；PDF 用 pdf-lib 叠加（示意）。canvas 为可选依赖（懒加载）。
+// 输出路径：已渲染元素 → vector-renderer 的整标签 SVG（条码/二维码内联 bwip 矢量）
+//   → sharp 栅格化到目标 dpi。**不依赖 node-canvas**（客户机不必装原生依赖）。
+// 诚实边界：sharp 的文本渲染依赖系统字体，中文缺字体时会退化为方块；
+//   warnings 由 renderLabelPng 透出，不静默成功。
 // =============================================================================
 
 export class ImageProvider implements PrinterProvider {
@@ -136,44 +142,30 @@ export class ImageProvider implements PrinterProvider {
 
   async print(job: PrintJobInput): Promise<PrintResult> {
     const { printer, labels } = job;
-    // 逐张渲染为 PNG（mm→px 按 printer.dpi）
+    if (!labels?.length) return { ok: false, error: '没有标签帧' };
     const pngs: Buffer[] = [];
     for (const frame of labels) {
+      // 上游已给好位图（例如未来的预渲染/加水印），直接用
       if (frame.pngBuffer) { pngs.push(frame.pngBuffer); continue; }
-      // 优先用 node-canvas 绘制（若已安装）；否则用内置 PNG 写出占位文本位图
-      pngs.push(this.renderWithCanvasOrFallback(frame, printer));
+      const elements = frame.elements;
+      if (!Array.isArray(elements) || elements.length === 0) {
+        // 曾经的缺陷：这里回退白底占位 PNG，打出来是空白纸且记成功。改为显式失败。
+        return { ok: false, error: 'image 通道缺少可渲染元素（frame.elements 为空）' };
+      }
+      try {
+        const { png, warnings } = await renderLabelPng({
+          elements,
+          widthMm: printer.widthMm,
+          heightMm: printer.heightMm,
+          dpi: printer.dpi,
+        });
+        if (warnings?.length) console.warn(`[print][image] 标签渲染告警：${warnings.join('；')}`);
+        pngs.push(png);
+      } catch (e: any) {
+        return { ok: false, error: `标签栅格化失败：${String(e?.message ?? e)}` };
+      }
     }
     return { ok: true, bytes: pngs[0], jobId: job.jobId };
-  }
-
-  private renderWithCanvasOrFallback(frame: LabelFrame, printer: PrintJobInput['printer']): Buffer {
-    try {
-      // 懒加载可选依赖 canvas（未安装时回退到内置编码器）
-      const { createCanvas } = require('canvas');
-      const w = Math.round((printer.widthMm * printer.dpi) / 25.4);
-      const h = Math.round((printer.heightMm * printer.dpi) / 25.4);
-      const cv = createCanvas(w, h);
-      const ctx = cv.getContext('2d');
-      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
-      for (const el of frame.zpl ?? []) {
-        const x = (el.xMm * printer.dpi) / 25.4;
-        const y = (el.yMm * printer.dpi) / 25.4;
-        if (el.type === 'text') {
-          ctx.fillStyle = '#000';
-          ctx.font = `${Math.round((el.fontHeightMm ?? 3) * printer.dpi / 25.4)}px sans-serif`;
-          ctx.fillText(el.text ?? '', x, y);
-        }
-        // 条码/二维码实际应调用 @bwip-js 渲染到 canvas
-      }
-      return cv.toBuffer('image/png');
-    } catch {
-      // 回退：生成一张白底占位 PNG（真实场景接入 @bwip-js/node）
-      const { encodeGrayPng } = require('../core/png');
-      const w = Math.max(1, Math.round((printer.widthMm * printer.dpi) / 25.4));
-      const h = Math.max(1, Math.round((printer.heightMm * printer.dpi) / 25.4));
-      const px = new Uint8Array(w * h).fill(255);
-      return encodeGrayPng(w, h, px);
-    }
   }
 }
 
