@@ -4,6 +4,7 @@ export * from './template.entity';
 export * from './serial.entity';
 export * from './print.entity';
 export * from './ai-template.entity';
+export * from './ai-quota.entity';
 export * from './saas.entity';
 export { PlatformUser } from '../saas/platform-admin/platform-user.entity';
 export { PlatformAuditLog } from '../saas/platform-admin/platform-audit.service';
@@ -14,7 +15,9 @@ export { AgentClient, AgentToken, AgentApproval, ToolIdempotency, AgentPrompt, A
 // P6.4 白标实体（表 tenant_domains 建在 P0，补列见 scripts/saas_p6_branding.sql）
 export { TenantDomain } from '../saas/branding/tenant-domain.entity';
 // P4 库存最小读模型实体
-export { Warehouse, WarehouseLocation, ProductGroup, Material, MaterialGtin, StockBatch, StockMove, Bom, BomItem, StockAdjustment, StockAdjustmentLine } from '../inventory/inventory.entity';
+export { Warehouse, WarehouseLocation, ProductGroup, Material, MaterialGtin, MaterialFieldDefinition, StockBatch, StockMove, Bom, BomItem, StockAdjustment, StockAdjustmentLine } from '../inventory/inventory.entity';
+// 库存预警规则/事件（注入 Repository，漏注册会 500）
+export * from '../inventory/alert.entity';
 // P7 / B2.5 站内信（DDL: scripts/saas_p7_notifications.sql）
 export { Notification } from '../notify/notification.entity';
 // P8.1 自动化触发器（DDL: scripts/saas_p8_triggers.sql）

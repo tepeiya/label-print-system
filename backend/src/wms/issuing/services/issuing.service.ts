@@ -82,6 +82,15 @@ export class IssuingService {
     if (!product?.id) throw new BadRequestException('产出物料不存在');
     const warehouse = await this.inventory.resolveWarehouse({ tenantId, ref: dto.warehouseId });
 
+    // 行来源要在建单之前解析：BOM 缺失时直接报错，不留下"没有明细的空工单"（迁移/批量导入会踩）
+    const manual = dto.lines ?? [];
+    let bomLines: Array<{ materialId: number; qtyPer?: number; lossRate?: number }> = [];
+    if (!manual.length && dto.expandBom !== false) {
+      const bom = await this.inventory.expandBom({ tenantId, productMaterialId: product.id });
+      if (!bom) throw new NotFoundException(`产品「${product.name}」没有启用中的 BOM，无法自动展开`);
+      bomLines = bom.lines.map((b) => ({ materialId: b.materialId, qtyPer: b.qtyPer, lossRate: b.lossRate }));
+    }
+
     const wo = await this.wos.save(this.wos.create({
       tenantId, woNo,
       productMaterialId: product.id,
@@ -98,19 +107,14 @@ export class IssuingService {
       createdBy: userId ?? null,
     }));
 
-    // 行来源：手工行优先；否则 expandBom 时按 active BOM 展开
-    const manual = dto.lines ?? [];
+    // 行来源：手工行优先；否则按上面已解析的 BOM 行展开
     if (manual.length) {
       await this.replaceLines(wo, manual.map((l) => ({
         materialId: l.materialId, materialCode: l.materialCode,
         qtyRequired: Number(l.qtyRequired), batchNo: l.batchNo,
       })), demand);
-    } else if (dto.expandBom !== false) {
-      const bom = await this.inventory.expandBom({ tenantId, productMaterialId: product.id });
-      if (!bom) throw new NotFoundException(`产品「${product.name}」没有启用中的 BOM，无法自动展开`);
-      await this.replaceLines(wo, bom.lines.map((b) => ({
-        materialId: b.materialId, qtyPer: b.qtyPer, lossRate: b.lossRate,
-      })), demand);
+    } else if (bomLines.length) {
+      await this.replaceLines(wo, bomLines, demand);
     }
 
     void this.audit.write(tenantId, 'wms.wo.create', { woNo, demand, expandBom: dto.expandBom !== false }, undefined, 'wms_work_order', wo.id);

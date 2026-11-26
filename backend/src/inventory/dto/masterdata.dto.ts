@@ -1,7 +1,15 @@
 import { Type } from 'class-transformer';
 import {
-  IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Length, Min,
+  IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Length, Min, ValidateNested,
 } from 'class-validator';
+
+/** 物料的一档包装 GTIN（含箱规）。GTIN 会归一成 GTIN14 并在租户内唯一。 */
+export class MaterialGtinDto {
+  @IsString() @Length(8, 14) gtin!: string;
+  @IsOptional() @IsIn(['UNIT', 'CARTON', 'PALLET']) packLevel?: string;
+  /** UNIT 档忽略此值；CARTON/PALLET 必填且 > 0 */
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) packQty?: number;
+}
 
 export class CreateMaterialDto {
   @IsString() @Length(1, 40) code!: string;
@@ -22,6 +30,9 @@ export class CreateMaterialDto {
   @IsOptional() @IsString() @Length(0, 14) gtin?: string;
   /** U5.1：是否必须扫 UDI 码 */
   @IsOptional() @IsBoolean() udiRequired?: boolean;
+  /** 多档包装 GTIN（单件/箱/托），最多 10 个；第一档将作为主 GTIN */
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => MaterialGtinDto)
+  gtins?: MaterialGtinDto[];
 }
 
 // 不继承 CreateMaterialDto：class-validator 装饰器沿原型链累加会把 code 重新变必填
@@ -40,6 +51,9 @@ export class UpdateMaterialDto {
   @IsOptional() @IsObject() customFields?: Record<string, any>;
   @IsOptional() @IsString() @Length(0, 14) gtin?: string;
   @IsOptional() @IsBoolean() udiRequired?: boolean;
+  /** 多档包装 GTIN；传入即整体覆盖该物料的 GTIN 档位 */
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => MaterialGtinDto)
+  gtins?: MaterialGtinDto[];
 }
 
 /** 产品自定义字段定义 */

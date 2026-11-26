@@ -1,0 +1,22 @@
+{
+  "name": "labelflow-data-migration",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "LabelFlow 客户数据迁移工具：Excel 模板 / 离线校验 / 带审计导入",
+  "main": "import.mjs",
+  "bin": {
+    "labelflow-migrate": "./import.mjs"
+  },
+  "scripts": {
+    "template": "node import.mjs --template ./migration",
+    "check": "node import.mjs --check",
+    "apply": "node import.mjs --apply"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
