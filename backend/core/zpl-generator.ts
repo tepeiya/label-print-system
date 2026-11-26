@@ -152,7 +152,11 @@ export function generateZpl(els: ZplElement[], dpi: number): { text: string; war
         }, dpi).quietZone;
         const qx = x + mmToDots(qz.left, dpi);
         const qy = y + mmToDots(qz.top, dpi);
-        const content = esc(q.content);
+        // GS1 DataMatrix：模板 content 是带括号的 HRI，直接塞进 ^FD 会把括号当数据编码，
+        //   扫出来不是合法 GS1 元素串（UMDI/医院端解析不了）。必须转码：
+        //   剥离括号 → 变长 AI 间插 FNC1（ZPL 用 `>8`）→ 前导 FNC1 标识 GS1 符号。
+        //   非法 AI/字符集时按原内容输出并告警（不静默吞）。QR 的 GS1 语义未在此处理。
+        const content = esc(zpl2DContent(key, q, warnings));
         const moduleDots = mmToDots(q.moduleSizeMm ?? 0.4, dpi);
         // ZPL 放大系数 1-10（每个模块 dots）
         const m = Math.min(10, Math.max(1, moduleDots));
@@ -282,6 +286,25 @@ function zplBarcodeLine(
       // ⚠️ 显式 throw 让调用方知道能力真源与语法表漂移了；生产代码不应走到这里
       throw new Error(`zplBarcodeLine: 意外的码制 "${sym}"，请检查 symbology.capabilities 中声明为 ZPL native 的码制是否都有语法分支`);
   }
+}
+
+/**
+ * 二维码（2D）内容 → ZPL 数据流。
+ * · 非 GS1、或内容不是 HRI 形态（不以 "(AI)" 开头）→ 原样返回；
+ * · GS1 DataMatrix（q.gs1=true 且内容为 HRI）→ `>8` 前导 + 变长 AI 间 `>8` 分隔，
+ *   与 TSPL 侧 tspl2DContent（`~1`）保持同一口径；
+ * · 数据非法（AI 未登记/定长位数不符/字符集）→ 原样输出并告警，不静默改内容。
+ */
+function zpl2DContent(key: string, q: QrcodeSpec, warnings: string[]): string {
+  const raw = String(q.content ?? '');
+  const gs1On = (q as any).gs1 === true && key.startsWith('DATA');
+  if (!gs1On || !/^\(\d{2,4}\)/.test(raw)) return raw;
+  const g = encodeGs1(raw);
+  if (g.invalid.length) {
+    warnings.push(`[ZPL] DataMatrix GS1 数据存疑：${g.invalid.join('；')}（已按原内容输出，请核对）`);
+    return raw;
+  }
+  return '>8' + gs1ToProtocol(g.data, 'zpl');
 }
 
 /** 转义 ZPL 控制字符（^ ~ \ 会与指令冲突，用 ^FH 十六进制转义） */

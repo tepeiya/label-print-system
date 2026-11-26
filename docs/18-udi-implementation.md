@@ -55,8 +55,37 @@ curl -X POST http://localhost:3200/api/v1/udi/encode -H 'Authorization: Bearer <
 
 1. **不做 ISO/IEC 15415 打印质量等级判定**：需 RJS 等硬件验证仪，系统只保证"解码可读 + 内容合规"。
 2. **国家 UDI 直连需要客户自己拿到接口授权**：UDID 系统要求申报方先提交《对接申请表》并审核通过，官方邮件下发凭据；没有凭据时 `mode=api` 明确返回 `NOT_CONFIGURED`，绝不假成功（详见 §8）。**EUDAMED / GUDID 没有开放自助 API**，只提供文件生成（EUDAMED XML / GUDID HL7 SPL 骨架）后人工上传。
-3. **不宣称真机兼容**：当前只验证了位图通道（bwip + zxing）。ZPL/TSPL 指令通道对 GS1 DataMatrix 的 FNC1 处理需逐机型验收（见 §6）。
+3. **不宣称真机兼容**：位图通道（bwip + zxing）已验证可解码；ZPL/TSPL 指令通道现已补齐 GS1 内容转码（见 §4.1），但**仍未上真机打印验收**。
 4. **不含医院端临床扫码核验**：另一条产品线，不在本套件范围。
+
+
+### 4.1 ZPL 通道的 GS1 DataMatrix 转码（2026-11-26 修复）
+
+**缺陷**：`qrcode` 元素在处理时是 `esc(q.content)` 直接进 `^FD`。模板里写的是 HRI `(01){{gtin}}(17){{expiry}}(10){{lot}}`，渲染后带括号进指令，打印机把括号当普通字符编码——扫出来是字面 `(01)0690…`，**不是合法 GS1 元素串**，医院端/国家平台无法按 AI 解析。`encodeGs1`/`gs1ToProtocol` 早就存在，但只接在 GS1-128 的一维分支，`^BX` 分支没接。
+
+**修复**（`backend/core/zpl-generator.ts: zpl2DContent`）：
+
+| 条件 | 行为 |
+|---|---|
+| `q.gs1 === true` 且内容以 `(AI)` 开头 | `encodeGs1` 剥离括号 → 变长 AI 间插 `\u001D` → `gs1ToProtocol(...,'zpl')` → `>8`，并在最前加 `>8` 前导（标识 GS1 符号） |
+| 非 GS1 / 内容不像 HRI | 原样输出，不误改普通码 |
+| AI 非法、定长位数不符、字符集错 | 保留原内容输出 + `[ZPL] DataMatrix GS1 数据存疑` 告警（不静默） |
+
+与 TSPL 侧 `tspl2DContent`（`~1` 口径）一致。UDI 单件模板实测输出：
+
+```
+^FO28,134^BXN,189,4,200^FD>801069012345001721727123110LOT-R1>821SN0001^FS
+```
+
+（`01` 后 14 位定长直连、`17` 直连、`(10)LOT-R1` 变长后 `>8`、`(21)SN0001` 收尾）
+
+**验证**：`backend/core/__tests__/zpl-gs1-datamatrix.test.ts` 6 例（前导/分隔位置、全定长无冗余分隔、非 GS1 原样、gs1 未开不转码、非法数据告警、`^` 经 `^FH` 转义不截断）；`core/__tests__` 全量 138 例通过，`src/print`+`src/udi` 264 例通过，`tsc --noEmit` 零错误。
+
+**仍未验收**：真实 Zebra 设备打样 + 扫码枪/影像式读码器读回比对（需要硬件）。在此之前 ZPL 直连通道对外只能描述为"已修转码、待真机验收"。
+
+### 4.2 另一处已知缺口：image 通道不出真码
+
+`backend/printer/printer-provider.interface.ts` 的 `ImageProvider` 在未安装 `canvas`（当前仓库 `node_modules` 里确实没有）时回退为**白底占位 PNG**，代码注释也写着"条码/二维码实际应调用 @bwip-js 渲染到 canvas"。也就是说 `image` / `png-base64` 通道目前不能用于交付，UDI 标签只能走 `browser`、矢量 PDF 导出，或先渲染 PNG 再交驱动型打印机。待补：用 bwip 的 PNG 输出直接拼帧（不需要 canvas）。
 
 ## 5. 商业化接入（2026-11-24 已接闸）
 
