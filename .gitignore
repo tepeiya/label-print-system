@@ -47,3 +47,10 @@ docs/acceptance/.jest-integration.json
 apps/print-agent/bin/
 apps/print-agent/obj/
 apps/print-agent/publish/
+
+# 部署产物
+backups/
+
+# 迁移工具运行产物
+tools/data-migration/migration/
+tools/data-migration/reports/
