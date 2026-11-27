@@ -288,6 +288,30 @@
         </FRow>
         <span v-if="qrGs1Hint" class="f-hint f-hint-warn">⚠ {{ qrGs1Hint }}</span>
         <span v-else-if="isMatrixQr && qr!.gs1" class="f-hint">✓ 按 GS1 规则编码：扫码枪解出带括号 AI，可入 UDI 台账</span>
+        <!-- UDI 分段录入：四段分开填，自动拼成连续一行的 GS1 串（不允许换行的根源是规范，不是输入框脾气） -->
+        <FGroup v-if="isMatrixQr && qr!.gs1" title="UDI 分段录入" collapsible store-key="udi">
+          <FRow>
+            <FLabel text="(01) DI" />
+            <FText :model-value="udi.di" placeholder="14 位 GTIN，如 06901234567892" @update:model-value="setUdiPart('di', $event)" />
+          </FRow>
+          <FRow>
+            <FLabel text="(17) 有效期" />
+            <FText :model-value="udi.exp" placeholder="YYMMDD，如 281231" @update:model-value="setUdiPart('exp', $event)" />
+            <FLabel text="(10) 批号" />
+            <FText :model-value="udi.lot" placeholder="如 20261101" @update:model-value="setUdiPart('lot', $event)" />
+          </FRow>
+          <FRow>
+            <FLabel text="(21) 序列号" />
+            <FText :model-value="udi.serial" placeholder="单件唯一才填，可留空" @update:model-value="setUdiPart('serial', $event)" />
+          </FRow>
+          <span v-if="udiPreview" class="f-hint">将写入：{{ udiPreview }}</span>
+          <FRow>
+            <FLabel text=" " />
+            <FBtn kind="primary" @click="applyUdi">写入二维码内容</FBtn>
+            <FBtn @click="readUdiFromContent">从内容反读</FBtn>
+          </FRow>
+          <span class="f-hint">四段分开填只是录入方式；码里必须是连续一行，段与段之间不能有空格或换行。</span>
+        </FGroup>
         <!-- 内容可能上千字符（URL / JSON / GS1 串），单行 input 看不见后半段，
              所以这里用可调高的多行框；但它仍是「一条数据」，noNewline 见 fields/FArea.vue -->
         <FField label="内容" class="f-field-top">
@@ -295,7 +319,8 @@
             :model-value="qr!.content ?? ''"
             :rows="6"
             no-newline
-            placeholder="支持 {{变量}}；内容再长也不用回车分段"
+            newline-mode="strip"
+            placeholder="整条数据一行写完；想分段录入请用下面的「UDI 分段录入」"
             @update:model-value="setQr({ content: $event })"
             @normalize="onQrNormalize"
           />
@@ -417,7 +442,7 @@
 //   写入一律走 store.updateElement（实时、不入历史），历史由 COMMIT_KEY 的
 //   begin/end 在控件层收口，所以「拖一次滑块」= 一条 undo。
 // =============================================================================
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useDesignerStore } from '../store';
 import { BARCODE_SYM_OPTIONS, QRCODE_SYM_OPTIONS, SYSVAR_KEYS, TYPE_LABELS } from '../model';
 import {
@@ -475,6 +500,49 @@ const isMatrixQr = computed(() => {
   return sym === 'DATAMATRIX' || sym === 'DATAMATRIX_RECT';
 });
 /** GS1 模式下内容必须是带括号 HRI，给一条即时提示 */
+// ---- UDI 分段录入 ----
+const udi = reactive({ di: '', exp: '', lot: '', serial: '' });
+
+function setUdiPart(k: 'di' | 'exp' | 'lot' | 'serial', v: string) {
+  udi[k] = String(v ?? '').trim();
+}
+
+const udiPreview = computed(() => {
+  const parts: string[] = [];
+  if (udi.di) parts.push(`(01)${udi.di}`);
+  if (udi.exp) parts.push(`(17)${udi.exp}`);
+  if (udi.lot) parts.push(`(10)${udi.lot}`);
+  if (udi.serial) parts.push(`(21)${udi.serial}`);
+  return parts.join('');
+});
+
+function applyUdi() {
+  if (!udiPreview.value) return;
+  setQr({ content: udiPreview.value, gs1: true });
+}
+
+/** 打开已有模板时，把内容里的四段读回输入框，方便改其中一段 */
+function readUdiFromContent() {
+  const c = String(qr.value?.content ?? '');
+  const grab = (ai: string) => {
+    const m = c.match(new RegExp(`\\(${ai}\\)([^()]*)`));
+    return m ? m[1].trim() : '';
+  };
+  udi.di = grab('01');
+  udi.exp = grab('17');
+  udi.lot = grab('10');
+  udi.serial = grab('21');
+}
+
+// 换元素时同步一次（只读回填，不覆盖内容）
+watch(
+  () => el.value?.id,
+  () => {
+    udi.di = udi.exp = udi.lot = udi.serial = '';
+    if (el.value?.type === 'qrcode' && el.value?.qrcode?.gs1) readUdiFromContent();
+  },
+);
+
 const qrGs1Hint = computed(() => {
   const c = String(qr.value?.content ?? '');
   if (!qr.value?.gs1) return '';
@@ -568,7 +636,7 @@ const qrNotice = ref('');
 let qrNoticeTimer: ReturnType<typeof setTimeout> | undefined;
 function onQrNormalize(n: number) {
   clearTimeout(qrNoticeTimer);
-  qrNotice.value = `内容有 ${n} 个换行/控制字符，已整理成单行（换行按空格接续）：ZPL/TSPL 指令按行切分，^FD…^FS 里带换行会让打印机把后半段当新指令读，只有位图通道能原样承载。`;
+  qrNotice.value = `内容有 ${n} 个换行/控制字符，已直接去掉（不补空格）：GS1/UDI 的 HRI 各段必须连着写，(01)…(17)…(10)… 之间不能有空白，否则码里会多出非法字符。ZPL/TSPL 指令也按行切分，^FD…^FS 里带换行会把后半段当新指令。`;
   qrNoticeTimer = setTimeout(() => { qrNotice.value = ''; }, 8000);
 }
 // 换元素时这条提示就与当前内容无关了，别挂在下一个二维码下面

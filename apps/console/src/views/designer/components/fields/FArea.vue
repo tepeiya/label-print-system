@@ -37,13 +37,20 @@ const props = withDefaults(defineProps<{
   disabled?: boolean;
   /** 单行语义：回车不插入换行，粘贴/拖入的换行按空格接续，并上报本次整理掉几个控制字符 */
   noNewline?: boolean;
-}>(), { modelValue: '', rows: 3, noNewline: false });
+  /**
+   * 换行处理方式：'space'（默认，两段接起来加空格）| 'strip'（直接删掉换行）。
+   * GS1/UDI 内容必须连续且不能含空格——HRI 各段之间没有空白字符，
+   * 一旦插了空格，bwip 的 gs1datamatrix 会把它当数据字符，码里就多出非法字节。
+   */
+  newlineMode?: 'space' | 'strip';
+}>(), { modelValue: '', rows: 3, noNewline: false, newlineMode: 'space' });
 
 const emit = defineEmits<{ 'update:modelValue': [string]; normalize: [number] }>();
 const commit = inject(COMMIT_KEY, NO_COMMIT);
 
 function clean(v: string) {
-  return v.replace(CTRL_TO_SPACE, ' ').replace(CTRL_DROP, '');
+  const body = props.newlineMode === 'strip' ? v.replace(CTRL_TO_SPACE, '') : v.replace(CTRL_TO_SPACE, ' ');
+  return body.replace(CTRL_DROP, '');
 }
 
 function onInput(e: Event) {
