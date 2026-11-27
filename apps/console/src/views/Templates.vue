@@ -103,6 +103,8 @@ async function importOne(code: string) {
     const p = await apiUdiTemplatePayload(code);
     const created: any = await apiImportTemplate({
       name: p.name,
+      // 带模板编码：导入后 pack-print / 内部打印契约才能按 code 直接引用
+      code,
       content: p.template as any,
       schemaVersion: 1,
       category: 'UDI',
@@ -128,6 +130,7 @@ async function importAll() {
       const p = await apiUdiTemplatePayload(t.code);
       await apiImportTemplate({
         name: p.name,
+        code: p.code ?? t.code,
         content: p.template as any,
         schemaVersion: 1,
         category: 'UDI',

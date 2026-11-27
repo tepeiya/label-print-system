@@ -1,5 +1,5 @@
 // 模板服务：CRUD / 版本快照 / 复制 / 收藏 / 导入导出 / 缩略图
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Template, TemplateVersion } from '../entities/template.entity';
@@ -125,8 +125,20 @@ export class TemplateService {
   async import(raw: any) {
     let t = raw;
     while (t.schemaVersion < CURRENT_SCHEMA) t = (migrators[t.schemaVersion] ?? ((x: any) => x))(t);
-    const created = await this.create({ name: t.name, category: t.category, tags: t.tags, content: t.content });
-    await this.audit.write(this.tid(), 'template.import', { newId: created.id, name: created.name }, undefined, 'template', created.id);
+    let created: Template;
+    try {
+      created = await this.create({
+        name: t.name, code: t.code, category: t.category, tags: t.tags, content: t.content,
+      } as any);
+    } catch (e: any) {
+      // ux_templates_tenant_code：同一租户编码唯一。重复导入内置模板包是常见操作，
+      // 这里翻译成人话，不把 Postgres 的 23505 抛给前端。
+      if (e?.code === '23505') {
+        throw new ConflictException(`模板编码「${t.code}」已存在：请删除旧版，或直接使用现有模板（导入同一包不会合并版本）`);
+      }
+      throw e;
+    }
+    await this.audit.write(this.tid(), 'template.import', { newId: created.id, name: created.name, code: (created as any).code ?? null }, undefined, 'template', created.id);
     return created;
   }
 

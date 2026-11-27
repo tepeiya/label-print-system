@@ -65,6 +65,13 @@ export class ImportTemplateDto {
   @Length(1, 120, { message: '导入包缺少 name' })
   name!: string;
 
+  /** 模板编码：导入 UDI 内置模板等「按 code 寻址」的场景必须带上，
+      否则导入后无法被 POST /udi/pack-print 等接口按 code 引用 */
+  @IsOptional()
+  @IsString()
+  @Length(1, 60)
+  code?: string;
+
   @IsObject({ message: '导入包缺少有效 content' })
   content!: any;
 

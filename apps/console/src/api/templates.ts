@@ -34,6 +34,8 @@ export interface UpdateTemplateBody {
 /** 导入包：exportOne 返回 { template, schemaVersion }，导入只需 name/category/tags/content */
 export interface ImportTemplateBody {
   name: string;
+  /** 模板编码（租户内唯一）；按 code 引用的场景（pack-print、内部打印契约）必须给 */
+  code?: string;
   content: TemplateData;
   schemaVersion?: number;
   category?: string;
