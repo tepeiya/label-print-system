@@ -246,7 +246,7 @@ export class UdiBatchPrintService {
     };
   }
 
-  /** 表单所需的元信息：可用模板、公司前缀、单次上限 */
+  /** 表单所需的元信息：单件/箱标模板分开给、公司前缀、单次上限 */
   async meta(tenantId: number) {
     const tpls = await this.templates.find({ where: { tenantId }, select: ['id', 'code', 'name', 'category'] });
     const isUdi = (t: Template) => String(t.category ?? '').toUpperCase() === 'UDI' || /UDI/i.test(String(t.code ?? ''));
@@ -256,10 +256,19 @@ export class UdiBatchPrintService {
     } catch (e: any) {
       prefix = { prefix: '6901234', valid: false, note: String(e?.message ?? e) };
     }
+    // 箱级模板：UDI 箱标（UDI_CARTON_*）与普通 WMS 箱标（*CARTON*）都算。单件下拉必须排除，
+    // 否则表单默认选中第一个就把箱标当单件打——一次 100 张 A4 大小的箱标是实打实的耗材损失。
+    const isCartonTpl = (t: Template) => /CARTON|箱/i.test(`${t.code ?? ''} ${t.name ?? ''}`);
+    const brief = (t: Template) => ({ id: t.id, code: t.code, name: t.name, category: t.category });
+    const udi = tpls.filter(isUdi);
     return {
       maxUnitQty: MAX_UNIT_QTY,
       prefix,
-      unitTemplates: tpls.filter(isUdi).map((t) => ({ id: t.id, code: t.code, name: t.name, category: t.category })),
+      unitTemplates: udi.filter((t) => !isCartonTpl(t)).map(brief),
+      cartonTemplates: [
+        ...udi.filter(isCartonTpl).map(brief),
+        ...tpls.filter((t) => !isUdi(t) && isCartonTpl(t)).map(brief),
+      ],
       allTemplates: tpls.filter((t) => !!t.code).map((t) => ({ id: t.id, code: t.code, name: t.name })),
     };
   }

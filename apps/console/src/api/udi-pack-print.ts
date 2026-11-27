@@ -12,6 +12,7 @@ export interface PackPrintMeta {
   maxUnitQty: number;
   prefix: { prefix: string; valid: boolean; note?: string };
   unitTemplates: PackPrintTemplate[];
+  cartonTemplates: PackPrintTemplate[];
   allTemplates: PackPrintTemplate[];
 }
 

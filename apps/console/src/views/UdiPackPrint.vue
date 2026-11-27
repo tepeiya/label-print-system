@@ -88,17 +88,24 @@
         </el-col>
         <el-col :span="8">
           <el-form-item label="单件模板">
-            <el-select v-model="form.unitTemplateCode" placeholder="选 UDI 单件标签模板" style="width: 100%" filterable>
+            <el-select v-model="form.unitTemplateCode" placeholder="选单件标签模板（不含箱标）" style="width: 100%" filterable>
               <el-option v-for="t in meta?.unitTemplates ?? []" :key="t.id" :value="t.code ?? `#${t.id}`"
                 :label="`${t.name}${t.code ? ' · ' + t.code : '（无编码）'}`" />
             </el-select>
+            <span v-if="meta && !meta.unitTemplates.length" class="hint inline error">没有单件模板，先去模板库导入 UDI 单件标签</span>
           </el-form-item>
         </el-col>
         <el-col :span="8">
           <el-form-item label="箱标模板">
             <el-select v-model="form.cartonTemplateCode" placeholder="不选则只出单件标" style="width: 100%" filterable clearable>
-              <el-option v-for="t in cartonOptions" :key="t.id" :value="t.code ?? `#${t.id}`"
-                :label="`${t.name}${t.code ? ' · ' + t.code : ''}`" />
+              <el-option-group label="箱级模板">
+                <el-option v-for="t in meta?.cartonTemplates ?? []" :key="t.id" :value="t.code ?? `#${t.id}`"
+                  :label="`${t.name}${t.code ? ' · ' + t.code : ''}`" />
+              </el-option-group>
+              <el-option-group label="其他模板（变量可能对不上，慎用）">
+                <el-option v-for="t in otherTemplates" :key="t.id" :value="t.code ?? `#${t.id}`"
+                  :label="`${t.name}${t.code ? ' · ' + t.code : ''}`" />
+              </el-option-group>
             </el-select>
           </el-form-item>
         </el-col>
@@ -207,17 +214,11 @@ const form = reactive({
   extraText: '',
 });
 
-const cartonOptions = computed(() => {
-  const all = meta.value?.allTemplates ?? [];
-  // UDI 分类优先排在前面，其余（普通 WMS 箱标）也允许选
-  return [...all].sort((a, b) => Number(String(b.category ?? '').toUpperCase() === 'UDI') - Number(String(a.category ?? '').toUpperCase() === 'UDI'));
+// 除「箱级模板」以外、用户仍可能手工选的其余模板（例如把通用箱标签拿来用）
+const otherTemplates = computed(() => {
+  const cartonIds = new Set((meta.value?.cartonTemplates ?? []).map((t) => t.id));
+  return (meta.value?.allTemplates ?? []).filter((t) => !cartonIds.has(t.id));
 });
-
-function templateRef(codeOrId: string | undefined, list: any[] | undefined) {
-  if (!codeOrId) return {};
-  if (codeOrId.startsWith('#')) return { unitTemplateId: Number(codeOrId.slice(1)) };
-  return {};
-}
 
 function parseExtra(): Record<string, string> {
   const out: Record<string, string> = {};
@@ -288,6 +289,8 @@ onMounted(async () => {
     meta.value = await apiPackPrintMeta();
     const first = meta.value.unitTemplates?.[0];
     if (first) form.unitTemplateCode = first.code ?? `#${first.id}`;
+    const carton = meta.value.cartonTemplates?.[0];
+    if (carton) form.cartonTemplateCode = carton.code ?? `#${carton.id}`;
   } catch (e: any) {
     ElMessage.warning('读取 UDI 模板清单失败：' + (e?.message || e));
   }
@@ -307,6 +310,7 @@ onMounted(async () => {
 .pack-form { max-width: 1100px; }
 .hint { color: #8a8f99; font-size: 12px; }
 .hint.inline { margin-left: 8px; }
+.hint.inline.error { color: #d9534f; }
 .preview-col { display: flex; align-items: center; }
 .actions { margin: 18px 0 8px; display: flex; gap: 10px; }
 .result { max-width: 1100px; margin-top: 8px; }
