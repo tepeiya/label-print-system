@@ -18,7 +18,7 @@
 
       <div v-if="loading" class="empty">加载中…</div>
       <div v-else-if="!items.length" class="empty">
-        <div class="icon">📭</div>
+        <div class="icon"></div>
         <div>暂无收货单</div>
         <button class="btn primary" style="margin-top:16px" @click="showCreate = true">新建收货单</button>
       </div>

@@ -38,7 +38,7 @@
         </button>
       </div>
       <div v-else class="empty">
-        <div class="icon">🧭</div>
+        <div class="icon"></div>
         <div>正在计算推荐库位…</div>
       </div>
     </div>

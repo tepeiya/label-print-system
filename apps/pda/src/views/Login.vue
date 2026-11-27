@@ -1,11 +1,11 @@
 <template>
   <div class="login-page">
     <div class="login-brand">
-      <div class="logo">📦</div>
-      <div class="name">WMS 收货作业</div>
-      <div class="sub">仓库现场扫码 · 移动作业端</div>
+      <div class="lf-mark lg">LF</div>
+      <div class="name">LabelFlow 移动作业</div>
+      <div class="sub">仓库现场扫码 · 收货 / 上架 / 发料 / 发运</div>
     </div>
-    <div class="card">
+    <div class="card login-card">
       <div class="field">
         <label for="u">账号</label>
         <input id="u" v-model.trim="username" autocomplete="username" placeholder="请输入账号" @keyup.enter="submit" />
@@ -61,12 +61,3 @@ async function submit() {
   }
 }
 </script>
-
-<style scoped>
-.login-page { min-height: 100%; padding: 12vh 20px 30px; max-width: 460px; margin: 0 auto; }
-.login-brand { text-align: center; margin-bottom: 32px; }
-.login-brand .logo { font-size: 56px; }
-.login-brand .name { font-size: 24px; font-weight: 800; margin-top: 8px; letter-spacing: 1px; }
-.login-brand .sub { color: var(--text-dim); font-size: 14px; margin-top: 6px; }
-.hint { text-align: center; color: var(--text-dim); font-size: 12px; margin-top: 20px; }
-</style>

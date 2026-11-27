@@ -172,3 +172,41 @@ a { color: var(--brand); text-decoration: none; }
 .menu-tile .ic { font-size: 30px; }
 .menu-tile .nm { font-size: 17px; font-weight: 700; }
 .menu-tile .ds { font-size: 12px; color: var(--text-dim); }
+
+/* ---------- LabelFlow 视觉升级层（与 Console 共用品牌令牌；只覆盖，不改原类语义） ---------- */
+:root{
+  --lf-brand:#2563eb;--lf-brand-strong:#1d4ed8;--lf-brand-soft:rgba(37,99,235,.16);
+  --lf-surface:#16203a;--lf-surface-2:#1c2a47;--lf-line:rgba(148,163,184,.2);--lf-line-strong:rgba(148,163,184,.34);
+  --lf-text-dim:#94a3b8;--lf-text-faint:#64748b;
+  --bg:#0f172a;--bg-card:#16203a;--bg-elev:#1c2a47;--line:rgba(148,163,184,.2);--text-dim:#94a3b8;--brand:#2563eb;--brand-strong:#1d4ed8;
+}
+body{background:#0f172a;background-image:radial-gradient(1200px 600px at 50% -10%,rgba(37,99,235,.12),transparent 70%);}
+.lf-mark{display:grid;place-items:center;flex:none;width:30px;height:30px;border-radius:9px;background:linear-gradient(150deg,#2563eb,#0f4dc4);color:#fff;font-weight:800;font-size:13px;letter-spacing:.5px;box-shadow:0 4px 12px rgba(37,99,235,.35);}
+.lf-mark.lg{width:52px;height:52px;border-radius:14px;font-size:20px;}
+.pda-header{min-height:58px;padding:10px 16px;background:rgba(15,23,42,.9);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);}
+.pda-header .title{font-size:17px;letter-spacing:.2px;}
+.pda-header .back{width:34px;height:34px;border-radius:10px;background:var(--bg-elev);border:1px solid var(--line);color:var(--text-dim);}
+.pda-body{padding:16px;max-width:640px;margin:0 auto;}
+.section-title{font-size:13px;font-weight:600;letter-spacing:.08em;color:#64748b;margin:4px 2px 10px;}
+.card{background:linear-gradient(180deg,rgba(255,255,255,.035),transparent),var(--bg-card);border:1px solid var(--line);border-radius:14px;box-shadow:0 1px 2px rgba(2,6,23,.4),0 10px 24px rgba(2,6,23,.28);}
+.hero{position:relative;overflow:hidden;background:linear-gradient(140deg,#1e3a8a,#16203a 62%,#101a30);border:1px solid rgba(59,130,246,.34);}
+.hero::after{content:'';position:absolute;right:-40px;top:-50px;width:180px;height:180px;border-radius:50%;background:radial-gradient(circle,rgba(37,99,235,.55),transparent 68%);}
+.hero .card-t{color:#a9c1e8;}
+.flow{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap;}
+.flow .step{font-size:12px;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.08);color:#cddcf5;border:1px solid rgba(255,255,255,.1);}
+.flow .arrow{color:#64748b;font-size:12px;}
+.btn{border-radius:12px;border:1px solid var(--line);background:var(--bg-elev);}
+.btn.primary{background:linear-gradient(180deg,#2f6ef0,#1d4ed8);border-color:rgba(37,99,235,.7);box-shadow:0 6px 16px rgba(37,99,235,.3);}
+.btn.ghost{background:transparent;color:var(--text-dim);}
+.field input,.field select,.field textarea{background:#0f172a;border-radius:10px;}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.22);}
+.tag{border:1px solid var(--line);}
+.list-item{position:relative;padding:14px 40px 14px 18px;background:var(--bg-card);border:1px solid var(--line);border-radius:14px;box-shadow:0 1px 2px rgba(2,6,23,.3);}
+.list-item::before{content:'';position:absolute;left:0;top:14px;bottom:14px;width:3px;border-radius:0 3px 3px 0;background:#2563eb;opacity:.85;}
+.list-item::after{content:'\203A';position:absolute;right:16px;top:50%;transform:translateY(-50%);font-size:22px;line-height:1;color:#64748b;}
+.empty .icon{display:none;}
+.menu-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.menu-tile{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:10px;min-height:128px;padding:16px;background:linear-gradient(180deg,rgba(255,255,255,.04),transparent),var(--bg-card);border:1px solid var(--line);border-radius:14px;text-align:left;}
+.menu-tile::after{content:'\203A';position:absolute;right:14px;top:14px;font-size:18px;color:#64748b;}
+.menu-tile .ic{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:rgba(37,99,235,.16);border:1px solid rgba(37,99,235,.32);color:#9dc0f8;font-size:16px;font-weight:800;}
+.menu-tile .nm{font-size:16px;}

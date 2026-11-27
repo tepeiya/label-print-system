@@ -17,7 +17,7 @@
       <div v-if="err" class="notice err">{{ err }}</div>
       <div v-if="loading" class="empty">加载中…</div>
       <div v-else-if="!items.length" class="empty">
-        <div class="icon">🏬</div>
+        <div class="icon"></div>
         <div>暂无上架任务</div>
         <div class="muted" style="margin-top:8px">收货过账后自动生成上架任务</div>
       </div>
