@@ -759,6 +759,18 @@ const qrWarn = computed(() => {
   const msgs: string[] = [];
   if (size < 0.3) msgs.push(`模块 ${size}mm 低于可扫下限 0.30mm，打印前自检会拦截（发不出去）`);
   else if (size < 0.495) msgs.push(`模块 ${size}mm 偏小，医疗 UDI 要求 ≥0.495mm`);
+  // 变量插值后出现空 AI 段：GS1 里「(10)」后面一个字符都没有是非法的，
+  // 表现就是画布上一块灰框 + 编码失败，用户很难自己想到是「批号这一列没值」
+  if (qr.value?.gs1) {
+    const segs = content.match(/\((\d{2,4})\)([^(]*)/g) ?? [];
+    const empty = segs.filter((seg) => {
+      const m = /\((\d{2,4})\)([^(]*)/.exec(seg);
+      return m && !String(m[2] ?? '').trim();
+    });
+    if (empty.length) {
+      msgs.push(`插值后有 ${empty.length} 个 AI 段是空的（${empty.map((x) => x.slice(0, 6)).join('、')}…）：变量在该行没值，GS1 编码会失败，请补预览数据或给列设默认值`);
+    }
+  }
   const nat = makeQrSvg(qr.value, content).naturalWmm;
   const box = Math.min(el.value.w ?? 0, el.value.h ?? 0);
   if (nat > 0 && box > 0 && box + 0.01 < nat) {
