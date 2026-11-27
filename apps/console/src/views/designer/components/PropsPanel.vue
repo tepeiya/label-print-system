@@ -296,6 +296,16 @@
         <span class="f-hint" :class="{ 'f-hint-bad': !qrCheck.ok }">
           {{ qrCheck.ok ? (qrCheck.note ? `✓ ${qrCheck.note}` : '') : `✗ ${qrCheck.error}` }}
         </span>
+        <FRow v-if="isMatrixQr">
+          <FLabel text="GS1" />
+          <FCheck
+            text="GS1 DataMatrix（UDI 必须开）"
+            :model-value="!!qr!.gs1"
+            @update:model-value="setQr({ gs1: $event })"
+          />
+        </FRow>
+        <span v-if="qrGs1Hint" class="f-hint f-hint-warn">⚠ {{ qrGs1Hint }}</span>
+        <span v-else-if="isMatrixQr && qr!.gs1" class="f-hint">✓ 按 GS1 规则编码：扫码枪解出带括号 AI，可入 UDI 台账</span>
         <FRow>
           <FLabel text="模块 mm" />
           <FNum :model-value="qr!.moduleSizeMm ?? 0.4" :step="0.02" :min="0.25" @update:model-value="setQr({ moduleSizeMm: r2v($event) })" />
@@ -458,6 +468,18 @@ function makeVariable() {
 
 const bc = computed<BarcodeSpec | undefined>(() => el.value?.barcode);
 const qr = computed<QrcodeSpec | undefined>(() => el.value?.qrcode);
+/** GS1 开关只对 DataMatrix 有意义（QR/PDF417 没有 GS1 模式） */
+const isMatrixQr = computed(() => {
+  const sym = String(qr.value?.sym ?? '');
+  return sym === 'DATAMATRIX' || sym === 'DATAMATRIX_RECT';
+});
+/** GS1 模式下内容必须是带括号 HRI，给一条即时提示 */
+const qrGs1Hint = computed(() => {
+  const c = String(qr.value?.content ?? '');
+  if (!qr.value?.gs1) return '';
+  const ok = /^\(0[1-9]|^\(1[0-9]|^\(2[0-9]|^\(3[0-9]/.test(c.trim());
+  return ok ? '' : 'GS1 模式内容需以带括号 AI 开头，如 (01){{gtin}}(17){{expiry}}(10){{lot}}';
+});
 /** 第二层：弧形排布仅对文本类与一维码有意义 */
 const isCurvable = computed(() => {
   const t = el.value?.type;

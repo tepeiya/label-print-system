@@ -70,3 +70,17 @@ export const apiUdiNmpaProbe = (): Promise<{ ok: boolean; code: string; message:
 
 /** 召回清单 CSV 直下（带 token，window.open 用） */
 export const udiRecallUrl = (params: any) => udiExportUrl('/udi/recall/export', params);
+
+/** UDI 内置模板包清单（含页面尺寸与变量名） */
+export interface UdiTemplateBrief {
+  code: string; name: string; scenario: string;
+  page: { widthMm: number; heightMm: number; dpi?: number };
+  variables: string[];
+}
+export const apiUdiTemplates = (): Promise<{ items: UdiTemplateBrief[]; notice: string }> =>
+  http.get('/udi/templates');
+
+/** 取模板包完整 JSON（可直接喂给 POST /templates/import） */
+export const apiUdiTemplatePayload = (code: string): Promise<{
+  code: string; name: string; scenario: string; template: any;
+}> => http.get(`/udi/templates/${encodeURIComponent(code)}`);

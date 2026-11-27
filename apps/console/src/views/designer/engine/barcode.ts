@@ -35,6 +35,8 @@ export interface BarcodeLikeOptions {
   textFont?: { family?: string; size?: number };
   ecc?: string;
   moduleSizeMm?: number;
+  /** GS1 模式（DataMatrix → gs1datamatrix），UDI 标签必须开 */
+  gs1?: boolean;
 }
 
 /** UI 码制 → bwip-js bcid（与 render.js#BWIP_MAP 同表） */
@@ -170,7 +172,7 @@ export function makeBarcodeSvg(spec: BarcodeLikeOptions | undefined, content: un
 export function makeQrSvg(spec: BarcodeLikeOptions | undefined, content: unknown): SvgResult {
   const s = spec || {};
   const moduleSize = s.moduleSizeMm ?? 0.4;
-  const key = `${s.sym}|${s.ecc}|${s.moduleSizeMm}|${s.quietZoneMm}|${content}`;
+  const key = `${s.sym}|${s.ecc}|${s.moduleSizeMm}|${s.quietZoneMm}|${s.gs1 ? 'gs1' : ''}|${content}`;
   const hit = CACHE.qr.get(key);
   if (hit) return hit;
 
@@ -190,6 +192,12 @@ export function makeQrSvg(spec: BarcodeLikeOptions | undefined, content: unknown
   };
   if (bcid === 'qrcode' || bcid === 'microqrcode') opts.eclevel = s.ecc || 'M';
   if (bcid === 'pdf417') opts.compact = false;
+  // UDI / GS1：与后端 core/barcode-renderer 同口径，DataMatrix 走 bwip 原生 gs1datamatrix
+  // （内容按带括号 HRI 传入，bwip 自动落 FNC1）。不开这个开关，打出来的是普通 DataMatrix，
+  // 扫码枪按 GS1 规则解不出来。
+  if (s.gs1 && (bcid === 'datamatrix' || bcid === 'datamatrixrectangular')) {
+    opts.bcid = 'gs1datamatrix';
+  }
 
   const svgStr = toSvg(opts);
   if (svgStr) {

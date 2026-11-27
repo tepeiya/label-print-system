@@ -77,6 +77,8 @@ export interface BarcodeSpec {
 export interface QrcodeSpec {
   sym?: string;
   content?: string;
+  /** GS1 模式：DataMatrix 走原生 gs1datamatrix（内部 FNC1，HRI 带括号）。UDI 标签必须开。 */
+  gs1?: boolean;
   ecc?: 'L' | 'M' | 'Q' | 'H';
   moduleSizeMm?: number;
   quietZoneMm?: number;
