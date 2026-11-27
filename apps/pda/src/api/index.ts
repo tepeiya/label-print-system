@@ -340,36 +340,36 @@ export interface IssueScanVerdict {
 }
 
 export const apiWoList = (params: { status?: string; keyword?: string; page?: number; pageSize?: number }) =>
-  get<{ items: WorkOrderItem[]; total: number; page: number }>('/wms/issuing/work-orders', params);
+  get<{ items: WorkOrderItem[]; total: number; page: number }>('/wms/work-orders', params);
 
-export const apiWoDetail = (id: number) => get<WorkOrderDetail>(`/wms/issuing/work-orders/${id}`);
+export const apiWoDetail = (id: number) => get<WorkOrderDetail>(`/wms/work-orders/${id}`);
 
-export const apiWoKitCheck = (id: number) => post(`/wms/issuing/work-orders/${id}/kit-check`);
+export const apiWoKitCheck = (id: number) => post(`/wms/work-orders/${id}/kit-check`);
 
-export const apiWoRelease = (id: number) => post(`/wms/issuing/work-orders/${id}/release`);
+export const apiWoRelease = (id: number) => post(`/wms/work-orders/${id}/release`);
 
-export const apiWoIssueStart = (id: number) => post(`/wms/issuing/work-orders/${id}/issue-start`);
+export const apiWoIssueStart = (id: number) => post(`/wms/work-orders/${id}/issue-start`);
 
 /** 扫码比对（不回写库存）：扫到码后先看是否与应收批次/物料一致 */
 export const apiWoIssueScan = (id: number, body: {
   lineId?: number; lineNo?: number; materialCode?: string; batchNo?: string;
   udiCode?: string; strictUdi?: boolean;
-}) => post<IssueScanVerdict>(`/wms/issuing/work-orders/${id}/issue-scan`, body);
+}) => post<IssueScanVerdict>(`/wms/work-orders/${id}/issue-scan`, body);
 
 /** 发料过账：packs 传扫到的箱码（服务端按 pack_qty 折算件数，与收货口径一致） */
 export const apiWoIssuePost = (id: number, body: {
   lineIds?: number[]; force?: boolean;
   packs?: Array<{ lineId?: number; lineNo?: number; udiCode: string; packCount?: number }>;
   udiCodes?: Array<{ code: string; lineNo?: number; lineId?: number }>;
-}) => post<any>(`/wms/issuing/work-orders/${id}/issue-post`, body);
+}) => post<any>(`/wms/work-orders/${id}/issue-post`, body);
 
-export const apiWoIssueDone = (id: number) => post<any>(`/wms/issuing/work-orders/${id}/issue-done`);
+export const apiWoIssueDone = (id: number) => post<any>(`/wms/work-orders/${id}/issue-done`);
 
-export const apiWoShortages = (id: number) => get<any>(`/wms/issuing/work-orders/${id}/shortages`);
+export const apiWoShortages = (id: number) => get<any>(`/wms/work-orders/${id}/shortages`);
 
 export const apiWoReturn = (id: number, body: {
   lineId: number; qty: number; batchNo?: string; reason: string; idemKey?: string;
-}) => post<any>(`/wms/issuing/work-orders/${id}/returns`, body);
+}) => post<any>(`/wms/work-orders/${id}/returns`, body);
 
 export const woStatusLabel = (s?: string) => ({
   CREATED: '待齐套', RELEASED: '已放行', ISSUING: '发料中', ISSUED: '已发完', CLOSED: '已关单', CANCELLED: '已取消',
