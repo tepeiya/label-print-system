@@ -85,6 +85,7 @@ export const MENU_CATALOG: MenuNode[] = [
       { key: 'udi-trace', name: 'UDI 追溯', icon: 'Position', path: '/udi-trace', module: 'udi.compliance' },
       { key: 'udi-compliance', name: 'UDI 合规留痕', icon: 'DocumentChecked', path: '/udi-compliance', module: 'udi.compliance' },
       { key: 'udi-registry', name: 'UDI 合规申报', icon: 'Tickets', path: '/udi-registry', module: 'udi.compliance' },
+      { key: 'udi-pack-print', name: 'UDI 批次赋码打印', icon: 'Printer', path: '/udi-pack-print', module: 'udi.compliance' },
     ],
   },
   // 质量闸门（2026-11-25 P0-1/2/3）：检验单、成品放行、批记录。

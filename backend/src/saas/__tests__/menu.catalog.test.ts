@@ -29,7 +29,7 @@ test('模块订阅 + 权限点都齐时，返回完整菜单', () => {
   assert.deepEqual(keys(tree), ['dashboard', 'template-center', 'print', 'data', 'udi', 'system', 'subscription']);
   assert.deepEqual(childKeys(tree, 'print'), ['print-jobs', 'printers']);
   // 医疗 UDI 走独立加购模块 udi.compliance（不随 print 套餐）
-  assert.deepEqual(childKeys(tree, 'udi'), ['udi-trace', 'udi-compliance', 'udi-registry']);
+  assert.deepEqual(childKeys(tree, 'udi'), ['udi-trace', 'udi-compliance', 'udi-registry', 'udi-pack-print']);
   assert.deepEqual(childKeys(tree, 'template-center'), ['designer', 'templates']);
   assert.deepEqual(childKeys(tree, 'system'), ['users', 'audit', 'backups']);
 });
@@ -64,7 +64,7 @@ test('医疗 UDI 是独立加购模块：订阅 udi.compliance 才出现，print
   assert.ok(!keys(noUdi).includes('udi'), '未买 UDI 套件时整组不可见');
 
   const withUdi = buildMenus(['print', 'udi.compliance'], ['print:job:read']);
-  assert.deepEqual(childKeys(withUdi, 'udi'), ['udi-trace', 'udi-compliance', 'udi-registry']);
+  assert.deepEqual(childKeys(withUdi, 'udi'), ['udi-trace', 'udi-compliance', 'udi-registry', 'udi-pack-print']);
   const group = withUdi.find((n) => n.key === 'udi');
   assert.equal(group?.module, 'udi.compliance');
   assert.ok(group?.children?.every((c) => c.module === 'udi.compliance'));

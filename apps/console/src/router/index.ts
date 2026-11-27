@@ -64,6 +64,9 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'UDI 合规留痕', icon: 'DocumentChecked', module: 'udi.compliance' } },
       { path: 'udi-registry', component: () => import('@/views/UdiRegistry.vue'),
         meta: { title: 'UDI 合规申报', icon: 'Tickets', module: 'udi.compliance' } },
+      // 主从层级打印：一箱 N 件，单件标 N 张 + 箱标 1 张，编号与装箱关系同写入台账
+      { path: 'udi-pack-print', component: () => import('@/views/UdiPackPrint.vue'),
+        meta: { title: 'UDI 批次赋码打印', icon: 'Printer', module: 'udi.compliance' } },
       // 质量闸门（2026-11-25）：检验单 / 成品放行 / 批记录，模块门 quality.qms
       { path: 'quality/inspections', component: () => import('@/views/QualityInspections.vue'),
         meta: { title: '检验单', icon: 'DocumentChecked', module: 'quality.qms' } },
