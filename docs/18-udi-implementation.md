@@ -30,6 +30,8 @@
 | POST | `/udi/parse` | 解析扫码内容（HRI 或原始串） |
 | POST | `/udi/scan-verify` | PDA 复核：`{ code, expect:{gtin,expiry,lot,serial}, strict? }` |
 | POST | `/udi/batch` | 批量构造（≤5000 行，逐行返回） |
+| POST | `/udi/pack-print` | **主从层级打印**：一箱 N 件，出 N 张单件标 + 1 张箱标，编号与装箱关系同事务写入台账 |
+| GET | `/udi/pack-print/meta` | 表单元信息：上限件数、公司前缀、单件模板 `unitTemplates` / 箱级模板 `cartonTemplates` / 全部模板 |
 
 示例：
 
@@ -103,3 +105,25 @@ curl -X POST http://localhost:3200/api/v1/udi/encode -H 'Authorization: Bearer <
 **验证**：`src/print/__tests__/label-png.test.ts` 6 例（尺寸精确、非空白、**回环可解码**、ImageProvider 出真码、缺元素显式失败、尺寸/DPI 非法抛错）；`src/print` + `src/hardware` 全量 161 例通过；`tsc --noEmit` 零错误。
 
 **仍未验收**：真实打印机打一张（硬件）。系统字体缺失时中文会退化为方块（warnings 会提示），客户机需装中文字体。
+
+### 4.3 主从层级打印（2026-11-28 新增，P0-1）
+
+商业条码软件里这条叫「主从/层级打印」（master-detail）：操作员填一次 DI + 批号 + 有效期 + 件数，系统自动生成 N 个不同序列号的单件码、一个箱码 SSCC，并把"N 件在这一箱里"的关系同时落到台账与打印任务里，避免手工扫 N 次录 N 次。
+
+| 环节 | 行为 |
+|---|---|
+| 入参 | `gtin / lot / expiry / production / qty / serial{mode:auto\|list} / sscc / unitTemplateCode / cartonTemplateCode / printerId / copiesUnit / copiesCarton / fieldMap.extra / dryRun / register` |
+| 序列号 | `auto`：起始号 + 补零 + 件数，按尾号递增；**溢出（从 9999 起 3 件）直接拒，不静默进位**；`list`：逐行给号，重复号拦截（`MAX_UNIT_QTY=500`） |
+| 箱码 | 手给则校验 SSCC 校验位；不填则按库内同前缀最大流水 +1 生成，返回 `ssccAuto` |
+| 台账 | 先 `upsertPackages` 建箱，再逐件 `registerUnits` 挂 `packageSscc`；**任一登记失败即中止，不下发打印任务**，不出现"打了标签但台账没有" |
+| 打印 | `print.createJob` 起两个任务（单件 N 份 / 箱标 1 份），`requirePrinter:true`，无打印机直接 400 |
+| 模板自检 | 模板引用但本次没给的变量（`productName`/`spec`/`manufacturer`…）进 `warnings`，用 `fieldMap.extra` 补齐 |
+| 试算 | `dryRun:true` 只算号段与 SSCC、不写库不打印，界面先看号段再下单 |
+
+前端入口：console「医疗 UDI → UDI 批次赋码打印」（`/udi-pack-print`，模块门 `udi.compliance`）。表单默认选中第一张**单件**模板与第一张**箱级**模板；meta 已把箱标（`UDI_CARTON_*`、`*CARTON*`）从单件下拉里剔除，防止把 100×70 箱标当 50×30 单件打。
+
+**真机验证（2026-11-28，Windows 本机 API + PG，image 通道）**：建 image 打印机 → 6 件 `dryRun` 号段 `SN1001~SN1006` + SSCC `069012340000000016`、`warnings:[]` → 正式提交 `registered{created:6,existed:0,failed:0}`、单件任务 `success total=6`、箱标任务 `success total=1`、`GET /udi/packages/:sscc` 返回 6 件子项；验证后已清理（templates 保留 1/2/8/9，units 仅剩历史批，packages/jobs/printers 归零）。
+
+单测：`src/udi/__tests__/udi.batchprint.calc.test.ts` 16 例（起号/补零/溢出/清单查重/箱标行/SSCC 流水与校验位/上限）。
+
+**仍未验收**：真打印机出纸（本机 printers 为空，需现场配机）；箱标模板 `UDI_CARTON_V1` 的 HRI 仍缺 `(00)` 明文与单件 HRI 缺 `(11)` 生产日期（模板内容问题，不影响扫码解析）。
