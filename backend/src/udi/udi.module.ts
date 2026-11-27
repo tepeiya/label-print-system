@@ -11,12 +11,21 @@ import { UdiTraceService } from './udi.trace.service';
 import { UdiComplianceService } from './udi.compliance.service';
 import { NmpaUdidClient } from './udi.nmpa.client';
 import { UdiUnit, UdiPackage, UdiEvent, UdiDiMaster, UdiSubmission } from './entities/udi.entity';
+import { Template } from '../entities/template.entity';
 import { AuditModule } from '../audit/audit.module';
+import { PrintModule } from '../print/print.module';
+import { UdiBatchPrintController } from './udi.batchprint.controller';
+import { UdiBatchPrintService } from './udi.batchprint.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([UdiUnit, UdiPackage, UdiEvent, UdiDiMaster, UdiSubmission]), AuditModule],
-  controllers: [UdiController, UdiTraceController, UdiComplianceController],
-  providers: [UdiService, UdiTraceService, UdiComplianceService, NmpaUdidClient],
+  imports: [
+    TypeOrmModule.forFeature([UdiUnit, UdiPackage, UdiEvent, UdiDiMaster, UdiSubmission, Template]),
+    AuditModule,
+    // 主从批次打印要直接建打印任务（单件 N 行 + 箱标 1 行）
+    PrintModule,
+  ],
+  controllers: [UdiController, UdiTraceController, UdiComplianceController, UdiBatchPrintController],
+  providers: [UdiService, UdiTraceService, UdiComplianceService, NmpaUdidClient, UdiBatchPrintService],
   exports: [UdiService, UdiTraceService, UdiComplianceService],
 })
 export class UdiModule {}
