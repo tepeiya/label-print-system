@@ -277,6 +277,17 @@
           <FLabel text="码制" />
           <FSelect :model-value="qr!.sym ?? 'QRCODE'" :options="QRCODE_SYM_OPTIONS" @update:model-value="setQr({ sym: $event })" />
         </FRow>
+        <!-- UDI：GS1 开关紧跟码制，避免被内容框/下拉遮挡 -->
+        <FRow v-if="isMatrixQr">
+          <FLabel text="GS1" />
+          <FCheck
+            text="GS1 DataMatrix（UDI 必须开）"
+            :model-value="!!qr!.gs1"
+            @update:model-value="setQr({ gs1: $event })"
+          />
+        </FRow>
+        <span v-if="qrGs1Hint" class="f-hint f-hint-warn">⚠ {{ qrGs1Hint }}</span>
+        <span v-else-if="isMatrixQr && qr!.gs1" class="f-hint">✓ 按 GS1 规则编码：扫码枪解出带括号 AI，可入 UDI 台账</span>
         <!-- 内容可能上千字符（URL / JSON / GS1 串），单行 input 看不见后半段，
              所以这里用可调高的多行框；但它仍是「一条数据」，noNewline 见 fields/FArea.vue -->
         <FField label="内容" class="f-field-top">
@@ -296,16 +307,6 @@
         <span class="f-hint" :class="{ 'f-hint-bad': !qrCheck.ok }">
           {{ qrCheck.ok ? (qrCheck.note ? `✓ ${qrCheck.note}` : '') : `✗ ${qrCheck.error}` }}
         </span>
-        <FRow v-if="isMatrixQr">
-          <FLabel text="GS1" />
-          <FCheck
-            text="GS1 DataMatrix（UDI 必须开）"
-            :model-value="!!qr!.gs1"
-            @update:model-value="setQr({ gs1: $event })"
-          />
-        </FRow>
-        <span v-if="qrGs1Hint" class="f-hint f-hint-warn">⚠ {{ qrGs1Hint }}</span>
-        <span v-else-if="isMatrixQr && qr!.gs1" class="f-hint">✓ 按 GS1 规则编码：扫码枪解出带括号 AI，可入 UDI 台账</span>
         <FRow>
           <FLabel text="模块 mm" />
           <FNum :model-value="qr!.moduleSizeMm ?? 0.4" :step="0.02" :min="0.25" @update:model-value="setQr({ moduleSizeMm: r2v($event) })" />
