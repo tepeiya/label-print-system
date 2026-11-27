@@ -876,3 +876,12 @@
 .ctx-hint { color: var(--d-muted); font-size: 10.5px; }
 .ctx-sep { height: 1px; margin: 4px 2px; background: var(--d-line); }
 .ctx-empty { padding: 8px; color: var(--d-muted); }
+
+/* 二维码编码失败：占位灰块加红框，右上角标一句「编码失败」，鼠标悬停看原因 */
+.qr-holder--bad { outline: 2px dashed #ef4444; outline-offset: -2px; }
+.qr-error-tag {
+  position: absolute; right: 0; top: 0;
+  background: #ef4444; color: #fff; font-size: 10px; line-height: 1;
+  padding: 2px 4px; border-radius: 3px; pointer-events: none; z-index: 6;
+  white-space: nowrap;
+}

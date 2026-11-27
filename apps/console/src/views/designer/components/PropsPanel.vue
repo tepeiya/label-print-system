@@ -329,6 +329,7 @@
         <span v-if="qrNotice" class="f-hint f-hint-warn">⚠ {{ qrNotice }}</span>
         <span v-if="qrSizeText" class="f-hint">{{ qrSizeText }}</span>
         <span v-if="qrWarn" class="f-hint f-hint-warn">⚠ {{ qrWarn }}</span>
+        <span v-if="qrEncodeError" class="f-hint f-hint-bad">⚠ 编码失败：{{ qrEncodeError }}</span>
         <span class="f-hint" :class="{ 'f-hint-bad': !qrCheck.ok }">
           {{ qrCheck.ok ? (qrCheck.note ? `✓ ${qrCheck.note}` : '') : `✗ ${qrCheck.error}` }}
         </span>
@@ -518,6 +519,11 @@ const udiPreview = computed(() => {
 
 function applyUdi() {
   if (!udiPreview.value) return;
+  // DI 是手打时最常见的错：13 位误当 14 位、校验位没算。写进去只会得到灰块，不如当场拦
+  if (udi.di && !/{{/.test(udi.di) && !gtin14CheckDigitOk(udi.di)) {
+    qrNotice.value = `DI 不合法：${udi.di} 不是合法 GTIN-14（需 14 位且校验位正确）。可先用「UDI 合规申报」台账里算好的 DI。`;
+    return;
+  }
   setQr({ content: udiPreview.value, gs1: true });
 }
 
@@ -625,6 +631,26 @@ const bindOptions = computed<Array<[string, string]>>(() => {
   }
   return opts;
 });
+
+// 真实试编码一次：不能只校验字符串长度，GS1 校验位错/段太短只有编码器知道
+const qrEncodeError = computed(() => {
+  const q = qr.value;
+  if (!q || !String(q.content ?? '').trim()) return '';
+  try {
+    const r = makeQrSvg(q as any, String(q.content ?? ''));
+    return String((r as any).error ?? '');
+  } catch (e: any) {
+    return String(e?.message ?? e);
+  }
+});
+
+/** GTIN-14 校验位（mod10）：分段录入时先挡一道，别让用户写进去才发现码是灰块 */
+function gtin14CheckDigitOk(g: string): boolean {
+  if (!/^\d{14}$/.test(g)) return false;
+  let sum = 0;
+  for (let i = 0; i < 13; i++) sum += Number(g[i]) * (i % 2 === 0 ? 3 : 1);
+  return (10 - (sum % 10)) % 10 === Number(g[13]);
+}
 
 const bcCheck = computed(() => validateBarcodeText(bc.value?.sym ?? 'CODE128', bc.value?.content ?? ''));
 const qrCheck = computed(() => validateBarcodeText(qr.value?.sym ?? 'QRCODE', qr.value?.content ?? ''));

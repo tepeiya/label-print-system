@@ -20,6 +20,8 @@ export interface SvgResult {
   naturalWmm: number;
   naturalHmm?: number;
   modules?: number;
+  /** 编码失败时的原因（此时 svgStr 是占位灰块，界面必须把它说出来，不能静默变成空白） */
+  error?: string;
 }
 
 export interface BarcodeLikeOptions {
@@ -72,11 +74,14 @@ export function is2dSym(sym: unknown): boolean {
 
 type BwipOptions = Record<string, unknown>;
 
+let lastEncodeError = '';
 function toSvg(opts: BwipOptions): string | null {
   try {
+    lastEncodeError = '';
     return bwipjs.toSVG(opts as never);
   } catch (e) {
-    console.warn('[bwip] 编码失败', (e as Error)?.message || e);
+    lastEncodeError = String((e as Error)?.message || e);
+    console.warn('[bwip] 编码失败', lastEncodeError);
     return null;
   }
 }
@@ -216,6 +221,7 @@ export function makeQrSvg(spec: BarcodeLikeOptions | undefined, content: unknown
     svgStr: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n} ${n}"><rect width="${n}" height="${n}" fill="#eee"/><path d="M2 2h7v7h-7zM3 3h5v5h-5z" fill="#000" fill-rule="evenodd"/></svg>`,
     modules: n,
     naturalWmm: n * moduleSize,
+    error: lastEncodeError || '编码失败（内容不满足该码制要求）',
   };
   CACHE.qr.set(key, out);
   return out;

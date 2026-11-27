@@ -63,7 +63,9 @@
 
     <!-- 二维码 / 矩阵码：等比居中 + 静区 -->
     <template v-else-if="el.type === 'qrcode'">
-      <div class="qr-holder" :style="qrHolderStyle" v-html="qrHtml" />
+      <div class="qr-holder" :style="qrHolderStyle" v-html="qrHtml" :class="{ 'qr-holder--bad': !!qrError }" :title="qrError" />
+      <!-- 编码失败时画布上必须看得见：占位灰块 + 一句原因，而不是静默变成一张空白 -->
+      <div v-if="qrError" class="qr-error-tag">编码失败</div>
     </template>
 
     <!-- 弧形文字（第二层）：SVG textPath 真曲线预览，与矢量导出同口径 -->
@@ -267,7 +269,9 @@ const bcTextStyle = computed<CSSProperties>(() => ({
 }));
 
 const qrContent = computed(() => interpolate(props.el.qrcode?.content ?? '', props.ctx));
-const qrHtml = computed(() => containSvg(makeQrSvg(props.el.qrcode, qrContent.value).svgStr));
+const qrResult = computed(() => makeQrSvg(props.el.qrcode, qrContent.value));
+const qrError = computed(() => String(qrResult.value?.error ?? ''));
+const qrHtml = computed(() => containSvg(qrResult.value.svgStr));
 const qrHolderStyle = computed(() => qrcodeStyle(props.el, props.zoom));
 
 // ---- 第二层：弧形文字预览（与后端 vector-renderer.arcTextSvg 同口径）----
