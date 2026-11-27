@@ -1,4 +1,4 @@
-# D4 验收记录 · 医院流程闭环（收货→上架→发料→退料）
+# D4 验收记录 · 生产领料流程闭环（收货→上架→发料→退料）
 
 > 日期 2026-11-24。对应 `docs/24-delivery-plan.md` §2.1 的 D4 三门。
 > D3（真机打印）本轮未做：用户 2026-11-24 明确「当前没有打印机，先做 D4 和 D5」。
@@ -41,7 +41,7 @@ resolvePackUnits(packRows, codeGtin, packCount)
 DTO 增加可选 `packs: Array<{ lineId?, lineNo?, udiCode, packCount? }>`：
 
 - 命中非 UNIT 包码 → `remaining = min(remaining, units)`，**只扣折算后的件数**，`posted` 回带 `pack:{gtin,packLevel,packQty,packCount,units}` 供 PDA 展示"扫了 2 箱=48 件"。
-- 码解析失败或不在该物料包装表 → **不改行为**（按剩余量发）并给 `packWarning`，不硬拦。理由：现场箱码脏（贴错/旧码）时拦死会卡住产线，退回"人看着办"更符合医院实际操作；真要拦由 `udi_required` 在那之前起作用。
+- 码解析失败或不在该物料包装表 → **不改行为**（按剩余量发）并给 `packWarning`，不硬拦。理由：现场箱码脏（贴错/旧码）时拦死会卡住产线，退回"人看着办"更符合车间实际操作；真要拦由 `udi_required` 在那之前起作用。
 
 ### 2.3 退货幂等（`createReturn`）
 

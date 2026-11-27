@@ -80,7 +80,7 @@
           </el-col>
           <el-col :span="6">
             <el-form-item label="客户名称" :required="form.shipType === 'SALES'">
-              <el-input v-model="form.customerName" placeholder="如：长沙市第一医院" maxlength="120" />
+              <el-input v-model="form.customerName" placeholder="如：某某医疗器械经销公司" maxlength="120" />
             </el-form-item>
           </el-col>
           <el-col :span="6">

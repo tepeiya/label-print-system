@@ -519,7 +519,7 @@ node tools/labelctl.mjs retry 4 --seq 1,3                        # 指定序号�
 
 **验证（U1–U4 合计）**：后端全量 `pnpm test` **768 例 / 761 通过 / 0 失败 / 7 跳过**，`pnpm typecheck` 零错误；`apps/pda` 与 `apps/console` 均 `vue-tsc + vite build` 通过。
 
-**诚实边界**：不做 ISO/IEC 15415 质量等级（需硬件验证仪）；不自动上报国家 UDI 数据库（先做导出）；ZPL/TSPL 指令通道的 FNC1 需逐机型真机验收；不含医院端临床扫码；**三张追溯表尚未在真 PostgreSQL 上跑过集成验证**（当前环境无 psql/docker），上线前须执行 `scripts/udi_p1_trace_verify.sql` 的 7 道门（见 `docs/19 §6`）。
+**诚实边界**：不做 ISO/IEC 15415 质量等级（需硬件验证仪）；不自动上报国家 UDI 数据库（先做导出）；ZPL/TSPL 指令通道的 FNC1 需逐机型真机验收；不含终端使用环节的扫码核验（另属耗材使用侧产品线）；**三张追溯表尚未在真 PostgreSQL 上跑过集成验证**（当前环境无 psql/docker），上线前须执行 `scripts/udi_p1_trace_verify.sql` 的 7 道门（见 `docs/19 §6`）。
 **订阅门**：模块 code 预留 `udi.compliance`，正式售卖时在 `modules` / `tenant_modules` 开通并挂 `@RequireModule`。
 
 ## 工程准则

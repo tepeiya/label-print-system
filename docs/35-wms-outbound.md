@@ -50,7 +50,7 @@ CREATED ──拣货──▶ PICKING ──全部拣完──▶ PICKED ──�
 
 单行过账走 `InventoryGateway.decreaseStock`，幂等键 `ship:{shipmentNo}:{lineNo}`；
 同一行重放返回原结果，不二次扣减。台账 `stock_moves.reason` 写成
-`[SH-20261125-0001] 销售出库：长沙市第一医院`，可按单号反查。
+`[SH-20261125-0001] 销售出库：某某医疗器械经销公司`，可按单号反查。
 
 ## 4. UDI 联动（SHIP → SHIPPED）
 
@@ -102,7 +102,7 @@ CREATED ──拣货──▶ PICKING ──全部拣完──▶ PICKED ──�
 | UDI 整包（SSCC） | 扫一个箱码，包内 2 单元全 `SHIPPED` | ✅ `units:2 / failed:0`（含 `descendantsOf` 递归） |
 | 重复过账 | 400 拒绝 | ✅ "该发货单已出库，不能重复过账" |
 | 已出库作废 | 400 拒绝 | ✅ "库存已变动，客户退回请走退货入库" |
-| 签收 | `SIGNED` + 签收人 | ✅ 张护士 |
+| 签收 | `SIGNED` + 签收人 | ✅ 张仓管 |
 | 列表 | 单据/状态/行数/计划量 | ✅ total=2，`SIGNED` / `SHIPPED` |
 | 单测 | 新增 8 例全过 | ✅ `shipment-calc.test.ts` |
 
