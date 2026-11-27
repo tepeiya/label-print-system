@@ -1,7 +1,7 @@
 <template>
   <div class="page">
     <div class="page-head">
-      <h2>{{ isIssuing ? '工单发料' : '收货与上架' }}</h2>
+      <h2>isIssuing ? '工单发料' : '收货与上架' }}</h2>
       <div class="head-actions">
         <el-button size="small" :loading="loading" @click="reload">刷新</el-button>
       </div>

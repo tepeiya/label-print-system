@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>🤖 AI 模型配置</h2>
+      <h2>AI 模型配置</h2>
       <div style="display: flex; gap: 8px;">
         <el-button type="primary" v-permission="'ai:models:manage'" @click="openCreate">
           <el-icon><Plus /></el-icon> 新增模型

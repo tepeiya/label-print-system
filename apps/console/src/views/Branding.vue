@@ -1,7 +1,7 @@
 <template>
   <div v-loading="loading">
     <div class="page-header">
-      <h2>🎨 品牌与域名</h2>
+      <h2>品牌与域名</h2>
       <span style="color: #888; font-size: 13px;">白标：改的是登录页与外壳对外的长相，不影响任何数据权限</span>
     </div>
 

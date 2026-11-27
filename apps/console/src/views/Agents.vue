@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>🔌 Agent 接入</h2>
+      <h2>Agent 接入</h2>
       <el-button type="primary" v-permission.hide="'sys:agent:manage'" @click="openCreate">
         <el-icon><Plus /></el-icon> 新建 Agent
       </el-button>

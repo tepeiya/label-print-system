@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>📊 数据源管理</h2>
+      <h2>数据源管理</h2>
       <div style="display: flex; gap: 8px;">
         <el-button type="primary" v-permission="'datasource:write'" @click="openImport">
           <el-icon><Upload /></el-icon> 导入表格

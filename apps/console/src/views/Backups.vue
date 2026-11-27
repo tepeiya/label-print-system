@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>💾 备份中心</h2>
+      <h2>备份中心</h2>
       <div style="display: flex; gap: 8px;">
         <el-button type="primary" v-permission="'backup:write'" @click="doCreate" :loading="creating">
           <el-icon><Plus /></el-icon> 创建备份

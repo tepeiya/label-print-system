@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>💰 账单与用量</h2>
+      <h2>账单与用量</h2>
       <el-tag type="info" size="small">只读页 · 配额调整与收款登记由平台运营操作</el-tag>
       <el-button style="margin-left: 8px;" @click="loadAll" :loading="loading">刷新</el-button>
     </div>

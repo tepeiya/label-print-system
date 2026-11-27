@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>🤖 Agent 待确认</h2>
+      <h2>Agent 待确认</h2>
       <el-button @click="load" :loading="loading">
         <el-icon><Refresh /></el-icon> 刷新
       </el-button>

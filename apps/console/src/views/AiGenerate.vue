@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>🤖 AI 生成模板</h2>
+      <h2>AI 生成模板</h2>
       <el-tag type="info" v-if="auth.tenant?.plan">套餐 {{ auth.tenant.plan }}</el-tag>
     </div>
 

@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>🎫 我的订阅</h2>
+      <h2>我的订阅</h2>
     </div>
 
     <el-row :gutter="16" style="margin-bottom: 16px;">

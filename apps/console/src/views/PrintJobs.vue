@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>🖨️ 打印任务</h2>
+      <h2>打印任务</h2>
       <el-tag type="info">全部任务（按创建时间倒序）</el-tag>
     </div>
     <div class="card">

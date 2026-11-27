@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header"><h2>📐 模板库</h2></div>
+    <div class="page-header"><h2>模板库</h2></div>
     <TemplateLibraryPanel @open="goDesigner" />
   </div>
 </template>

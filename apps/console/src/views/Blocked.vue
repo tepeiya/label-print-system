@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header"><h2>🚫 无法访问</h2></div>
+    <div class="page-header"><h2>无法访问</h2></div>
     <div class="card" style="max-width: 720px;">
       <template v-if="isModule">
         <el-alert type="warning" :closable="false" show-icon

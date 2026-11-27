@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>👥 用户管理</h2>
+      <h2>用户管理</h2>
       <el-button type="primary" v-permission="'sys:user:manage'" @click="openCreate">
         <el-icon><UserFilled /></el-icon> 新增用户
       </el-button>

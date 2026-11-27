@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>📜 审计日志</h2>
+      <h2>审计日志</h2>
       <div style="display: flex; gap: 8px;">
         <el-button v-permission.hide="'audit:export'" @click="doExport('csv')">导出 CSV</el-button>
         <el-button v-permission.hide="'audit:export'" @click="doExport('json')">导出 JSON</el-button>
