@@ -211,6 +211,7 @@ export function makeQrSvg(spec: BarcodeLikeOptions | undefined, content: unknown
       svgStr,
       modules: metrics.modules,
       naturalWmm: metrics.naturalWmm,
+      naturalHmm: metrics.naturalHmm ?? metrics.naturalWmm,
     };
     CACHE.qr.set(key, out);
     return out;

@@ -163,13 +163,13 @@ export function barcodeStyle(el: ElementData): CSSProperties {
   };
 }
 
-export function qrcodeStyle(el: ElementData, zoom: number): CSSProperties {
-  const quiet = Math.max(0, el.qrcode?.quietZoneMm ?? 1) * PXMM * zoom;
+export function qrcodeStyle(_el: ElementData, _zoom: number): CSSProperties {
+  // 静区已经由 bwip 画进 SVG 里（paddingwidth/height 按 quietZoneMm 换算模块数）。
+  // 这里以前又按 quietZoneMm 加了一层 padding，等于双层静区，码四周凭空宽出一圈。
   return {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: quiet > 0 ? `${quiet}px` : undefined,
     boxSizing: 'border-box',
     width: '100%',
     height: '100%',

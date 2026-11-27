@@ -260,7 +260,9 @@ export function createElement(type: ElementType, template?: TemplateData): Eleme
 
     case 'qrcode':
       return {
-        ...common(18, 18), type: 'qrcode',
+        // 默认按码的自然尺寸给（QR v1 21 模块 + 四周静区 ×0.4mm ≈ 10~12mm），
+        // 以前给 18×18 而码只有 12，新建元素四周就凭空空出一圈
+        ...common(12, 12), type: 'qrcode',
         qrcode: {
           sym: 'QRCODE', content: '{{sku}}', ecc: 'M', moduleSizeMm: 0.4,
           quietZoneMm: 2, version: 0,

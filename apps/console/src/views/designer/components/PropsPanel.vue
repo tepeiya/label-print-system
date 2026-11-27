@@ -339,6 +339,10 @@
           <FLabel text="静区 mm" />
           <FNum :model-value="qr!.quietZoneMm ?? 2" :step="0.5" :min="0" @update:model-value="setQr({ quietZoneMm: r2v($event) })" />
         </FRow>
+        <FRow v-if="qrFitInfo && qrFitInfo.off > 0.5">
+          <FLabel text="框贴合" />
+          <FBtn @click="fitQrBox">按码尺寸收紧（框比码大 {{ qrFitInfo.off.toFixed(1) }}mm）</FBtn>
+        </FRow>
         <FRow>
           <FLabel text="纠错" />
           <FSelect
@@ -713,6 +717,39 @@ const qrSizeText = computed(() => {
   return `内容 ${content.length} 字符 · 编码后 ${nat.toFixed(1)}mm（含静区）· 元素框 ${box}mm`
     + (ratio < 0.999 ? ` → 实际模块 ${real.toFixed(3)}mm` : '');
 });
+
+/**
+ * 框与码的关系：我们的模型是「元素框固定、码等比 contain 居中」，
+ * 框比码大多少，码四周就空多少 —— 这就是看见的那圈虚框空。
+ * 商业条码软件的做法是框=码、拉框即改模块尺寸；这里先给一键收紧，框收到码的真实尺寸，中心不动。
+ */
+const qrFitInfo = computed(() => {
+  if (!el.value || el.value.type !== 'qrcode') return null;
+  const content = interpolate(qr.value?.content ?? '', previewCtx);
+  if (!content || /\{\{/.test(content)) return null;
+  const r = makeQrSvg(qr.value, content);
+  if (r.error) return null;
+  const wMm = r.naturalWmm;
+  const hMm = r.naturalHmm ?? r.naturalWmm;
+  if (!wMm || !hMm) return null;
+  const e = el.value;
+  const off = Math.max(Math.abs((e.w ?? 0) - wMm), Math.abs((e.h ?? 0) - hMm));
+  return { wMm, hMm, off };
+});
+
+function fitQrBox() {
+  const f = qrFitInfo.value;
+  const e = el.value;
+  if (!f || !e) return;
+  const w = Math.round(f.wMm * 10) / 10;
+  const h = Math.round(f.hMm * 10) / 10;
+  set({
+    w,
+    h,
+    x: r2v((e.x ?? 0) + ((e.w ?? 0) - w) / 2),
+    y: r2v((e.y ?? 0) + ((e.h ?? 0) - h) / 2),
+  });
+}
 
 const qrWarn = computed(() => {
   if (!el.value || el.value.type !== 'qrcode') return '';
