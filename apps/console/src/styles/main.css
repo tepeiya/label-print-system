@@ -77,7 +77,26 @@ body {
 .lf-stat-value { font-size: 24px; font-weight: 650; color: var(--lf-text-1); }
 
 /* ---------- 主布局：左侧栏 + 顶栏 + 内容 ---------- */
-.lf-shell { height: 100vh; display: flex; overflow: hidden; background: var(--lf-page-bg); }
+.lf-shell { height: 100vh; display: flex; overflow: hidden; background: var(--lf-page-bg); position: relative; }
+
+/* ---- 侧栏收起：改为覆盖式滑出，主区拿回整幅宽度（设计器画布不再被挤） ---- */
+.lf-sider.is-hidden {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  width: var(--lf-sider-w); flex: 0 0 auto;
+  z-index: 30;
+  transform: translateX(-100%);
+  transition: transform .18s ease;
+  box-shadow: 10px 0 28px rgba(15, 23, 42, .30);
+  border-right: none;
+}
+.lf-sider.is-hidden.is-peek { transform: translateX(0); }
+/* 左边缘热区：隐藏态才出现，鼠标碰到就临时滑出菜单 */
+.lf-rail {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 9px;
+  z-index: 29; cursor: pointer;
+  background: linear-gradient(180deg, rgba(37,99,235,.06), rgba(37,99,235,0));
+}
+.lf-rail:hover { background: linear-gradient(180deg, rgba(37,99,235,.18), rgba(37,99,235,.04)); }
 .lf-sider { width: var(--lf-sider-w); flex: 0 0 var(--lf-sider-w); background: linear-gradient(180deg, var(--lf-sidebar-bg) 0%, var(--lf-sidebar-bg-2) 100%); display: flex; flex-direction: column; transition: width .2s ease, flex-basis .2s ease; border-right: 1px solid rgba(255,255,255,.04); }
 .lf-sider.is-collapsed { width: 64px; flex-basis: 64px; }
 .lf-brand { height: var(--lf-header-h); flex: 0 0 var(--lf-header-h); display: flex; align-items: center; gap: 10px; padding: 0 16px; border-bottom: 1px solid rgba(255,255,255,.06); overflow: hidden; white-space: nowrap; }

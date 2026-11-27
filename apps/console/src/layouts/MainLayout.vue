@@ -1,7 +1,12 @@
 <template>
-  <div class="lf-shell">
+  <div class="lf-shell" :class="{ 'sider-hidden': siderHidden }">
     <!-- 左侧导航 -->
-    <aside class="lf-sider">
+    <!-- 侧栏：siderHidden 时改为绝对定位滑出，不再挤压主区（设计器需要整幅画布宽度） -->
+    <aside
+      class="lf-sider"
+      :class="{ 'is-hidden': siderHidden, 'is-peek': peek }"
+      @mouseleave="peek = false"
+    >
       <div class="lf-brand">
         <div v-if="!branding?.logoUrl" class="lf-brand-mark">LF</div>
         <img v-else :src="branding.logoUrl" alt="" />
@@ -37,9 +42,16 @@
       </div>
     </aside>
 
+    <div v-if="siderHidden" class="lf-rail" title="移到左边缘展开菜单" @mouseenter="peek = true"></div>
+
     <!-- 右侧主区 -->
     <div class="lf-main">
       <header class="lf-topbar">
+        <el-tooltip :content="siderHidden ? '展开菜单' : '收起菜单'" placement="bottom">
+          <button class="lf-sider-toggle" type="button" @click="toggleSider">
+            <el-icon><component :is="siderHidden ? 'Expand' : 'Fold'" /></el-icon>
+          </button>
+        </el-tooltip>
         <div class="lf-crumbs">
           <span>工作台</span>
           <span class="sep">/</span>
@@ -94,7 +106,7 @@
 
 <script setup lang="ts">
 import AiAssistant from '@/components/AiAssistant.vue';
-import { computed, ref, onMounted } from 'vue';
+import { computed, ref, watch, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/store/auth';
 import { apiLogout, apiSubscription } from '@/api';
@@ -108,6 +120,37 @@ const route = useRoute();
 const router = useRouter();
 
 const versionLabel = 'LabelFlow · WMS';
+
+// ---- 侧栏收起 ----
+// 设计器必须给整幅画布：进设计器自动收起，离开时若有「自动收起」则还原，
+// 用户手动点过按钮就以他的选择为准（本次会话内不再自动折叠）。
+const LS_KEY = 'lf:siderHidden';
+const siderHidden = ref(false);
+const peek = ref(false);          // 隐藏态下鼠标移到左边缘临时滑出
+const autoApplied = ref(false);
+try { siderHidden.value = localStorage.getItem(LS_KEY) === '1'; } catch { /* 隐私模式忽略 */ }
+
+function toggleSider() {
+  siderHidden.value = !siderHidden.value;
+  peek.value = false;
+  autoApplied.value = false;      // 用户主动选择后不再自动还原
+  try { localStorage.setItem(LS_KEY, siderHidden.value ? '1' : '0'); } catch { /* 忽略 */ }
+}
+
+watch(
+  () => route.path,
+  (p) => {
+    const inDesigner = p.startsWith('/designer');
+    if (inDesigner && !siderHidden.value) {
+      siderHidden.value = true;
+      autoApplied.value = true;
+    } else if (!inDesigner && autoApplied.value) {
+      siderHidden.value = false;
+      autoApplied.value = false;
+    }
+  },
+  { immediate: true },
+);
 
 const sub = ref<{ status: string; endsAt: string | null; planName?: string; planCode?: string } | null>(null);
 
@@ -196,6 +239,14 @@ async function doLogout() {
 </script>
 
 <style scoped>
+.lf-sider-toggle {
+  width: 30px; height: 30px; flex: 0 0 auto;
+  border: 1px solid var(--lf-border, #e5e7eb); background: #fff;
+  border-radius: 7px; cursor: pointer; color: #475569;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.lf-sider-toggle:hover { background: #f1f5f9; color: #2563eb; border-color: #bfdbfe; }
 .lf-brand-text { min-width: 0; overflow: hidden; }
 .lf-brand-text .lf-brand-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lf-avatar { background: linear-gradient(135deg, #3b82f6, #2563eb); color: #fff; font-weight: 600; font-size: 13px; flex: 0 0 auto; }
