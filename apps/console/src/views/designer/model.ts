@@ -76,7 +76,7 @@ export function buildSymOptions(syms: string[]): Array<[string, string]> {
       badge = `（${protocols.join('/')}${degradeNote}）`;
     }
     const udiNote = (sym === 'DATAMATRIX' || sym === 'DATAMATRIX_RECT') ? ' · UDI 需开 GS1' : '';
-    return [sym, `${sym} ${badge}${udiNote}`] as [string, string];
+    return [sym, sym + ' ' + badge + udiNote] as [string, string];
   });
 }
 
