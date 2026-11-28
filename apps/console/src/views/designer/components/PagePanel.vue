@@ -100,7 +100,8 @@
     <FGroup title="打印信息">
       <div class="f-hint-block">
         画布物理尺寸 <b>{{ p.widthMm }} × {{ p.heightMm }} mm</b><br>
-        打印像素 {{ printPx.w }} × {{ printPx.h }} px · {{ p.dpi }} dpi
+        打印像素 {{ printPx.w }} × {{ printPx.h }} px · {{ p.dpi }} dpi<br>
+        <span style="color:#8a6d3b">1 点 = {{ dotInfo.mm }}mm；按整点取尺寸才不缩水：模块宽/线宽建议 {{ dotInfo.common.join(' / ') }} mm</span>
       </div>
     </FGroup>
   </div>
@@ -138,6 +139,13 @@ const p = computed(() => store.page);
 const guides = computed(() => p.value.guides ?? []);
 const dpiOptions = computed(() => DPI_OPTIONS.map((d) => [d, `${d} dpi`] as [number, string]));
 const mediaOptions = computed(() => MEDIA_TYPES.map((m) => [m.value, m.label] as [string, string]));
+
+// P0-3：毫米与「点」的换算——打印机只能按整点出图，0.30mm@203dpi 实为 0.25mm
+const dotInfo = computed(() => {
+  const mm = 25.4 / (p.value.dpi || 203);
+  const fmt = (n: number) => Math.round(n * 1000) / 1000;
+  return { mm: fmt(mm), common: [2, 3, 4, 6, 8].map((d) => fmt(d * mm)) };
+});
 
 const printPx = computed(() => ({
   w: Math.round((p.value.widthMm * p.value.dpi) / 25.4),

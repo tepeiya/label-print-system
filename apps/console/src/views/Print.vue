@@ -73,6 +73,9 @@
           <el-option v-for="p in printers" :key="p.id" :label="`${p.name}（${typeLabel(p.type)}）`" :value="p.id" />
         </el-select>
         <span class="hint">不选则任务进入队列但由通道决定出纸方式；浏览器通道需在本机打印。</span>
+        <span v-if="dotFit" class="hint" :style="dotFit.warns ? 'color:#c45656' : ''">
+          ▣ 当前 {{ dotFit.dpi }}dpi，1 点 = {{ dotFit.dotMm }}mm{{ dotFit.text ? `；${dotFit.text}` : '；模板尺寸都落在整点上' }}
+        </span>
       </el-form-item>
 
       <el-form-item label="份数">
@@ -145,12 +148,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue';
+import { ref, reactive, computed, watch, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { apiListTemplates, apiGetTemplate, apiTemplatePrintForm, type PrintFormField } from '@/api/templates';
 import {
-  apiListPrinters, apiCreatePrintJob, apiListDataSources, apiDataSourceRows,
+  apiListPrinters, apiCreatePrintJob, apiListDataSources, apiDataSourceRows, apiDotFit,
 } from '@/api';
 import { buildPrintHtml, parseData } from './designer/engine/print';
 import { sampleRowOf } from './designer/engine/context';
@@ -175,6 +178,21 @@ const previewHtml = ref('');
 const rows = ref<Record<string, unknown>[]>([]);
 const headers = ref<string[]>([]);
 const stat = ref('未填数据时，按模板示例值打印 1 张');
+
+// P0-3：打印机 dpi 与模板 mm 尺寸的取整偏差（后端算，非阻断，只是提前说清楚）
+const dotFit = ref<any>(null);
+
+async function refreshDotFit() {
+  if (!form.templateId) { dotFit.value = null; return; }
+  try {
+    const tpl = await apiGetTemplate(form.templateId);
+    const p: any = printers.value.find((x: any) => x.id === form.printerId);
+    const dpi = Number(p?.dpi || tpl?.content?.page?.dpi || 203);
+    dotFit.value = await apiDotFit({ dpi, elements: tpl?.content?.elements ?? [] });
+  } catch {
+    dotFit.value = null;
+  }
+}
 
 // ---- 打印时表单 ----
 const printFields = ref<PrintFormField[]>([]);
@@ -203,6 +221,7 @@ async function onTemplateChange(id: number | undefined) {
     printFields.value = [];
     if (e?.message) ElMessage.warning(`读取打印表单失败：${e.message}`);
   }
+  refreshDotFit();
 }
 
 /** 沿用上次输入：车间同一批号连续打多单时省事 */
@@ -370,6 +389,7 @@ async function preview() {
   }
 }
 
+watch(() => form.printerId, refreshDotFit);
 onMounted(() => { load(); loadSources(); });
 </script>
 

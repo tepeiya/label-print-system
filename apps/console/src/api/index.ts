@@ -663,3 +663,32 @@ export const udiExportUrl = (path: string, params: Record<string, any> = {}) => 
   }).toString();
   return `/api/v1${path}?${qs}`;
 };
+
+// ---------------------------------------------------------------------------
+// P0-3：设计 mm 与打印 dot 一致性检查（后端 core/dot-fit 是唯一口径）
+// ---------------------------------------------------------------------------
+export interface DotFitIssue {
+  elementId: string;
+  elementType: string;
+  field: string;
+  label: string;
+  designedMm: number;
+  dots: number;
+  actualMm: number;
+  deltaPct: number;
+  level: 'warn' | 'info';
+  message: string;
+}
+
+export interface DotFitResult {
+  dpi: number;
+  dotMm: number;
+  total: number;
+  warns: number;
+  infos: number;
+  issues: DotFitIssue[];
+  text: string;
+}
+
+export const apiDotFit = (body: { dpi: number; elements?: any[]; templateContent?: any }): Promise<DotFitResult> =>
+  http.post('/print/dot-fit', body);

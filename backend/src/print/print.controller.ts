@@ -14,11 +14,12 @@ import { Roles, RoleName } from '../common/roles.guard';
 import { RequireModule } from '../common/module.guard';
 import { RequirePermission } from '../common/permission.guard';
 import { generateZpl, mmToDots } from '../../core/zpl-generator';
-import { CreatePrintJobDto, PreviewRenderDto, PrintCommandsDto, RetryPrintDto } from './dto/print.dto';
+import { CreatePrintJobDto, PreviewRenderDto, PrintCommandsDto, RetryPrintDto, DotFitDto } from './dto/print.dto';
 import { buildJob as buildTsplJob } from '../../core/tspl-generator';
 import { buildJob as buildEplJob } from '../../core/epl-generator';
 import { uiSymbologyList } from '../../core/symbology.capabilities';
 import { applyFormToRows } from './print-form.calc';
+import { analyzeDotFit, summarizeDotFit } from '../../core/dot-fit';
 // P8.3：水印层（纯函数夹取 + 转义，指令通道不叠加）
 import { normalizePolicy, watermarkHtmlLayer } from '../governance/governance.calc';
 import { PrintEvents } from './events.event';
@@ -88,6 +89,26 @@ export class PrintPreviewController {
       copies: body.copies ?? 1,
       watermarkHtml,
     });
+  }
+}
+
+/**
+ * P0-3：设计 mm 与打印 dot 一致性检查。
+ * 设计器填的是毫米，热敏/热转印机只能按整点出图：0.30mm @203dpi 要 2.4 点，
+ * 机器给 2 点 = 0.25mm，码整体缩水 16.7%。这个端点在设计阶段就把偏差摆出来，
+ * 不让问题等到「打出来扫不出」才被发现。
+ */
+@Controller('print/dot-fit')
+@UseGuards(TenantGuard)
+@RequireModule('print')
+export class PrintDotFitController {
+  @RequirePermission('template:read')
+  @Post()
+  analyze(@Body() b: DotFitDto) {
+    const dpi = Math.max(72, Math.min(1200, Math.round(b.dpi || 203)));
+    const elements = Array.isArray(b.elements) ? b.elements : (b.templateContent?.elements ?? []);
+    const raw = analyzeDotFit(elements, dpi);
+    return summarizeDotFit(raw, dpi);
   }
 }
 

@@ -5,7 +5,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { PrintJob, PrintLog, Printer, PrintPrinterRoute } from '../entities/print.entity';
 import { Template } from '../entities/template.entity';
 import { PrintService } from './print.service';
-import { PrintController, PrintPreviewController, PrintCommandsController, PrintEventsController, SymbologyController } from './print.controller';
+import { PrintController, PrintPreviewController, PrintCommandsController, PrintDotFitController, PrintEventsController, SymbologyController  } from './print.controller';
 import { PrintExportController } from './export.controller';
 import { PrintVerifyController } from './verify.controller';
 import { MaxicodeController } from './maxicode.controller';
@@ -33,7 +33,7 @@ import { GovernanceModule } from '../governance/governance.module';
     GovernanceModule,
   ],
   providers: [PrintService, PrintProcessor, RenderService, PrintEvents],
-  controllers: [PrintController, PrintPreviewController, PrintCommandsController, PrintEventsController, SymbologyController, PrintExportController, PrintVerifyController, MaxicodeController, PrinterRouteController],
+  controllers: [PrintController, PrintPreviewController, PrintCommandsController, PrintEventsController, SymbologyController, PrintExportController, PrintVerifyController, MaxicodeController, PrinterRouteController, PrintDotFitController],
   exports: [PrintService, RenderService, PrintEvents],
 })
 export class PrintModule implements OnModuleInit {

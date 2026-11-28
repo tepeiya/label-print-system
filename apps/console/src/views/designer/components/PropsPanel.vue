@@ -276,6 +276,7 @@
         <span v-if="bcSizeText" class="f-hint">{{ bcSizeText }}</span>
         <span v-if="bcNotice" class="f-hint f-hint-bad">⚠ {{ bcNotice }}</span>
         <span v-if="bcWarn" class="f-hint f-hint-warn">⚠ {{ bcWarn }}</span>
+        <span v-if="dotHint" class="f-hint" :class="{ 'f-hint-warn': dotHintWarn }">▣ {{ dotHint }}</span>
         <FRow>
           <FLabel text="模块宽 mm" />
           <FNum :model-value="bc!.moduleWidthMm ?? 0.25" :step="0.01" :min="0.15" @update:model-value="setBarcode({ moduleWidthMm: r2v($event) })" />
@@ -363,6 +364,7 @@
         <span v-if="qrNotice" class="f-hint f-hint-warn">⚠ {{ qrNotice }}</span>
         <span v-if="qrSizeText" class="f-hint">{{ qrSizeText }}</span>
         <span v-if="qrWarn" class="f-hint f-hint-warn">⚠ {{ qrWarn }}</span>
+        <span v-if="dotHint" class="f-hint" :class="{ 'f-hint-warn': dotHintWarn }">▣ {{ dotHint }}</span>
         <span v-if="qrEncodeError" class="f-hint f-hint-bad">⚠ 编码失败：{{ qrEncodeError }}</span>
         <span class="f-hint" :class="{ 'f-hint-bad': !qrCheck.ok }">
           {{ qrCheck.ok ? (qrCheck.note ? `✓ ${qrCheck.note}` : '') : `✗ ${qrCheck.error}` }}
@@ -483,6 +485,7 @@
 // =============================================================================
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useDesignerStore } from '../store';
+import { apiDotFit } from '@/api';
 import { BARCODE_SYM_OPTIONS, QRCODE_SYM_OPTIONS, SYSVAR_KEYS, TYPE_LABELS } from '../model';
 import {
   FORMULA_FUNCTIONS, buildContext, evalFormula, interpolate, sampleRowOf,
@@ -740,6 +743,38 @@ const bcSizeText = computed(() => {
   const over = nat > box + 0.01 ? ` → 超出 ${(nat - box).toFixed(1)}mm` : '';
   return `编码后宽 ${nat.toFixed(1)}mm（含静区）· 元素框 ${box}mm${over}`;
 });
+
+/** P0-3：当前元素在页面 dpi 下的 dot 取整提示（后端 core/dot-fit 算，前端不自推口径） */
+const dotHint = ref('');
+const dotHintWarn = ref(false);
+let dotTimer: ReturnType<typeof setTimeout> | undefined;
+let dotSeq = 0;
+
+async function refreshDotHint() {
+  clearTimeout(dotTimer);
+  const e: any = el.value;
+  if (!e || (e.type !== 'barcode' && e.type !== 'qrcode')) { dotHint.value = ''; dotHintWarn.value = false; return; }
+  const seq = ++dotSeq;
+  dotTimer = setTimeout(async () => {
+    try {
+      const r: any = await apiDotFit({ dpi: Number(store.page?.dpi) || 203, elements: [e] });
+      if (seq !== dotSeq) return;
+      dotHintWarn.value = Number(r?.warns) > 0;
+      dotHint.value = String(r?.text ?? '');
+    } catch {
+      // 后端不可达时只是少一条提示，不能拖慢画布/属性面板
+      dotHint.value = '';
+      dotHintWarn.value = false;
+    }
+  }, 250);
+}
+
+watch(
+  () => [el.value?.id, (el.value as any)?.barcode, (el.value as any)?.qrcode, store.page?.dpi],
+  refreshDotHint,
+  { immediate: true, deep: true },
+);
+onBeforeUnmount(() => clearTimeout(dotTimer));
 
 const bcWarn = computed(() => {
   if (!el.value || el.value.type !== 'barcode') return '';

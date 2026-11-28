@@ -12,6 +12,7 @@ import { AuditService } from '../audit/audit.module';
 import { UsageService } from '../billing/usage.service';
 import { QuotaExceededException } from '../common/business.errors';
 import { buildPrintFields, describePrintFormErrors, mergeFormValues, validateFormValues, validateRows } from './print-form.calc';
+import { analyzeDotFit, summarizeDotFit } from '../../core/dot-fit';
 // P8.3：治理前置校验（默认宽松，存量租户零行为变化）
 import { GovernanceService } from '../governance/governance.service';
 
@@ -181,9 +182,19 @@ export class PrintService {
     }
 
     let printer: Printer | null = null;
+    const dotFitWarnsOf = (els: any[] | undefined, dpi: number) =>
+      summarizeDotFit(analyzeDotFit(els ?? [], dpi), dpi).issues.filter((i) => i.level === 'warn').map((i) => i.message);
+
     if (dto.printerId) {
       printer = await this.printers.findOne({ where: { id: dto.printerId, tenantId } });
       if (!printer) throw new NotFoundException('打印机不存在');
+    }
+
+    // P0-3：设计 mm 与打印机 dot 的一致性提示（不阻断）。先按模板页面 dpi 算一版
+    // （skipped_no_printer 分支要回它），拿到打印机后再按其实际 dpi 重算。
+    let dotFitWarnings = dotFitWarnsOf((tpl.content as any)?.elements, Number((tpl.content as any)?.page?.dpi ?? 203) || 203);
+    if (printer?.dpi && Number(printer.dpi) !== Number((tpl.content as any)?.page?.dpi ?? 203)) {
+      dotFitWarnings = dotFitWarnsOf((tpl.content as any)?.elements, Number(printer.dpi) || 203);
     }
 
     // P9：必须有物理打印机才继续。此前无打印机也会走 image 通道并标记 success，造成"以为打了"。
@@ -202,7 +213,7 @@ export class PrintService {
       }, undefined, 'print_job', skippedJob.id);
       return {
         jobId: skippedJob.id, status: 'skipped_no_printer', total: count, quotaWarn,
-        governanceWarnings: gov.warnings, skipped: true,
+        governanceWarnings: gov.warnings, dotFitWarnings, skipped: true,
         message: '未绑定打印机（printerRoute 无映射或未指定 printerId），标签未下发；收货主链路不阻塞',
       };
     }
@@ -252,6 +263,7 @@ export class PrintService {
     return {
       jobId: job.id, status: 'queued', total: count, quotaWarn,
       governanceWarnings: gov.warnings,
+      dotFitWarnings,
       watermarkApplied: !!gov.watermark,
       watermarkChannelNote: gov.watermark
         ? '水印对浏览器打印 / SVG / PDF 输出生效；ZPL/TSPL/EPL 指令通道不叠加水印，请改用图像通道'

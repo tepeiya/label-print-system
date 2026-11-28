@@ -134,3 +134,20 @@ export class PrintCommandsDto {
   @IsNumber()
   heightMm?: number;
 }
+
+/**
+ * P0-3：设计 mm 与打印 dot 一致性检查。
+ * 传 templateContent 或 elements 二者其一；dpi 取打印机实际值（203/300/600…）。
+ */
+export class DotFitDto {
+  @IsNumber({}, { message: 'dpi 必须是数字' })
+  dpi!: number;
+
+  @IsOptional()
+  @IsArray({ message: 'elements 必须是数组' })
+  elements?: any[];
+
+  @IsOptional()
+  @IsObject()
+  templateContent?: any;
+}

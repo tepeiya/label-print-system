@@ -31,6 +31,7 @@
 | POST | `/udi/scan-verify` | PDA 复核：`{ code, expect:{gtin,expiry,lot,serial}, strict? }` |
 | POST | `/udi/batch` | 批量构造（≤5000 行，逐行返回） |
 | POST | `/udi/pack-print` | **主从层级打印**：一箱 N 件，出 N 张单件标 + 1 张箱标，编号与装箱关系同事务写入台账 |
+| POST | `/print/dot-fit` | **设计 mm ↔ 打印机 dot** 一致性检查：出点数/实际毫米/偏差与建议值（不阻断） |
 | GET | `/templates/:id/print-form` | **打印时表单**：模板里 `atPrint=true` 的变量→表单字段定义（label/必填/类型/校验） |
 | GET | `/udi/pack-print/meta` | 表单元信息：上限件数、公司前缀、单件模板 `unitTemplates` / 箱级模板 `cartonTemplates` / 全部模板 |
 
@@ -160,3 +161,17 @@ curl -X POST http://localhost:3200/api/v1/udi/encode -H 'Authorization: Bearer <
 真机验证：单件模板 8 序列号留空 → 任务 `success done=1`（修复前 `failed`，日志 `[DATAMATRIX] 编码失败：bwipp.GS1valueTooShort#3842: AI 01: Too short` 后续空 AI 段）。
 
 单测：`core/__tests__/gs1-ai.test.ts` 2 例 + `core/__tests__/render.test.ts` 1 例（条码与 HRI 同步剔除、填了值则保留）。全量 `print / udi / template / gs1-ai / render` 327 例通过。
+
+### 4.6 设计 mm 与打印 dot 一致性（2026-11-28 新增，P0-3）
+
+设计器填的是毫米，热敏/热转印机只能按**整点**出图：203dpi 一个点 = 25.4/203 ≈ 0.1251mm。填 0.30mm 模块宽要 2.4 点，机器只能给 2 点 = 0.25mm，码整体缩水 **16.7%**，静区、条高、窄条跟着缩，现场表现为「按模板打的码扫不出」，而且查不到根因。
+
+| 环节 | 行为 |
+|---|---|
+| 纯函数 | `core/dot-fit.ts`：`dotFit(mm,dpi)` 给点数/实际毫米/偏差；`analyzeDotFit(elements,dpi)` 查模块宽、条高、静区、二维码模块尺寸、线宽；`snapToDot` 给最近的整点值；`summarizeDotFit` 出一句话结论 |
+| 判定 | 不到 1 点 → 直接警告「画不出来」；偏差 ≥5% 且 ≥0.005mm → 警告；<5% → 仅信息；偏差 <0.002mm 视为整点（0.25mm@203dpi 实为 0.2502mm，属浮点级） |
+| 接口 | `POST /print/dot-fit` `{dpi, elements}` 或 `{dpi, templateContent}` → `{dpi, dotMm, total, warns, infos, issues[], text}`；`template:read` 权限，模块门 print |
+| 设计器 | 页面设置显示「1 点 = x mm」与整点建议值；选中一维码/二维码时调接口显示当前元素提示（`0.3mm → 2 点 0.25mm，建议 0.25mm`） |
+| 打印页 | 选模板/打印机后按打印机实际 dpi 出提示；提交任务的响应新增 `dotFitWarnings[]`（**不阻断**，与既有自检的分工：自检管「能不能扫」，dot-fit 管「尺寸有没有走样」） |
+
+真机验证（2026-11-28，Windows 本机 API + PG）：`POST /print/dot-fit` dpi=203 + 内置单件模板 → 返回 `moduleWidthMm 0.3→2 点 0.25mm（细 16.6%）` 等条目；dpi=300 同模板偏差明显变小；`POST /print/jobs` 响应带 `dotFitWarnings` 且任务仍正常 `success`。单测 `core/__tests__/dot-fit.test.ts` 8 例。
