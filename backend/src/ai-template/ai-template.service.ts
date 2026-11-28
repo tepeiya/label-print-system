@@ -14,6 +14,9 @@ import { detectColorRegions, detectLines } from './geometry';
 import { buildTemplateFromPriors, AiWarning } from './heuristics';
 import { createMapper } from './coords-transform';
 import { buildSystemPrompt, buildUserPrompt, buildSingleElementSystemPrompt, buildSingleElementUserPrompt, buildCornerDetectSystemPrompt, buildCornerDetectUserPrompt, buildTextToTemplateSystemPrompt, buildTextToTemplateUserPrompt } from './prompt';
+import { buildFieldsSystemPrompt, buildFieldsUserPrompt } from './prompt';
+import { buildLabelLayout } from '../../core/label-layout';
+import { analyzeDotFit, summarizeDotFit } from '../../core/dot-fit';
 import { callVision, configFromEnv, extractJson, prepareImageForLlm, VisionConfig } from './vision-llm';
 import { validateAiTemplate } from './validate-ai-template';
 import { cornersToBbox, extractBbox, normalizeCorners } from './vision-rectify';
@@ -500,7 +503,8 @@ export class AiTemplateService implements OnModuleDestroy {
       60000,
     );
 
-    const parsed = extractJson(res.raw);
+    const parsedRaw = extractJson(res.raw);
+    const parsed = parsedRaw?.template ?? parsedRaw;
     if (!parsed || !Array.isArray(parsed.elements) || !parsed.page) {
       throw new BadRequestException(`LLM 输出不是合法模板 JSON：${res.raw.slice(0, 300)}`);
     }
@@ -513,6 +517,107 @@ export class AiTemplateService implements OnModuleDestroy {
     }, ctx.userId);
 
     return { template: validated.template, warnings: validated.warnings, elapsedMs: Date.now() - t0, model: visionCfg.model };
+  }
+
+  /**
+   * 字段 → 标签模板（A1）：规则引擎先出结构正确的版式，再可选让模型做视觉美化。
+   * 与 textToTemplate 的差别：**没有模型也能用**（降级为规则版式，不抛 400）。
+   */
+  async fieldsToTemplate(params: {
+    fields: Array<{ name: string; label?: string; type?: string; sample?: string; required?: boolean; emphasis?: boolean; barcodeSym?: string }>;
+    widthMm: number; heightMm: number; dpi?: number;
+    style?: 'medical' | 'industrial' | 'retail' | 'clean';
+    title?: string; footer?: string; accent?: string; useLlm?: boolean;
+  }) {
+    const ctx = useTenant();
+    const t0 = Date.now();
+    if (!Array.isArray(params.fields) || params.fields.length === 0) {
+      throw new BadRequestException('fields 不能为空');
+    }
+    const dpi = params.dpi ?? 300;
+
+    // 字段名清洗：变量名必须是合法标识符，中文/空格名降级为 f1..fn 并提示
+    const renameWarn: string[] = [];
+    const fields = params.fields.map((f, i) => {
+      const raw = (f.name ?? '').trim();
+      const ok = /^[A-Za-z_][A-Za-z0-9_]*$/.test(raw);
+      if (!ok && raw) renameWarn.push(`字段名「${raw}」不是合法变量名，已改为 f${i + 1}`);
+      return {
+        name: ok ? raw : `f${i + 1}`,
+        label: (f.label ?? raw ?? `字段${i + 1}`).trim() || `字段${i + 1}`,
+        type: (f.type as any) ?? 'text',
+        sample: f.sample,
+        required: f.required,
+        emphasis: f.emphasis,
+        barcodeSym: f.barcodeSym,
+      };
+    });
+
+    const baseline = buildLabelLayout({
+      widthMm: params.widthMm, heightMm: params.heightMm, dpi,
+      style: params.style, title: params.title, footer: params.footer, accent: params.accent,
+      fields: fields as any,
+    });
+
+    let template = baseline.template;
+    let warnings: string[] = [...renameWarn, ...baseline.warnings];
+    let source: 'rule' | 'llm' = 'rule';
+    let model = '';
+    let llmError = '';
+
+    const useLlm = params.useLlm !== false;
+    if (useLlm) {
+      const cfg = await this.resolveVisionConfig(ctx.tenantId).catch(() => null);
+      if (!cfg) {
+        warnings.push('未配置 AI 模型，已用规则版式排版（效果同样可直接打印）');
+      } else {
+        try {
+          await this.quota.checkAndConsume(ctx.tenantId, 'vision');
+          const res = await callVision(
+            cfg, null,
+            buildFieldsSystemPrompt(),
+            buildFieldsUserPrompt({
+              fields, widthMm: params.widthMm, heightMm: params.heightMm, dpi,
+              style: params.style ?? ('medical' as const), title: params.title, footer: params.footer,
+              baseline: baseline.template,
+            }),
+            60000,
+          );
+          const parsed = extractJson(res.raw);
+          const candidate = parsed?.template ?? parsed;
+          if (!candidate?.page || !Array.isArray(candidate.elements)) throw new Error('模型输出缺少 page/elements');
+          const checked = validateAiTemplate(candidate, { widthMm: params.widthMm, heightMm: params.heightMm, dpi });
+          const missing = missingFields(checked.template, fields.map((f) => f.name));
+          if (missing.length) throw new Error(`模型漏掉字段：${missing.join('、')}`);
+          template = checked.template;
+          warnings = [...renameWarn, ...baseline.warnings, ...checked.warnings];
+          source = 'llm';
+          model = res.model;
+        } catch (e: any) {
+          llmError = e?.message ?? String(e);
+          this.logger.warn(`[fields-to-template] 模型美化失败，回退规则版式: ${llmError}`);
+          warnings.push(`模型美化失败（${llmError}），已回退规则版式`);
+        }
+      }
+    }
+
+    const dot = summarizeDotFit(analyzeDotFit(template.elements as any[], dpi), dpi);
+    await this.audit.write(ctx.tenantId, 'ai_template.fields_to_template', {
+      fieldCount: fields.length, source, model, llmError,
+      widthMm: params.widthMm, heightMm: params.heightMm, elapsedMs: Date.now() - t0,
+    }, ctx.userId, 'ai_template');
+
+    return {
+      template,
+      variables: template.variables ?? [],
+      warnings,
+      dotFit: { text: dot.text, warns: dot.warns },
+      meta: { ...baseline.meta, source },
+      source,
+      model,
+      llmError,
+      elapsedMs: Date.now() - t0,
+    };
   }
 
   /** 用启发式 bbox 与 LLM 元素做 IoU 匹配，继承置信度 */
@@ -639,4 +744,10 @@ export class AiTemplateService implements OnModuleDestroy {
       return '';
     }
   }
+}
+
+/** 模板里是否每个字段都至少被引用一次（text 的 {{var}} 或码的 content） */
+function missingFields(template: any, names: string[]): string[] {
+  const body = JSON.stringify(template.elements ?? []);
+  return names.filter((n) => !body.includes(`{{${n}}}`));
 }

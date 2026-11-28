@@ -33,6 +33,7 @@
 | POST | `/udi/pack-print` | **主从层级打印**：一箱 N 件，出 N 张单件标 + 1 张箱标，编号与装箱关系同事务写入台账 |
 | POST | `/print/dot-fit` | **设计 mm ↔ 打印机 dot** 一致性检查：出点数/实际毫米/偏差与建议值（不阻断） |
 | GET | `/templates/:id/print-form` | **打印时表单**：模板里 `atPrint=true` 的变量→表单字段定义（label/必填/类型/校验） |
+| POST | `/ai-template/fields-to-template` | **字段 → 标签模板**：给字段清单 + 纸型 + 风格，规则引擎自动排版，可选大模型美化（无模型也能用） |
 | GET | `/udi/pack-print/meta` | 表单元信息：上限件数、公司前缀、单件模板 `unitTemplates` / 箱级模板 `cartonTemplates` / 全部模板 |
 
 示例：
@@ -175,3 +176,19 @@ curl -X POST http://localhost:3200/api/v1/udi/encode -H 'Authorization: Bearer <
 | 打印页 | 选模板/打印机后按打印机实际 dpi 出提示；提交任务的响应新增 `dotFitWarnings[]`（**不阻断**，与既有自检的分工：自检管「能不能扫」，dot-fit 管「尺寸有没有走样」） |
 
 真机验证（2026-11-28，Windows 本机 API + PG）：`POST /print/dot-fit` dpi=203 + 内置单件模板 → 返回 `moduleWidthMm 0.3→2 点 0.25mm（细 16.6%）` 等条目；dpi=300 同模板偏差明显变小；`POST /print/jobs` 响应带 `dotFitWarnings` 且任务仍正常 `success`。单测 `core/__tests__/dot-fit.test.ts` 8 例。
+
+### 4.7 字段 → 标签模板（2026-11-28 新增，A1）
+
+现场最费时间的不是画框，是「这些字段怎么排才好看」。A1 的做法是**先结构、后美化**：`core/label-layout.ts` 这个确定性排版引擎保证骨架一定合规（不越界、不压码、模块宽按整点、必填与变量都齐），大模型只在其上做视觉优化，模型输出不达标（漏字段/越界/改纸型）就自动退回规则版式并说明原因。
+
+| 环节 | 行为 |
+|---|---|
+| 引擎 | `buildLabelLayout({widthMm,heightMm,dpi,fields,style,title,footer,accent})` → `{template,warnings,meta}`；版式顺序：外框 → 标题带（medical/retail 带左侧强调色条）→ 分割线 → 信息区（标签浅灰 + 值黑色，字段 ≥4 且宽 ≥55mm 分两列）→ 页脚 → 底部一维码通栏（带明文）→ 右上二维码 |
+| 容量 | 放不下先分两列；仍超容量则**明确省略**并报出被省略的字段名，绝不把元素排到纸外；字号 <6pt 提示「车间 1m 外看不清」 |
+| 码处理 | 一维码最多 1 个、二维码最多 1 个；多余的码字段转成文本并告警；模块宽用 `snapToDot(0.25,dpi)`，条高 ≥6mm，二维码被一维码挤到时自动缩到可用空间并告知 |
+| 字段映射 | `type` → variables（`text/number/date`，date → `YYYY-MM-DD`）；`sample` 写 `defaultValue`；`required` 直接映射成打印时必填 |
+| 接口 | `POST /ai-template/fields-to-template`，`ai:text-to-template` + `ai` 模块门。body `{fields[{name,label,type,sample,required,emphasis}], widthMm, heightMm, dpi, style, title, footer, useLlm}` → `{template,variables,warnings,dotFit,meta{rows,columns,rowHeightMm,fontPt,source},source:'rule'|'llm',model,llmError,elapsedMs}` |
+| 计量 | 只有真正调用模型（`source==='llm'`）才计 1 次 `ai_generate`；规则版式免费，不占配额 |
+| 前端 | `AiGenerate.vue` 第三卡片「③ 字段 → 模板」：字段表（变量名/中文名/类型/示例值/强调/打印必填/删除）+ 三个行业预设（医疗器械单件 50×30、箱标 100×70、零售价签 40×30）+ 纸型/DPI/风格/标题/页脚，生成后走同一个「保存为模板」入口 |
+
+真机验证（2026-11-28）：见 §5 证据表。

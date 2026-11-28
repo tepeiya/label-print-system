@@ -200,27 +200,38 @@ export function buildCornerDetectUserPrompt(): string {
 // -----------------------------------------------------------------------------
 
 export function buildTextToTemplateSystemPrompt(): string {
-  return `你是专业的标签设计工程师。用户用自然语言描述一个标签的样子，请你直接输出一份完整的模板 JSON。
+  return `你是资深标签视觉设计师。用户用自然语言描述一个标签，你直接输出一份可直接打印的模板 JSON。
 
-【输出格式（只输出 JSON）】
+【输出结构（只输出 JSON，不要 markdown）】
 {
+  "schemaVersion": 1,
   "page": { "widthMm": 60, "heightMm": 40, "dpi": 300 },
-  "elements": [
-    { "id": "e1", "type": "rect", "x": 1, "y": 1, "w": 58, "h": 38, "fill": "#fff", "stroke": { "width": 0.2, "color": "#333" } },
-    { "id": "e2", "type": "text", "x": 2, "y": 2, "w": 30, "h": 6, "text": "产品名 {{productName}}", "font": { "size": 10, "family": "Arial", "color": "#000" } },
-    { "id": "e3", "type": "barcode", "x": 2, "y": 25, "w": 30, "h": 12, "symbology": "CODE128", "value": "{{serialNo}}", "showText": true, "fontSize": 6 },
-    { "id": "e4", "type": "qr", "x": 40, "y": 20, "w": 18, "h": 18, "value": "{{qrData}}", "version": "auto", "level": "M" },
-    { "id": "e5", "type": "line", "x1": 2, "y1": 10, "x2": 58, "y2": 10, "stroke": { "width": 0.3, "color": "#999" } }
-  ]
+  "variables": [ { "name": "productName", "label": "产品名", "type": "text", "defaultValue": "示例值" } ],
+  "elements": [ ... ]
 }
 
-【规则】
-- elements 里必须包含一个外框 rect（位置接近 page 边缘，略小一点，作为标签背景）
-- 文字元素用 {{变量名}} 占位，变量名从用户描述里提取（如产品名、SKU、批号、日期、数量、单价等）
-- 条码默认 CODE128，QR 默认 version=auto level=M
-- 尺寸要合理：text 高度 = 字体 mm；barcode/QR 不要超出标签范围
-- 元素摆放要整齐：顶部标题、中间信息、底部条码/二维码
-- 不要输出解释，不要 markdown，只输出 JSON`;
+【元素 schema（严格照此，字段名不许改）】
+- text:    { "id":"t1","type":"text","x":2,"y":2,"w":40,"h":6,"text":"{{productName}}",
+             "font":{"family":"Microsoft YaHei","size":10,"color":"#111111","bold":false,"align":"left","vAlign":"middle","wrap":false} }
+           坐标与宽高单位都是 mm，font.size 单位是 pt（1mm ≈ 2.83pt）
+- barcode: { "id":"b1","type":"barcode","x":2,"y":28,"w":40,"h":9,
+             "barcode":{"sym":"CODE128","content":"{{serialNo}}","moduleWidthMm":0.25,"heightMm":7,"showText":true,"textPosition":"bottom","quietZoneMm":2} }
+           码制可选 CODE128 / CODE39 / EAN13 / GS1_128；moduleWidthMm 取该 dpi 的整点（203dpi→0.25，300dpi→0.254，600dpi→0.169）
+- qrcode:  { "id":"q1","type":"qrcode","x":44,"y":4,"w":14,"h":14,
+             "qrcode":{"sym":"QRCODE","content":"{{qrData}}","ecc":"M","moduleSizeMm":0.33,"quietZoneMm":1.5} }
+           二维码可选 QRCODE / DATAMATRIX
+- line:    { "id":"l1","type":"line","x":2,"y":10,"x2":58,"y2":10,"stroke":{"width":0.2,"color":"#999999"} }
+- rect:    { "id":"r1","type":"rect","x":1,"y":1,"w":58,"h":38,"fill":"#ffffff","stroke":{"width":0.2,"color":"#333333"} }
+
+【排版规则（决定成品是否好看）】
+1. 必须有外框 rect，内缩 0.8~1mm，作为标签边界
+2. 层次：标题（粗体 10~13pt）→ 分割线 → 信息区（标签浅灰 #666 小字 + 值黑色 7~10pt）→ 底部一维码 / 右侧二维码
+3. 信息区用"标签列 + 值列"对齐，同一列 x 坐标一致，行距均匀；字段 ≥4 且宽 ≥55mm 时分两列
+4. 文字元素 h ≈ 字号 mm（1pt≈0.353mm），不要用大框套小字
+5. 一维码条高 ≥6mm，二维码 ≥10mm；码四周留静区，不许压字、不许超出纸边
+6. 文字变量用 {{变量名}}，变量名用英文标识符（productName / lot / expiry / qty），并在 variables 里给出中文 label
+7. 配色克制：正文黑 #111、次要 #666、分割线 #999、强调色一个即可（#1f6feb 或深绿 #0b7a45）
+8. 所有元素必须完整落在 page 范围内`;
 }
 
 export function buildTextToTemplateUserPrompt(description: string, sizeHint?: { widthMm?: number; heightMm?: number }): string {
@@ -228,4 +239,46 @@ export function buildTextToTemplateUserPrompt(description: string, sizeHint?: { 
     ? `\n标签尺寸：宽 ${sizeHint.widthMm}mm × 高 ${sizeHint.heightMm}mm`
     : `\n标签尺寸：请按常见标签比例自行确定（60×40mm / 40×30mm / 70×50mm 等）`;
   return `以下是我要的标签设计：\n"""${description}"""${sizeLine}`;
+}
+
+// -----------------------------------------------------------------------------
+// 字段 → 版式：模型只做"美化"，结构骨架由 core/label-layout 保证
+// -----------------------------------------------------------------------------
+export function buildFieldsSystemPrompt(): string {
+  return `你是资深标签视觉设计师。用户给出字段清单和标签尺寸，系统已经用规则引擎排好一版结构正确的骨架（baseline），
+你要在"不丢字段、不改纸型、不越界"的前提下把它做得更精致、更有层次。
+
+【输出结构（只输出 JSON）】
+{ "template": { "schemaVersion": 1, "page": { "widthMm": <原值>, "heightMm": <原值>, "dpi": <原值> }, "variables": [...], "elements": [...] } }
+
+【元素字段（必须与骨架同一套 schema）】
+- text:        { "type":"text", "x","y","w","h" (mm), "text":"可含 {{var}}", "font": { "family":"Microsoft YaHei","size":<pt>,"color":"#111111","bold":false,"align":"left|center|right","vAlign":"top|middle|bottom","wrap":false } }
+- barcode:     { "type":"barcode", "barcode": { "sym":"CODE128|GS1_128|EAN13", "content":"{{var}}", "moduleWidthMm":0.25, "heightMm":<mm>, "showText":true, "textPosition":"bottom", "quietZoneMm":2 } }
+- qrcode:      { "type":"qrcode", "qrcode": { "sym":"QRCODE|DATAMATRIX", "content":"{{var}}", "ecc":"M", "moduleSizeMm":0.33, "quietZoneMm":1.5 } }
+- line:        { "type":"line","x","y","x2","y2","stroke":{ "width":0.2,"color":"#333333" } }
+- rect:        { "type":"rect","x","y","w","h","fill":"#ffffff","stroke":{ "width":0.2,"color":"#333333" } }
+
+【硬性要求】
+1. 所有 {{变量}} 必须来自用户字段清单，且每个字段至少出现一次；不许新增字段、不许漏字段
+2. 纸型 widthMm/heightMm/dpi 不许改；所有元素必须完整落在纸内（含码的静区）
+3. 模块宽/模块尺寸/线宽必须是该 dpi 的整点值（如 203dpi 用 0.25/0.375mm，300dpi 用 0.254/0.339mm）
+4. 字号 pt：1mm ≈ 2.83pt；正文字号不低于 6pt，车间 1m 外要看得清
+5. 一维码只能底部通栏或右侧竖排，宽度不足时缩小模块宽而不是压扁条高（条高 ≥6mm）
+6. 不许叠字、不许码上压字；分割线/色块用于分区，不要铺满整张
+7. 只输出 JSON，不要 markdown，不要解释`;
+}
+
+export function buildFieldsUserPrompt(params: {
+  fields: any[]; widthMm: number; heightMm: number; dpi: number; style: string;
+  title?: string; footer?: string; baseline: any;
+}): string {
+  return `【标签尺寸】宽 ${params.widthMm}mm × 高 ${params.heightMm}mm，${params.dpi}dpi
+【风格】${params.style}${params.title ? `；标题「${params.title}」` : ''}${params.footer ? `；页脚「${params.footer}」` : ''}
+【字段清单】
+${JSON.stringify(params.fields, null, 0)}
+
+【规则引擎骨架（可整体重排，但字段与纸型必须保持一致）】
+${JSON.stringify(params.baseline, null, 0)}
+
+请输出美化后的完整模板 JSON。`;
 }

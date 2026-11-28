@@ -348,6 +348,16 @@ export const apiAiGenerate = (form: FormData) =>
   http.post('/ai-template/generate', form, { headers: { 'Content-Type': 'multipart/form-data' } });
 export const apiAiTextToTemplate = (data: { description: string; widthMm?: number; heightMm?: number }) =>
   http.post('/ai-template/text-to-template', data);
+export interface AiLayoutField {
+  name: string; label: string;
+  type?: 'text' | 'number' | 'date' | 'barcode' | 'qrcode';
+  sample?: string; required?: boolean; emphasis?: boolean; barcodeSym?: string;
+}
+export const apiAiFieldsToTemplate = (data: {
+  fields: AiLayoutField[]; widthMm: number; heightMm: number; dpi?: number;
+  style?: 'medical' | 'industrial' | 'retail' | 'clean';
+  title?: string; footer?: string; useLlm?: boolean;
+}) => http.post('/ai-template/fields-to-template', data);
 export const apiAiSaveTemplate = (data: { template: any; name?: string; category?: string }) =>
   http.post('/ai-template/save', data);
 

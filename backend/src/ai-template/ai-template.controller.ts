@@ -12,7 +12,7 @@ import { useTenantId } from '../common/tenant.context';
 import { QuotaExceededException } from '../common/business.errors';
 import { UsageService } from '../billing/usage.service';
 import { AiTemplateService } from './ai-template.service';
-import { CreateAiModelDto, SaveAiTemplateDto, TextToTemplateDto } from '../common/dto/render-and-ai.dto';
+import { CreateAiModelDto, FieldsToTemplateDto, SaveAiTemplateDto, TextToTemplateDto } from '../common/dto/render-and-ai.dto';
 
 const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/tiff'];
 
@@ -53,6 +53,31 @@ export class AiTemplateController {
       widthMm: body.widthMm ? Number(body.widthMm) : undefined,
       heightMm: body.heightMm ? Number(body.heightMm) : undefined,
     });
+  }
+
+  /**
+   * 字段 → 模板（A1）：给字段清单，自动排成精美标签版式。
+   * 无 AI 模型也能用（规则版式）；有模型则额外美化。不消耗配额时也不会失败。
+   */
+  @RequirePermission('ai:text-to-template')
+  @Roles('admin', 'operator')
+  @Post('fields-to-template')
+  async fieldsToTemplate(@Body() body: FieldsToTemplateDto) {
+    const tenantId = useTenantId();
+    const willCallLlm = body.useLlm !== false;
+    // 只有真要调模型时才计入 ai_generate 配额，规则版式免费
+    const warn = willCallLlm ? await this.assertAiQuota(tenantId, 1) : false;
+    const result = await this.svc.fieldsToTemplate({
+      fields: body.fields.map((f) => ({
+        name: f.name, label: f.label, type: f.type, sample: f.sample,
+        required: f.required, emphasis: f.emphasis, barcodeSym: f.barcodeSym,
+      })),
+      widthMm: body.widthMm, heightMm: body.heightMm, dpi: body.dpi,
+      style: body.style, title: body.title, footer: body.footer, accent: body.accent,
+      useLlm: body.useLlm,
+    });
+    this.recordAi(tenantId, result.source === 'llm' ? 1 : 0, 'fields-to-template');
+    return { ...result, quotaWarn: warn };
   }
 
   /** 主入口：上传图片 + 尺寸 → 生成模板 */

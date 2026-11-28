@@ -1,4 +1,4 @@
-import { IsBoolean, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, Length, Max, Min } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, Length, Max, Min } from 'class-validator';
 
 /** 公共渲染入参：barcode/qrcode/svg 三个端点共用（b.barcode / b.qrcode / 平铺三种形态） */
 export class BarcodeRenderDto {
@@ -118,4 +118,57 @@ export class CreateAiModelDto {
   @IsOptional()
   @IsBoolean()
   isDefault?: boolean;
+}
+
+/** 给字段 → 自动排版（A1）：字段清单 + 纸型 + 风格，后端先出规则版式，再可选让模型美化 */
+export class FieldsToTemplateDto {
+  @IsArray({ message: 'fields 必须是数组' })
+  @ArrayMaxSize(40, { message: '一次最多 40 个字段' })
+  fields!: Array<{
+    name: string;
+    label?: string;
+    type?: 'text' | 'number' | 'date' | 'barcode' | 'qrcode';
+    sample?: string;
+    required?: boolean;
+    emphasis?: boolean;
+    barcodeSym?: string;
+  }>;
+
+  @IsNumber()
+  @Min(10)
+  @Max(500)
+  widthMm!: number;
+
+  @IsNumber()
+  @Min(10)
+  @Max(500)
+  heightMm!: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(72)
+  @Max(1200)
+  dpi?: number;
+
+  @IsOptional()
+  @IsIn(['medical', 'industrial', 'retail', 'clean'])
+  style?: 'medical' | 'industrial' | 'retail' | 'clean';
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 60)
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 120)
+  footer?: string;
+
+  @IsOptional()
+  @IsString()
+  accent?: string;
+
+  /** 是否让大模型做视觉美化（默认 true；没配模型时自动退回规则版式） */
+  @IsOptional()
+  useLlm?: boolean;
 }
