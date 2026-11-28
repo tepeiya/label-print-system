@@ -146,6 +146,8 @@ export function renderPrintHtml(input: HtmlRenderInput): HtmlRenderOutput {
 function renderedToLabel(elements: any[], mmToPx: number, watermarkHtml = ''): string {
   const parts: string[] = [];
   for (const e of elements) {
+    // 条件打印 / 空值 GS1 段剔除会把元素标 _skip，HTML 通道也要尊重，否则会画出空白框
+    if (!e || e._skip === true || e.visible === false) continue;
     parts.push(renderElement(e, mmToPx));
   }
   // .lbl 已是 position:relative，水印绝对定位落在标签内；放最后保证在最上层

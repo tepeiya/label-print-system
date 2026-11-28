@@ -48,3 +48,18 @@ test('渲染-GS1 空值 AI 段剔除（条码与 HRI 同步）', () => {
   const out2 = svc.renderRow(els, { gtin: '06901234567892', expiry: '271031', lot: 'PF2601', serial: 'SN9001' }, {}, {});
   assert.match(out2[0].qrcode.content, /\(21\)SN9001$/);
 });
+
+test('渲染-GS1 码整段无值时元素不打印（箱标不填 SSCC）', () => {
+  const svc = new RenderService();
+  const els: any[] = [
+    { id: 'sscc', type: 'barcode', barcode: { sym: 'GS1_128', content: '(00){{sscc}}' } },
+    { id: 'sscc-hri', type: 'text', text: '(00){{gtin}}\n(00){{sscc}}' },
+  ];
+  const out = svc.renderRow(els, { sscc: '' }, {}, {});
+  assert.equal(out[0]._skip, true);
+  assert.equal(out[1]._skip, true, 'HRI 只剩空 AI 段时整块不打印');
+  // 给了 SSCC 就照常打
+  const out2 = svc.renderRow(els, { sscc: '069012340000000016', gtin: '06901234567892' }, {}, {});
+  assert.equal(out2[0]._skip, undefined);
+  assert.equal(out2[0].barcode.content, '(00)069012340000000016');
+});

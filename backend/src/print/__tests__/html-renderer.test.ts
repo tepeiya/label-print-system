@@ -157,3 +157,17 @@ test('duplex=true：背面承载与正面相同的内容（占位符同样渲染
   // 正面 + 背面各一次 "甲"
   assert.equal((out.html.match(/甲/g) || []).length, 2);
 });
+
+test('HTML 渲染尊重 _skip：被剔除的元素不出现在版面里', () => {
+  const tpl = {
+    page: PAGE_60x40,
+    elements: [
+      { id: 'e1', type: 'text', x: 2, y: 2, w: 30, h: 6, text: '保留' },
+      { id: 'e2', type: 'text', x: 2, y: 10, w: 30, h: 6, text: '剔除', printIf: '1==0' },
+    ],
+  };
+  const html = renderPrintHtml({ templateContent: tpl, rows: [{}], copies: 1 } as any);
+  const s = typeof html === 'string' ? html : JSON.stringify(html);
+  assert.ok(!s.includes('剔除'), '条件打印为假的元素不应渲染');
+  assert.ok(s.includes('保留'));
+});

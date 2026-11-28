@@ -113,20 +113,27 @@ export class RenderService {
     // 不这么做，bwip 会抛 GS1valueTooShort 把整单打废，故障点还落在打印环节而不是录入环节。
     for (const e of out) {
       const bc = e?.barcode;
-      if (e?.type === 'barcode' && bc?.gs1 && typeof bc.content === 'string') {
-        e.barcode = { ...bc, content: stripEmptyGs1Ais(bc.content) };
+      // 条码：GS1 码制（gs1 标记或 GS1-128）才处理；剔除后内容为空说明整码没有值，该元素不打印
+      if (e?.type === 'barcode' && bc && typeof bc.content === 'string' && (bc.gs1 || /gs1/i.test(String(bc.sym ?? bc.bcid ?? ''))) && bc.content.includes('(')) {
+        const c2 = stripEmptyGs1Ais(bc.content);
+        if (!c2) e._skip = true;
+        else e.barcode = { ...bc, content: c2 };
         continue;
       }
       const q = e?.qrcode;
       if (e?.type === 'qrcode' && q?.gs1 && typeof q.content === 'string') {
-        e.qrcode = { ...q, content: stripEmptyGs1Ais(q.content) };
+        const c2 = stripEmptyGs1Ais(q.content);
+        if (!c2) e._skip = true;
+        else e.qrcode = { ...q, content: c2 };
         continue;
       }
       if (e?.type === 'text' || e?.type === 'richtext') {
         const t = String(e.text ?? '');
         // 仅处理 HRI 形态的文本（至少两段 (AI)），避免误伤普通标签文字
         if (((t.match(/\(\d{2,4}\)/g) || []).length) >= 2) {
-          e.text = stripEmptyGs1Ais(t);
+          const t2 = stripEmptyGs1Ais(t);
+          if (!t2) { e._skip = true; continue; }
+          e.text = t2;
           if (Array.isArray(e.runs)) e.runs = e.runs.map((r: any) => ({ ...r, text: stripEmptyGs1Ais(String(r?.text ?? '')) }));
         }
       }
