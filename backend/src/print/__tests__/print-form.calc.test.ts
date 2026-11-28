@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  applyFormToRows, buildPrintFields, describePrintFormErrors, mergeFormValues, validateFormValues, validateRows,
+  applyFormToRows, buildPrintFields, describePrintFormErrors, mergeFormValues, validateFormValues, validateRows, withVariableDefaults,
 } from '../print-form.calc';
 
 test('buildPrintFields：只取 atPrint 且非计算变量，label 缺省用 name', () => {
@@ -127,4 +127,17 @@ test('validateRows：所有行都有值但有一行格式不对 → 点名行号
 
 test('validateRows：没有 atPrint 字段的模板不做任何拦截', () => {
   assert.equal(validateRows(buildPrintFields([{ name: 'sku' }]), [{}]).ok, true);
+});
+
+test('withVariableDefaults：非 atPrint 用示例值兜底，atPrint 绝不用示例值顶替', () => {
+  const vars = [
+    { name: 'spec', label: '规格', defaultValue: '5ml' },
+    { name: 'lot', label: '批号', atPrint: true, required: true, defaultValue: 'SAMPLE' },
+    { name: 'empty', label: '空示例' },
+  ];
+  assert.deepEqual(withVariableDefaults({}, vars), { spec: '5ml' });
+  // 行里已有值时不覆盖
+  assert.deepEqual(withVariableDefaults({ spec: '10ml' }, vars), { spec: '10ml' });
+  // atPrint 缺值必须留空（后续 validateRows 会拦），不能被 SAMPLE 糊过去
+  assert.equal(withVariableDefaults({}, vars).lot, undefined);
 });

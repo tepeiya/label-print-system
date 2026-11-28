@@ -11,7 +11,7 @@ import { SerialModuleService } from '../serial/serial.service';
 import { AuditService } from '../audit/audit.module';
 import { UsageService } from '../billing/usage.service';
 import { QuotaExceededException } from '../common/business.errors';
-import { buildPrintFields, describePrintFormErrors, mergeFormValues, validateFormValues, validateRows } from './print-form.calc';
+import { buildPrintFields, describePrintFormErrors, mergeFormValues, validateFormValues, validateRows, withVariableDefaults } from './print-form.calc';
 import { analyzeDotFit, summarizeDotFit } from '../../core/dot-fit';
 // P8.3：治理前置校验（默认宽松，存量租户零行为变化）
 import { GovernanceService } from '../governance/governance.service';
@@ -145,9 +145,13 @@ export class PrintService {
 
     const baseRows: any[] = Array.isArray(dto.rows) && dto.rows.length ? dto.rows : [{}];
     // 表单值优先并入每一行（同一批标签共用同一批表单值）
-    const rows: any[] = (formFields.length || formValues)
-      ? baseRows.map((r) => mergeFormValues(r ?? {}, formValues, formFields))
-      : baseRows;
+    // A1 生成的模板把示例值写在非 atPrint 变量的 defaultValue 里，渲染前必须补进行数据，
+    // 否则标签上会原样打出 {{spec}} 这种占位符。
+    const tplVars = (tpl.content as any)?.variables ?? [];
+    const rows: any[] = baseRows.map((r) => {
+      const filled = withVariableDefaults(r ?? {}, tplVars);
+      return (formFields.length || formValues) ? mergeFormValues(filled, formValues, formFields) : filled;
+    });
 
     if (formFields.length) {
       const vr = validateRows(formFields, rows);

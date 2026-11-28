@@ -163,3 +163,29 @@ export function validateRows(fields: PrintFormField[], rows: Record<string, any>
   }
   return { ok: errors.length === 0, errors };
 }
+
+/**
+ * 渲染兜底：模板里非 atPrint 变量的 defaultValue 是"设计时的示例值"，
+ * 行数据没给该键时用它填充（否则标签上会原样打出 {{var}}）。
+ * atPrint 变量**不兜底**：那是每次打印必须现场录入的，拿示例值顶上等于伪造数据。
+ */
+export function withVariableDefaults(row: Record<string, any>, variables: any[] | undefined | null): Record<string, any> {
+  const out: Record<string, any> = { ...(row ?? {}) };
+  const vars = Array.isArray(variables) ? variables : [];
+  for (const v of vars) {
+    if (!v || v.atPrint === true || v.expr) continue;
+    const name = String(v.name ?? '').trim();
+    if (!name) continue;
+    if (out[name] != null && String(out[name]).trim() !== '') continue;
+    if (v.defaultValue == null || String(v.defaultValue).trim() === '') continue;
+    out[name] = v.defaultValue;
+  }
+  return out;
+}
+
+/** 预览口径：先补非 atPrint 示例值，再并入表单值（与打印同源，避免预览/打印两副面孔） */
+export function applyFormToRowsWithDefaults(rows: any[] | undefined | null, variables: any[] | undefined | null, formValues: Record<string, any> | undefined | null): Record<string, any>[] {
+  const fields = buildPrintFields(variables);
+  const list = Array.isArray(rows) && rows.length ? rows : [{}];
+  return list.map((r) => mergeFormValues(withVariableDefaults(r ?? {}, variables), formValues, fields));
+}

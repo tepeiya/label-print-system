@@ -136,7 +136,19 @@ export function buildLabelLayout(opts: LayoutOptions): LayoutResult {
     const sample = barRaw.sample?.trim() ?? '';
     barSym = barRaw.barcodeSym || (gs1Like(sample) ? 'GS1_128' : 'CODE128');
     const chars = Math.max(sample.length, 4);
-    const modulesNeeded = 11 * (chars + 4) + 20; // 起止符+校验+每字符 11 模块，留余量
+    // 模块数按码制估：EAN/UPC 是定长 95/67 模块，不能拿 CODE128 的"每字符 11 模块"去算
+    const symUpper = barSym.toUpperCase();
+    let modulesNeeded = 11 * (chars + 4) + 20;
+    if (symUpper === 'EAN13') modulesNeeded = 95;
+    else if (symUpper === 'EAN8') modulesNeeded = 67;
+    else if (symUpper === 'UPC_A' || symUpper === 'UPCA') modulesNeeded = 95;
+    else if (symUpper === 'CODE39') modulesNeeded = 16 * chars;
+    // EAN13/UPC 对数据有硬要求：13 位数字（UPC 12 位），不符合就退回 CODE128，别打出一张扫不出的码
+    if ((symUpper === 'EAN13' && !/^\d{13}$/.test(sample)) || (symUpper === 'UPC_A' && !/^\d{12}$/.test(sample))) {
+      warnings.push(`${barRaw.label || barRaw.name}：${symUpper} 要求 ${symUpper === 'EAN13' ? '13' : '12'} 位数字，示例值不符，已改用 CODE128`);
+      barSym = 'CODE128';
+      modulesNeeded = 11 * (chars + 4) + 20;
+    }
     const rawMax = Math.min(0.25, innerW / modulesNeeded); // 物理上限（未取整）
     if (rawMax < 0.19) {
       warnings.push(
