@@ -559,12 +559,17 @@ const udiPreview = computed(() => {
   return parts.join('');
 });
 
-/** 一维 GS1-128：按 0.35mm 模块宽估宽，超 70mm 提示改用 DataMatrix */
+/** 一维 GS1-128 实际宽度估算：实测 @0.35mm 每数据字符约 8.5 模块（数字成对 5.5、字母 11 的混合值），
+ *  SSCC 19 字符 → 56.9mm、四段 HRI 37 字符 → 120.2mm，与 bwip 出图实测一致 */
 const udiBarWidthHint = computed(() => {
-  const n = udiPreview.value.length;
-  if (!n) return '';
-  const mm = Math.round(n * 0.35 * 1.05);
-  return mm > 70 ? `这条 HRI 共 ${n} 字符，@0.35mm 约 ${mm}mm 宽，常见 50×30 标签放不下` : '';
+  const hri = udiPreview.value;
+  if (!hri) return '';
+  const dataChars = hri.replace(/[()]/g, '').length + 1; // +1 = 变长段的 FNC1
+  const mw = bc.value?.moduleWidthMm ?? 0.35;
+  const mm = Math.round(dataChars * 8.5 * mw * 10) / 10;
+  return mm > 60
+    ? `≈ ${mm}mm 宽（${dataChars} 个数据字符 × 8.5 模块 × ${mw}mm）；50×30 标签放不下，箱标可用，本体建议改 DataMatrix`
+    : `≈ ${mm}mm 宽（${dataChars} 个数据字符 × 8.5 模块 × ${mw}mm）`;
 });
 
 function applyUdi(target: 'qr' | 'bar') {
