@@ -128,3 +128,13 @@ test('renderRow：bindId 的文本跟随条码内容（HRI 永不与码不一致
   assert.equal(out[2].text, '(01)123(10)B11', '绑定文本必须等于码里编进去的内容');
   assert.equal(out[2]._boundTo, 'dm');
 });
+
+test('自检跳过 _skip 元素（空 SSCC 箱标不应被拦）', () => {
+  const rendered: any[] = [
+    { id: 'sscc', type: 'barcode', _skip: true, barcode: { sym: 'GS1_128', content: '(00)' } },
+    { id: 'dm', type: 'qrcode', qrcode: { sym: 'DATAMATRIX', gs1: true, content: '(01)06901234567892(17)271031(10)PF2601' } },
+  ];
+  const targets = barcodeTargetsOf(rendered);
+  assert.equal(targets.filter((t) => t.elementId === 'sscc').length, 0);
+  assert.equal(targets.length, 1);
+});

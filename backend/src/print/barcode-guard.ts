@@ -62,6 +62,9 @@ export interface BarcodeTarget {
 export function barcodeTargetsOf(rendered: any[]): BarcodeTarget[] {
   const out: BarcodeTarget[] = [];
   for (const e of Array.isArray(rendered) ? rendered : []) {
+    // 被 _skip 标记的元素不会打到纸上（条件打印为假 / GS1 码整段无值），自检也要跳过，
+    // 否则会拿一段根本不下发的空码把整单拦住。
+    if (e?._skip === true || e?.visible === false) continue;
     if (e?.type === 'barcode' && e.barcode) {
       const b = e.barcode;
       out.push({
