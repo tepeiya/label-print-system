@@ -240,7 +240,41 @@
         <span class="f-hint" :class="{ 'f-hint-bad': !bcCheck.ok }">
           {{ bcCheck.ok ? (bcCheck.note ? `✓ ${bcCheck.note}` : '') : `✗ ${bcCheck.error}` }}
         </span>
+        <!-- UDI 一维只能用 GS1-128；其它码制给一句明确提示，别让人拿 CODE128 打 UDI -->
+        <span v-if="!isGs1Bar" class="f-hint f-hint-warn">
+          ⚠ UDI 一维码只能用 GS1-128（当前 {{ bc!.sym ?? 'CODE128' }} 打出来扫码枪按 GS1 解不出）
+        </span>
+        <!-- 一维的 UDI 分段录入：多一段 (00) SSCC（箱标场景），四段本体同二维码 -->
+        <FGroup v-if="isGs1Bar" title="UDI 分段录入（GS1-128）" collapsible store-key="udi-bar">
+          <FRow>
+            <FLabel text="(01) DI" />
+            <FText :model-value="udi.di" placeholder="14 位 GTIN，如 06901234567892" @update:model-value="setUdiPart('di', $event)" />
+          </FRow>
+          <FRow>
+            <FLabel text="(17) 有效期" />
+            <FText :model-value="udi.exp" placeholder="YYMMDD，如 281231" @update:model-value="setUdiPart('exp', $event)" />
+            <FLabel text="(10) 批号" />
+            <FText :model-value="udi.lot" placeholder="如 20261101" @update:model-value="setUdiPart('lot', $event)" />
+          </FRow>
+          <FRow>
+            <FLabel text="(21) 序列号" />
+            <FText :model-value="udi.serial" placeholder="单件唯一才填，可留空" @update:model-value="setUdiPart('serial', $event)" />
+          </FRow>
+          <FRow>
+            <FLabel text="(00) SSCC" />
+            <FText v-model="udi.sscc" placeholder="箱标才填，18 位，如 069012340000000016" @update:model-value="setUdiPart('sscc', $event)" />
+          </FRow>
+          <span v-if="udiPreview" class="f-hint">将写入：{{ udiPreview }}</span>
+          <span v-if="udiBarWidthHint" class="f-hint f-hint-warn">⚠ {{ udiBarWidthHint }}</span>
+          <FRow>
+            <FLabel text=" " />
+            <FBtn kind="primary" @click="applyUdi('bar')">写入条码内容</FBtn>
+            <FBtn @click="readUdiFromContent('bar')">从内容反读</FBtn>
+          </FRow>
+          <span class="f-hint">一维宽度随内容线性增长：SSCC 或两三段尚可，四段全填会很长（建议本体用 DataMatrix，箱标用 SSCC）。</span>
+        </FGroup>
         <span v-if="bcSizeText" class="f-hint">{{ bcSizeText }}</span>
+        <span v-if="bcNotice" class="f-hint f-hint-bad">⚠ {{ bcNotice }}</span>
         <span v-if="bcWarn" class="f-hint f-hint-warn">⚠ {{ bcWarn }}</span>
         <FRow>
           <FLabel text="模块宽 mm" />
@@ -307,8 +341,8 @@
           <span v-if="udiPreview" class="f-hint">将写入：{{ udiPreview }}</span>
           <FRow>
             <FLabel text=" " />
-            <FBtn kind="primary" @click="applyUdi">写入二维码内容</FBtn>
-            <FBtn @click="readUdiFromContent">从内容反读</FBtn>
+            <FBtn kind="primary" @click="applyUdi('qr')">写入二维码内容</FBtn>
+            <FBtn @click="readUdiFromContent('qr')">从内容反读</FBtn>
           </FRow>
           <span class="f-hint">四段分开填只是录入方式；码里必须是连续一行，段与段之间不能有空格或换行。</span>
         </FGroup>
@@ -499,6 +533,9 @@ function makeVariable() {
 
 const bc = computed<BarcodeSpec | undefined>(() => el.value?.barcode);
 const qr = computed<QrcodeSpec | undefined>(() => el.value?.qrcode);
+/** 一维只有 GS1-128 是 GS1 载体（CODE128 载体手持枪按 GS1 规则解不出 AI） */
+const isGs1Bar = computed(() => String(bc.value?.sym ?? '') === 'GS1_128');
+
 /** GS1 开关只对 DataMatrix 有意义（QR/PDF417 没有 GS1 模式） */
 const isMatrixQr = computed(() => {
   const sym = String(qr.value?.sym ?? '');
@@ -506,14 +543,15 @@ const isMatrixQr = computed(() => {
 });
 /** GS1 模式下内容必须是带括号 HRI，给一条即时提示 */
 // ---- UDI 分段录入 ----
-const udi = reactive({ di: '', exp: '', lot: '', serial: '' });
+const udi = reactive({ sscc: '', di: '', exp: '', lot: '', serial: '' });
 
-function setUdiPart(k: 'di' | 'exp' | 'lot' | 'serial', v: string) {
+function setUdiPart(k: 'sscc' | 'di' | 'exp' | 'lot' | 'serial', v: string) {
   udi[k] = String(v ?? '').trim();
 }
 
 const udiPreview = computed(() => {
   const parts: string[] = [];
+  if (udi.sscc) parts.push(`(00)${udi.sscc}`);
   if (udi.di) parts.push(`(01)${udi.di}`);
   if (udi.exp) parts.push(`(17)${udi.exp}`);
   if (udi.lot) parts.push(`(10)${udi.lot}`);
@@ -521,23 +559,34 @@ const udiPreview = computed(() => {
   return parts.join('');
 });
 
-function applyUdi() {
+/** 一维 GS1-128：按 0.35mm 模块宽估宽，超 70mm 提示改用 DataMatrix */
+const udiBarWidthHint = computed(() => {
+  const n = udiPreview.value.length;
+  if (!n) return '';
+  const mm = Math.round(n * 0.35 * 1.05);
+  return mm > 70 ? `这条 HRI 共 ${n} 字符，@0.35mm 约 ${mm}mm 宽，常见 50×30 标签放不下` : '';
+});
+
+function applyUdi(target: 'qr' | 'bar') {
   if (!udiPreview.value) return;
-  // DI 是手打时最常见的错：13 位误当 14 位、校验位没算。写进去只会得到灰块，不如当场拦
+  // DI 是手打时最常见的错：13 位误当 14 位、校验位没算。写进去只会得到空白/废码，不如当场拦
   if (udi.di && !/{{/.test(udi.di) && !gtin14CheckDigitOk(udi.di)) {
-    qrNotice.value = `DI 不合法：${udi.di} 不是合法 GTIN-14（需 14 位且校验位正确）。可先用「UDI 合规申报」台账里算好的 DI。`;
+    const msg = `DI 不合法：${udi.di} 不是合法 GTIN-14（需 14 位且校验位正确）。可先用「UDI 合规申报」台账里算好的 DI。`;
+    if (target === 'qr') qrNotice.value = msg; else bcNotice.value = msg;
     return;
   }
-  setQr({ content: udiPreview.value, gs1: true });
+  if (target === 'qr') setQr({ content: udiPreview.value, gs1: true });
+  else setBarcode({ content: udiPreview.value });
 }
 
-/** 打开已有模板时，把内容里的四段读回输入框，方便改其中一段 */
-function readUdiFromContent() {
-  const c = String(qr.value?.content ?? '');
+/** 打开已有模板时，把内容里的各段读回输入框，方便改其中一段 */
+function readUdiFromContent(target: 'qr' | 'bar') {
+  const c = String((target === 'qr' ? qr.value?.content : bc.value?.content) ?? '');
   const grab = (ai: string) => {
     const m = c.match(new RegExp(`\\(${ai}\\)([^()]*)`));
     return m ? m[1].trim() : '';
   };
+  udi.sscc = grab('00');
   udi.di = grab('01');
   udi.exp = grab('17');
   udi.lot = grab('10');
@@ -548,8 +597,9 @@ function readUdiFromContent() {
 watch(
   () => el.value?.id,
   () => {
-    udi.di = udi.exp = udi.lot = udi.serial = '';
-    if (el.value?.type === 'qrcode' && el.value?.qrcode?.gs1) readUdiFromContent();
+    udi.sscc = udi.di = udi.exp = udi.lot = udi.serial = '';
+    if (el.value?.type === 'qrcode' && el.value?.qrcode?.gs1) readUdiFromContent('qr');
+    if (el.value?.type === 'barcode' && isGs1Bar.value) readUdiFromContent('bar');
   },
 );
 
@@ -663,6 +713,7 @@ const qrLen = computed(() => (qr.value?.content ?? '').length);
 
 /** 换行挡在输入侧，但挡了就要说：粘贴里有几个控制字符就报几个，不静默改用户的数据 */
 const qrNotice = ref('');
+const bcNotice = ref('');
 let qrNoticeTimer: ReturnType<typeof setTimeout> | undefined;
 function onQrNormalize(n: number) {
   clearTimeout(qrNoticeTimer);

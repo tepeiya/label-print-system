@@ -257,7 +257,8 @@ interface Rule {
 
 const BC_RULES: Record<string, Rule> = {
   CODE128: { note: '支持 ASCII 全字符' },
-  GS1_128: { note: '使用 (AI) 应用标识符，如 (01)12345678901231' },
+  // 一维只有 GS1-128 能承载 GS1 AI；内容必须是带括号 HRI（bwip gs1-128 直接吃 HRI 并落 FNC1）
+  GS1_128: { note: '必须是 (AI) 开头的 HRI，如 (01)12345678901231(17)271231(10)LOT01' },
   CODE39: { re: /^[0-9A-Za-z\-.$/+% ]*$/, note: '仅 0-9 A-Z a-z 及 - . $ / + % 空格' },
   CODE93: { note: '支持 ASCII 全字符' },
   CODE16K: { maxLen: 1500, note: 'Code 16K 多层码' },
@@ -294,6 +295,11 @@ export interface BarcodeCheck {
   note?: string;
 }
 
+/** 是否 GS1 带括号 HRI（(00)/(01)/(17)/(10)/(21)… 任一 AI 开头即可） */
+export function isGs1Hri(text: string): boolean {
+  return /^\((?:00|0[1-9]|1[0-9]|2[0-9]|3[0-9]|4[0-9]|7[0-9]|8[0-9]|9[0-9])\)/.test(String(text ?? '').trim());
+}
+
 /** 校验条码内容；含 {{变量}} 占位时不报错（运行期才有值） */
 export function validateBarcodeText(sym: unknown, content: unknown): BarcodeCheck {
   const key = String(sym || '').toUpperCase();
@@ -303,6 +309,11 @@ export function validateBarcodeText(sym: unknown, content: unknown): BarcodeChec
   const hasVar = /\{\{[^}]+\}\}/.test(text);
   if (!text.trim()) return { ok: hasVar, error: hasVar ? '' : '内容为空', note: r.note ?? '' };
   if (hasVar) return { ok: true, note: r.note ?? '' };
+  // GS1-128 硬门槛：不是 HRI 的内容 bwip 会直接抛 GS1aiMissingOpenParen，或者被当普通 Code128 编
+  // 出来（手持枪按 GS1 规则解不出 AI，台账也收不到）——所以在录入阶段就拦。
+  if (key === 'GS1_128' && !isGs1Hri(text)) {
+    return { ok: false, error: 'GS1-128 内容必须以 (AI) 开头（如 (01)06901234567892(17)271031(10)LOT01）', note: r.note ?? '' };
+  }
   if (r.re && !r.re.test(text)) return { ok: false, error: `内容不符合 ${String(sym)} 字符集（${r.note}）`, note: r.note ?? '' };
   if (r.maxLen && text.length > r.maxLen) return { ok: false, error: `内容超长，最大 ${r.maxLen} 字符`, note: r.note ?? '' };
   return { ok: true, note: r.note ?? '' };
