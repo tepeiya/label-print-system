@@ -149,7 +149,8 @@ export function validateRows(fields: PrintFormField[], rows: Record<string, any>
     const badMsg: string[] = [];
     list.forEach((r, i) => {
       const v = (r ?? {})[f.name];
-      if (!hasVal(v)) { missing.push(i + 1); return; }
+      // 非必填字段：留空合法（比如单件标不印序列号），只在给了值时校验格式
+      if (!hasVal(v)) { if (f.required) missing.push(i + 1); return; }
       const one = validateFormValues([f], { [f.name]: v });
       if (!one.ok) badMsg.push(`第 ${i + 1} 行：${one.errors[0].message}`);
     });

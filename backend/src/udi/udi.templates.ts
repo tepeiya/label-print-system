@@ -42,9 +42,9 @@ const UNIT: Record<string, any> = {
   variables: [
     { name: 'gtin', type: 'text', required: true, validation: { pattern: '^(01)?\\d{14}$' } },
     // 一次导入、常年复用：每次打印真正要换的是有效期/批号/序列号，标 atPrint 让打印页给输入框
-    { name: 'expiry', type: 'text', required: true, atPrint: true, validation: { pattern: '^\\d{6}$' } },
-    { name: 'lot', type: 'text', required: true, atPrint: true, validation: { maxLength: 20 } },
-    { name: 'serial', type: 'text', required: false, atPrint: true, validation: { maxLength: 20 } },
+    { name: 'expiry', label: '有效期 (YYMMDD)', type: 'text', required: true, atPrint: true, validation: { pattern: '^\\d{6}$' } },
+    { name: 'lot', label: '批号', type: 'text', required: true, atPrint: true, validation: { maxLength: 20 } },
+    { name: 'serial', label: '序列号（留空=不带 21）', type: 'text', required: false, atPrint: true, validation: { maxLength: 20 } },
     { name: 'productName', type: 'text', required: true, defaultValue: '产品名称' },
     { name: 'spec', type: 'text', defaultValue: '' },
     { name: 'manufacturer', type: 'text', defaultValue: '生产企业名称' },
@@ -66,9 +66,9 @@ const CARTON: Record<string, any> = {
   page: { widthMm: 100, heightMm: 70, dpi: 300, orientation: 0, unit: 'mm' },
   variables: [
     { name: 'gtin', type: 'text', required: true },
-    { name: 'expiry', type: 'text', required: true, atPrint: true },
-    { name: 'lot', type: 'text', required: true, atPrint: true },
-    { name: 'sscc', type: 'text', required: false, atPrint: true, validation: { pattern: '^\\d{18}$' } },
+    { name: 'expiry', label: '有效期 (YYMMDD)', type: 'text', required: true, atPrint: true },
+    { name: 'lot', label: '批号', type: 'text', required: true, atPrint: true },
+    { name: 'sscc', label: 'SSCC 箱码（留空=不带箱码）', type: 'text', required: false, atPrint: true, validation: { pattern: '^\\d{18}$' } },
     { name: 'qty', type: 'number', defaultValue: 1 },
     { name: 'productName', type: 'text', defaultValue: '产品名称' },
     { name: 'manufacturer', type: 'text', defaultValue: '生产企业名称' },
@@ -96,8 +96,8 @@ const VIAL: Record<string, any> = {
   page: { widthMm: 30, heightMm: 20, dpi: 300, orientation: 0, unit: 'mm' },
   variables: [
     { name: 'gtin', type: 'text', required: true },
-    { name: 'expiry', type: 'text', required: true, atPrint: true },
-    { name: 'lot', type: 'text', required: true, atPrint: true },
+    { name: 'expiry', label: '有效期 (YYMMDD)', type: 'text', required: true, atPrint: true },
+    { name: 'lot', label: '批号', type: 'text', required: true, atPrint: true },
     { name: 'productName', type: 'text', defaultValue: '试剂名称' },
   ],
   elements: [
