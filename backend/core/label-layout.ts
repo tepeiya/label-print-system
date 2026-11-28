@@ -109,8 +109,8 @@ export function buildLabelLayout(opts: LayoutOptions): LayoutResult {
   const codeFields = opts.fields.filter(isCodeField);
   const textFields = opts.fields.filter((f) => !isCodeField(f));
   const qrField = codeFields.find(isQrField);
-  const barField = codeFields.find((f) => !isQrField(f));
-  const extraCodes = codeFields.filter((f) => f !== qrField && f !== barField);
+  const barRaw = codeFields.find((f) => !isQrField(f));
+  const extraCodes = codeFields.filter((f) => f !== qrField && f !== barRaw);
   if (extraCodes.length) {
     warnings.push(`一维码/二维码只保留 1 个一维码 + 1 个二维码，其余 ${extraCodes.length} 个字段按文本排版（${extraCodes.map((f) => f.name).join('、')}）`);
   }
@@ -118,43 +118,91 @@ export function buildLabelLayout(opts: LayoutOptions): LayoutResult {
   // 标题：显式 title > emphasis 的第一个字段 > productName > 产品标签
   const titleField = textFields.find((f) => f.emphasis) ?? textFields.find((f) => /productName|name|title/i.test(f.name));
   const titleText = opts.title || (titleField ? `{{${titleField.name}}}` : '产品标签');
-  const rowsSource = titleField && !opts.title ? textFields.filter((f) => f !== titleField) : textFields;
+  let rowsSource = titleField && !opts.title ? textFields.filter((f) => f !== titleField) : textFields;
 
   // ---- 纵向分区：标题带 / 信息区 / 码区 / 页脚 ----
   const hasFooter = !!opts.footer?.trim();
   const footerH = hasFooter ? clamp(heightMm * 0.09, 2.6, 5) : 0;
-
   const titleH = clamp(heightMm * 0.22, 5, 10);
-  let codeZoneH = 0;
-  if (barField) codeZoneH = clamp(innerH * 0.3, 8, 16);
-
   const codeBottom = innerY + innerH - footerH - (hasFooter ? 0.8 : 0);
-  const barTop = barField ? codeBottom - codeZoneH : codeBottom;
 
-  // 二维码尺寸：受"标题下沿 ~ 一维码上沿"这段高度约束，宁小不压码
+  // ---- 一维码可行性：GS1 内容必须 GS1_128；宽度按模块数实算，太窄就宁可不出码 ----
+  const dot = 25.4 / dpi;
+  const snapDown = (mm: number) => Math.max(dot, Math.floor(mm / dot + 1e-6) * dot);
+  const gs1Like = (v?: string) => !!v && /^\((\d{2})\)/.test(v.trim());
+  let barField = barRaw;
+  let barSym = ''; let barModule = 0;
+  if (barRaw) {
+    const sample = barRaw.sample?.trim() ?? '';
+    barSym = barRaw.barcodeSym || (gs1Like(sample) ? 'GS1_128' : 'CODE128');
+    const chars = Math.max(sample.length, 4);
+    const modulesNeeded = 11 * (chars + 4) + 20; // 起止符+校验+每字符 11 模块，留余量
+    const rawMax = Math.min(0.25, innerW / modulesNeeded); // 物理上限（未取整）
+    if (rawMax < 0.19) {
+      warnings.push(
+        chars <= 24
+          ? `一维码内容约 ${chars} 字符，${round2(innerW)}mm 内每个模块最多 ${round2(rawMax)}mm（<0.19mm 扫不稳），已改按文本排版；要扫码请缩短码值或改成二维码`
+          : `一维码内容约 ${chars} 字符，${round2(innerW)}mm 内需约 ${round2(rawMax * 11 * (chars + 4))}mm，超出可印宽（<0.19mm/模块扫不稳），该字段未印；请改用二维码（UDI 单件标推荐二维码）`,
+      );
+      barField = undefined;
+      if (chars <= 24) rowsSource = [...rowsSource, barRaw];
+    } else {
+      // 首选 0.25mm（按 dpi 取整点）；放不下就往下取到整点，但低于 0.19mm 就宁愿不出码
+      const target = snapToDot(0.25, dpi);
+      barModule = target * modulesNeeded <= innerW ? target : snapDown(rawMax);
+      if (barModule < 0.19) {
+        warnings.push(`一维码内容约 ${chars} 字符，${dpi}dpi 下最多 ${round2(rawMax)}mm/模块，但整点只能给 ${round2(barModule)}mm（<0.19mm 扫不稳），已省略一维码；请改用二维码或缩短码值`);
+        barField = undefined;
+        if (chars <= 24) rowsSource = [...rowsSource, barRaw];
+        barModule = 0;
+        barSym = '';
+      }
+    }
+  }
+  let codeZoneH = barField ? clamp(innerH * 0.3, 8, 16) : 0;
+  let barTop = barField ? codeBottom - codeZoneH : codeBottom;
+
+  // ---- 二维码：先按内容长度估需要多大，放不下就先砍一维码（UDI 场景二维码优先） ----
+  const qrChars = (qrField?.sample ?? '').trim().length || 24;
+  // QR 版本容量（ECC M，含 3 字节开销的保守值）：v2 25 模块≈26 字符，v3 29≈42，v4 33≈62，v5 37≈84
+  const qrModules = qrChars <= 18 ? 21 : qrChars <= 26 ? 25 : qrChars <= 42 ? 29 : qrChars <= 62 ? 33 : qrChars <= 84 ? 37 : 41;
+  const qrModuleSize = snapToDot(0.33, dpi);
+  const qrNeed = round2(qrModules * qrModuleSize + 2.5);
   const qrTop = innerY + titleH + 1.4;
-  const qrAvailH = Math.max(0, barTop - (barField ? 0.8 : 0) - qrTop);
+  if (qrField && barField) {
+    const avail = barTop - 0.8 - qrTop;
+    if (avail < qrNeed) {
+      warnings.push(`纸型偏小：二维码需 ${qrNeed}mm 高、余 ${round2(avail)}mm，已省略底部一维码（UDI 以二维码为准）；如需一维码请加高标签`);
+      barField = undefined; codeZoneH = 0; barTop = codeBottom;
+    }
+  }
   let qrSize = 0;
   if (qrField) {
-    qrSize = Math.min(innerH * 0.55, innerW * 0.38, 22, qrAvailH);
-    if (qrSize < 8) {
-      warnings.push(`二维码可用空间仅 ${round2(Math.max(0, qrSize))}mm，已按 ${round2(Math.max(6, qrSize))}mm 下限处理；若打印后扫不出请增大纸型或把一维码去掉`);
-      qrSize = Math.min(8, Math.max(6, qrAvailH || 8));
+    const avail = barField ? barTop - 0.8 - qrTop : codeBottom - qrTop;
+    qrSize = Math.min(Math.max(qrNeed, 10), avail, innerW * 0.45, 26);
+    if (qrSize + 0.01 < qrNeed) {
+      warnings.push(`二维码内容约 ${qrChars} 字符，需要约 ${qrNeed}mm，当前只有 ${round2(qrSize)}mm，可能扫不出；建议加大标签或缩短内容`);
     }
+    if (qrSize < 8) {
+      warnings.push(`二维码可用空间仅 ${round2(Math.max(0, avail))}mm，已按 8mm 下限处理；打印后请扫码复核`);
+      qrSize = Math.min(8, Math.max(6, avail));
+    }
+    qrSize = round2(qrSize);
   }
 
   const infoTop = qrTop;
   const infoBottom = barField ? barTop - 1 : codeBottom;
   const infoH = infoBottom - infoTop;
-
   if (infoH < 4) warnings.push(`信息区可用高度仅 ${round2(infoH)}mm，字段过多；建议加大标签高度或减少字段`);
 
   // ---- 信息区列数：宽 ≥55mm 且字段 ≥4 分两列；放不下时先改两列，再压行高，最后才省略 ----
   // 商业口径：宁可明确少印几个字段并报出来，也不把元素排到纸外（打出来是废签）。
   const MIN_ROW_MM = 2.4;
-  let cols: 1 | 2 = innerW >= 55 && rowsSource.length >= 4 ? 2 : 1;
+  let cols: 1 | 2 = (barField && innerW >= 90) || (innerW >= 55 && rowsSource.length >= 4 && !qrField) ? 2 : 1;
+  const qrOnRight = !!qrField && (innerW >= 35);
+  let infoW = qrOnRight ? innerW - qrSize - 2 : innerW;
   const maxRows = Math.max(1, Math.floor(infoH / MIN_ROW_MM));
-  if (rowsSource.length > maxRows && cols === 1 && innerW >= 30) cols = 2;
+  if (rowsSource.length > maxRows && cols === 1 && infoW >= 30) cols = 2;
   const capacity = maxRows * cols;
   let fieldsToPlace = rowsSource;
   if (rowsSource.length > capacity) {
@@ -164,8 +212,6 @@ export function buildLabelLayout(opts: LayoutOptions): LayoutResult {
       `信息区只放得下 ${capacity} 个字段，已省略 ${dropped.length} 个（${dropped.map((f) => f.label || f.name).join('、')}）；请加大标签尺寸或减少字段`,
     );
   }
-  const qrOnRight = !!qrField && (cols === 2 || innerW >= 45);
-  const infoW = qrOnRight ? innerW - qrSize - 2 : innerW;
   const rows = Math.max(1, Math.ceil(fieldsToPlace.length / cols));
   const rowH = clamp(infoH / rows, MIN_ROW_MM, 7);
   const valuePt = clamp(rowH * 2.1, 5, 12);
@@ -179,16 +225,7 @@ export function buildLabelLayout(opts: LayoutOptions): LayoutResult {
   let eid = 0;
   const id = (p: string) => `${p}${++eid}`;
 
-  // ---- 变量表：码字段按类型声明，文本按 type ----
-  for (const f of fieldsToPlace) {
-    variables.push({
-      name: f.name,
-      type: f.type === 'date' ? 'date' : f.type === 'number' ? 'number' : 'text',
-      label: f.label || f.name,
-      defaultValue: f.sample ?? '',
-      required: !!f.required,
-    });
-  }
+  // ---- 变量表：标题字段放最前（打印页按此顺序渲染），码变量只在真正出码时声明 ----
   if (titleField && !opts.title) {
     variables.push({
       name: titleField.name,
@@ -196,6 +233,15 @@ export function buildLabelLayout(opts: LayoutOptions): LayoutResult {
       label: titleField.label || titleField.name,
       defaultValue: titleField.sample ?? '',
       required: !!titleField.required,
+    });
+  }
+  for (const f of fieldsToPlace) {
+    variables.push({
+      name: f.name,
+      type: f.type === 'date' ? 'date' : f.type === 'number' ? 'number' : 'text',
+      label: f.label || f.name,
+      defaultValue: f.sample ?? '',
+      required: !!f.required,
     });
   }
   if (barField) variables.push({ name: barField.name, type: 'text', label: barField.label || '条码', defaultValue: barField.sample ?? '', required: !!barField.required });
@@ -264,35 +310,32 @@ export function buildLabelLayout(opts: LayoutOptions): LayoutResult {
     elements.push({
       id: id('footer'), type: 'text', x: innerX, y: round2(innerY + innerH - footerH), w: round2(innerW), h: round2(footerH),
       text: opts.footer!,
-      font: { family: 'Microsoft YaHei', size: clamp(footerH * 1.7, 4.5, 8), bold: false, color: '#777777', align: 'left', vAlign: 'middle', wrap: false },
+      font: { family: 'Microsoft YaHei', size: clamp(footerH * 1.7, 5, 8), bold: false, color: '#777777', align: 'left', vAlign: 'middle', wrap: false },
       zIndex: z++,
     });
   }
 
-  // ---- 一维码：底部通栏 ----
+  // ---- 一维码：底部通栏（模块宽已按内容长度取整，保证整体落在可印宽内） ----
   if (barField) {
-    const barH = codeZoneH - 3.2; // 给明文留 2mm + 呼吸位
+    const barH = Math.max(6, codeZoneH - 3.2);
     const barY = barTop + 0.8;
-    const moduleWidth = snapToDot(0.25, dpi);
     elements.push({
       id: id('barcode'), type: 'barcode', x: innerX, y: round2(barY), w: round2(innerW), h: round2(codeZoneH),
       barcode: {
-        sym: barField.barcodeSym || 'CODE128',
+        sym: barSym,
         content: `{{${barField.name}}}`,
-        moduleWidthMm: moduleWidth,
+        moduleWidthMm: round2(barModule),
         wideRatio: 2.5,
-        heightMm: round2(Math.max(6, barH)),
+        heightMm: round2(barH),
         showText: true,
         textPosition: 'bottom',
         quietZoneMm: snapToDot(2, dpi),
-        textFont: { family: 'Arial', size: clamp(barH * 0.4, 2, 4) },
+        textFont: { family: 'Arial', size: clamp(barH * 0.4, 2.5, 4) },
       },
       zIndex: z++,
     });
-    if (barField.sample) {
-      const chars = String(barField.sample).length + 4;
-      const estMm = round2(chars * 8.5 * moduleWidth);
-      if (estMm > innerW) warnings.push(`一维码示例值约 ${estMm}mm 宽，超出可印宽 ${round2(innerW)}mm；建议换更短的码值或改用二维码`);
+    if (barSym === 'GS1_128' && !gs1Like(barField.sample)) {
+      warnings.push('一维码按 GS1_128 输出，但示例值不是 (AI) 格式；打印前请确认数据格式');
     }
   }
 
@@ -306,7 +349,7 @@ export function buildLabelLayout(opts: LayoutOptions): LayoutResult {
         sym: 'QRCODE',
         content: `{{${qrField.name}}}`,
         ecc: 'M',
-        moduleSizeMm: snapToDot(0.33, dpi),
+        moduleSizeMm: round2(qrModuleSize),
         quietZoneMm: snapToDot(1.5, dpi),
         version: 0,
       },

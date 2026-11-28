@@ -32,7 +32,7 @@ test('50×30 医疗单件标：标题 + 信息区 + 一维码，全部在纸内'
       F('lot', '批号', { sample: 'PF2601' }),
       F('expiry', '有效期', { type: 'date', sample: '2027-10-31' }),
       F('qty', '数量', { type: 'number', sample: '100' }),
-      F('barcodeText', '条码', { type: 'barcode', sample: '(01)06901234567892(10)PF2601(17)271031' }),
+      F('barcodeText', '条码', { type: 'barcode', sample: 'LOT2601' }),
     ],
   });
   assertInside(r.template, '50×30');
@@ -92,4 +92,31 @@ test('默认样式按字段名推断：含 lot/expiry → medical', () => {
   assertInside(r.template, '60×40 默认样式');
   // medical 有左侧强调色条
   assert.ok(r.template.elements.some((e: any) => e.type === 'rect' && e.fill === '#1f6feb'));
+});
+
+test('50×30 放不下 38 字符 GS1 一维码：明确告警且不硬塞，二维码留足空间', () => {
+  const r = buildLabelLayout({
+    widthMm: 50, heightMm: 30, dpi: 203, style: 'medical',
+    fields: [
+      F('productName', '产品名', { emphasis: true, sample: '一次性使用无菌注射器' }),
+      F('lot', '批号', { sample: 'PF2601' }),
+      F('expiry', '有效期', { type: 'date', sample: '2027-10-31' }),
+      F('qr', 'UDI 二维码', { type: 'qrcode', sample: '(01)06901234567892(10)PF2601(17)271031' }),
+      F('barcodeText', '一维码', { type: 'barcode', sample: '(01)06901234567892(10)PF2601(17)271031' }),
+    ],
+  });
+  assertInside(r.template, '50×30 长码');
+  assert.equal(r.template.elements.filter((e: any) => e.type === 'barcode').length, 0, '放不下的 1D 不能硬塞');
+  assert.ok(r.warnings.some((w) => /未印|二维码/.test(w)));
+  const qr = r.template.elements.find((e: any) => e.type === 'qrcode');
+  assert.ok(qr.w >= 13, `二维码应按内容长度留到 ≥13mm，实际 ${qr.w}`);
+  assert.ok(qr.x + qr.w <= 50 && qr.y + qr.h <= 30);
+});
+
+test('短 GS1 码值：自动按 GS1_128 出码，模块宽取整点', () => {
+  const r = buildLabelLayout({ widthMm: 100, heightMm: 70, dpi: 203, fields: [F('sscc', 'SSCC', { type: 'barcode', sample: '(00)106901234567890123' })] });
+  const bar = r.template.elements.find((e: any) => e.type === 'barcode');
+  assert.equal(bar.barcode.sym, 'GS1_128');
+  const step = 25.4 / 203;
+  assert.ok(Math.abs(bar.barcode.moduleWidthMm / step - Math.round(bar.barcode.moduleWidthMm / step)) < 0.02);
 });

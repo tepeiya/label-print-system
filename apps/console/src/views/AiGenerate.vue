@@ -248,7 +248,6 @@ const PRESETS: Record<string, { size: [number, number]; dpi: number; style: any;
       { name: 'expiry', label: '有效期', type: 'date', sample: '2027-10-31', emphasis: false, required: true },
       { name: 'serial', label: '序列号', type: 'text', sample: '', emphasis: false, required: false },
       { name: 'qr', label: 'UDI 二维码', type: 'qrcode', sample: '(01)06901234567892(10)PF2601(17)271031', emphasis: false, required: false },
-      { name: 'barcodeText', label: '一维码', type: 'barcode', sample: '(01)06901234567892(10)PF2601(17)271031', emphasis: false, required: false },
     ],
   },
   udiCarton: {
