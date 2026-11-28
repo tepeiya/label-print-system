@@ -82,3 +82,24 @@ export const apiImportTemplate = (body: ImportTemplateBody): Promise<TemplateRec
 
 export const apiExportTemplate = (id: number): Promise<ExportedTemplate> =>
   http.get(`/templates/${id}/export`);
+
+export interface PrintFormField {
+  name: string;
+  label: string;
+  type: 'text' | 'number' | 'integer' | 'date';
+  required: boolean;
+  defaultValue?: string;
+  validation?: string;
+  regex?: string;
+}
+
+export interface TemplatePrintForm {
+  templateId: number;
+  templateName: string;
+  hasForm: boolean;
+  fields: PrintFormField[];
+}
+
+/** 打印时表单字段（模板 variables 里 atPrint=true 的变量）；由后端算，前端不自己推 */
+export const apiTemplatePrintForm = (id: number): Promise<TemplatePrintForm> =>
+  http.get(`/templates/${id}/print-form`);

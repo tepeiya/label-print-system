@@ -20,6 +20,10 @@ export class TemplateController {
   @Get() list(@Query() q: any) { return this.svc.list(q); }
   @RequirePermission('template:read')
   @Get(':id') get(@Param('id') id: number) { return this.svc.get(+id); }
+  /** 打印时表单字段（模板 variables 里 atPrint=true 的变量），打印页据此渲染输入框 */
+  @RequirePermission('template:read')
+  @Get(':id/print-form')
+  printForm(@Param('id') id: number) { return this.svc.printForm(+id); }
   @RequirePermission('template:write')
   @Roles(...TPL_WRITE)
   @Post() create(@Body() b: CreateTemplateDto) { return this.svc.create(b); }

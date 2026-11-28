@@ -7,6 +7,7 @@ import { useTenant, useTenantId } from '../common/tenant.context';
 import { AuditService } from '../audit/audit.module';
 import { renderThumbnail } from '../print/thumbnail-renderer';
 import { assertAclAccess } from '../common/acl-check';
+import { buildPrintFields } from '../print/print-form.calc';
 // P8.3：严格发布模式下，已发布/待审批模板必须先退回草稿才能改（发布锁定）
 import { GovernanceService } from '../governance/governance.service';
 
@@ -52,6 +53,13 @@ export class TemplateService {
     if (!t) throw new NotFoundException('模板不存在');
     assertAclAccess(t, false);
     return t;
+  }
+
+  /** 打印时表单定义：字段=模板里 atPrint 的变量；打印页与后端校验共用这份口径 */
+  async printForm(id: number) {
+    const t = await this.get(id);
+    const fields = buildPrintFields((t.content as any)?.variables ?? []);
+    return { templateId: t.id, templateName: t.name, hasForm: fields.length > 0, fields };
   }
 
   async create(dto: { name: string; category?: string; tags?: string[]; content: any; createdBy?: number; acl?: any }) {

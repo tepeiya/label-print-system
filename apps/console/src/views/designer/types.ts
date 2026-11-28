@@ -125,6 +125,11 @@ export interface VariableSpec {
   unique?: boolean;
   validation?: string;
   regex?: string;
+  /**
+   * 打印时录入：打印页会给操作员一个输入框（批号/有效期/序列号这种每次都要换的值）。
+   * 字段定义只有这一份——后端拿它做必填与格式校验，前端拿它渲染表单。
+   */
+  atPrint?: boolean;
 }
 
 /** 画布元素：字段按 type 取用，未使用的键不存在（与原生成器一致，别补默认值） */

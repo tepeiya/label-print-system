@@ -18,6 +18,7 @@ import { CreatePrintJobDto, PreviewRenderDto, PrintCommandsDto, RetryPrintDto } 
 import { buildJob as buildTsplJob } from '../../core/tspl-generator';
 import { buildJob as buildEplJob } from '../../core/epl-generator';
 import { uiSymbologyList } from '../../core/symbology.capabilities';
+import { applyFormToRows } from './print-form.calc';
 // P8.3：水印层（纯函数夹取 + 转义，指令通道不叠加）
 import { normalizePolicy, watermarkHtmlLayer } from '../governance/governance.calc';
 import { PrintEvents } from './events.event';
@@ -83,7 +84,7 @@ export class PrintPreviewController {
       : '';
     return renderPrintHtml({
       templateContent: body.templateContent,
-      rows: body.rows ?? [{}],
+      rows: applyFormToRows(body.rows, body.templateContent?.variables, body.formValues),
       copies: body.copies ?? 1,
       watermarkHtml,
     });
@@ -104,7 +105,7 @@ export class PrintCommandsController {
     const tpl = b.templateContent;
     // DTO 已挡掉缺 templateContent，这里兜底 page 结构；原来是 throw new Error → 500
     if (!tpl?.page) throw new BadRequestException('templateContent 缺少 page 结构');
-    const rows: any[] = b.rows?.length ? b.rows : [{}];
+    const rows: any[] = applyFormToRows(b.rows, b.templateContent?.variables, b.formValues);
     const copies = Math.max(1, Math.min(500, b.copies ?? 1));
     const dpi = b.dpi ?? tpl.page.dpi ?? 300;
     const protocol: 'zpl' | 'tspl' | 'epl' = b.protocol === 'tspl' ? 'tspl' : b.protocol === 'epl' ? 'epl' : 'zpl';

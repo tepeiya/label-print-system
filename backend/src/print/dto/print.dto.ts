@@ -34,6 +34,14 @@ export class CreatePrintJobDto {
   @IsOptional()
   @IsObject()
   serialMap?: Record<string, string[]>;
+
+  /**
+   * 打印时表单：模板 variables 里 atPrint=true 的字段，操作员在打印页当场填。
+   * 优先级最高（覆盖数据行同名值），必填缺失/格式不符由服务层直接 400。
+   */
+  @IsOptional()
+  @IsObject()
+  formValues?: Record<string, any>;
 }
 
 export class RetryPrintDto {
@@ -59,6 +67,11 @@ export class PreviewRenderDto {
   @IsOptional()
   @IsObject()
   watermark?: any;
+
+  /** 打印时表单值（模板 variables 的 atPrint 字段）；预览也要带上才所见即所得 */
+  @IsOptional()
+  @IsObject()
+  formValues?: Record<string, any>;
 }
 
 /** /print/commands 指令导出（ZPL / TSPL / EPL）——P7.7 新增 EPL 通道 */
@@ -73,6 +86,11 @@ export class PrintCommandsDto {
   @IsOptional()
   @IsNumber()
   copies?: number;
+
+  /** 打印时表单值；生成指令时并入每一行 */
+  @IsOptional()
+  @IsObject()
+  formValues?: Record<string, any>;
 
   // 协议白名单与 print.controller 的 CmdProtocol、core/barcode-caps.PrintProtocol 必须同步
   // （P7.8 有守卫测试；EPL 通道见 P7.7）

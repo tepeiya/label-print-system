@@ -17,9 +17,55 @@
 
     <el-form :model="form" label-width="110px" class="form">
       <el-form-item label="模板" required>
-        <el-select v-model="form.templateId" filterable placeholder="选择标签模板" style="width: 100%">
+        <el-select v-model="form.templateId" filterable placeholder="选择标签模板" style="width: 100%" @change="onTemplateChange">
           <el-option v-for="t in templates" :key="t.id" :label="t.name" :value="t.id" />
         </el-select>
+      </el-form-item>
+
+      <!-- 打印时表单：模板里标了「打印时录入」的变量，操作员在这里填，不用回设计器改模板 -->
+      <el-form-item v-if="printFields.length" label="打印时填写" required>
+        <div class="pf-box">
+          <div class="pf-head">
+            <span class="pf-title">{{ currentTemplateName }} · 本单必填项</span>
+            <el-button link type="primary" size="small" @click="fillFromLast">沿用上次</el-button>
+          </div>
+          <div class="pf-grid">
+            <div v-for="f in printFields" :key="f.name" class="pf-item">
+              <span class="pf-label">
+                {{ f.label }}
+                <i v-if="f.required" class="pf-star">*</i>
+                <span v-if="f.validation === 'regex' && f.regex" class="pf-rule" :title="f.regex">规则</span>
+              </span>
+              <el-date-picker
+                v-if="f.type === 'date'"
+                v-model="formValues[f.name]"
+                type="date"
+                value-format="YYYY-MM-DD"
+                placeholder="YYYY-MM-DD"
+                size="small"
+                style="width: 100%"
+              />
+              <el-input-number
+                v-else-if="f.type === 'number' || f.type === 'integer'"
+                :model-value="numOrUndef(f.name)"
+                :precision="f.type === 'integer' ? 0 : undefined"
+                :controls="false"
+                size="small"
+                style="width: 100%"
+                @update:model-value="(v: any) => setFormValue(f.name, v)"
+              />
+              <el-input
+                v-else
+                v-model="formValues[f.name]"
+                :placeholder="f.defaultValue ? `默认 ${f.defaultValue}` : `${f.label}`"
+                size="small"
+                clearable
+              />
+              <span v-if="formErrors[f.name]" class="pf-err">{{ formErrors[f.name] }}</span>
+            </div>
+          </div>
+          <span class="hint">这些值只作用于本次打印，会覆盖数据行里的同名变量；同一批标签共用这一份值。</span>
+        </div>
       </el-form-item>
 
       <el-form-item label="打印机" required>
@@ -102,7 +148,7 @@
 import { ref, reactive, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
-import { apiListTemplates, apiGetTemplate } from '@/api/templates';
+import { apiListTemplates, apiGetTemplate, apiTemplatePrintForm, type PrintFormField } from '@/api/templates';
 import {
   apiListPrinters, apiCreatePrintJob, apiListDataSources, apiDataSourceRows,
 } from '@/api';
@@ -129,6 +175,90 @@ const previewHtml = ref('');
 const rows = ref<Record<string, unknown>[]>([]);
 const headers = ref<string[]>([]);
 const stat = ref('未填数据时，按模板示例值打印 1 张');
+
+// ---- 打印时表单 ----
+const printFields = ref<PrintFormField[]>([]);
+const formValues = reactive<Record<string, any>>({});
+const formErrors = reactive<Record<string, string>>({});
+const currentTemplateName = ref('');
+const LAST_KEY = 'labelflow_print_form_last';
+
+function resetFormFields(fields: PrintFormField[]) {
+  printFields.value = fields;
+  for (const k of Object.keys(formValues)) delete formValues[k];
+  for (const k of Object.keys(formErrors)) delete formErrors[k];
+  for (const f of fields) formValues[f.name] = f.defaultValue ?? '';
+}
+
+async function onTemplateChange(id: number | undefined) {
+  printFields.value = [];
+  currentTemplateName.value = '';
+  if (!id) return;
+  currentTemplateName.value = templates.value.find((t) => t.id === id)?.name || '';
+  try {
+    const pf = await apiTemplatePrintForm(id);
+    resetFormFields(pf.fields || []);
+  } catch (e: any) {
+    // 老模板可能没有 variables 字段；拿不到表单就当"无需填写"，但要说一声别让人以为漏了
+    printFields.value = [];
+    if (e?.message) ElMessage.warning(`读取打印表单失败：${e.message}`);
+  }
+}
+
+/** 沿用上次输入：车间同一批号连续打多单时省事 */
+function fillFromLast() {
+  try {
+    const last = JSON.parse(localStorage.getItem(LAST_KEY) || '{}');
+    for (const f of printFields.value) if (last[f.name]) formValues[f.name] = last[f.name];
+    ElMessage.success('已填入上次的值');
+  } catch { ElMessage.warning('没有可沿用的历史值'); }
+}
+
+/** 数字框要 number|null；用户清空要能还原成空字符串，否则后端拿不到"没填"的事实 */
+function numOrUndef(name: string): number | undefined {
+  const v = formValues[name];
+  if (v === '' || v == null) return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function setFormValue(name: string, v: any) {
+  formValues[name] = v == null ? '' : v;
+  if (formErrors[name]) delete formErrors[name];
+}
+
+function rememberForm() {
+  try {
+    const keep: Record<string, any> = {};
+    for (const f of printFields.value) if (formValues[f.name] !== '' && formValues[f.name] != null) keep[f.name] = formValues[f.name];
+    localStorage.setItem(LAST_KEY, JSON.stringify(keep));
+  } catch { /* localStorage 不可用不影响打印 */ }
+}
+
+/** 前端预检（与后端 print-form.calc 同规则，减少一次往返；最终以后端为准） */
+function checkForm(): boolean {
+  for (const k of Object.keys(formErrors)) delete formErrors[k];
+  let ok = true;
+  for (const f of printFields.value) {
+    const text = formValues[f.name] == null ? '' : String(formValues[f.name]).trim();
+    if (f.required && !text) { formErrors[f.name] = '必填'; ok = false; continue; }
+    if (!text) continue;
+    if (f.type === 'integer' && !/^-?\d+$/.test(text)) { formErrors[f.name] = '要填整数'; ok = false; }
+    else if (f.type === 'number' && !/^-?\d+(.\d+)?$/.test(text)) { formErrors[f.name] = '要填数字'; ok = false; }
+    else if (f.validation === 'regex' && f.regex) {
+      try { if (!new RegExp(f.regex).test(text)) { formErrors[f.name] = `不符合 ${f.regex}`; ok = false; } }
+      catch { /* 正则写坏由后端统一报 */ }
+    }
+  }
+  return ok;
+}
+
+/** 表单值并入数据行（预览/提交同一口径：表单优先，空值不覆盖） */
+function rowsWithForm(values: Record<string, any>[]): Record<string, any>[] {
+  const filled = Object.entries(formValues).filter(([, v]) => v !== '' && v != null);
+  if (!filled.length) return values;
+  return values.map((r) => ({ ...(r ?? {}), ...Object.fromEntries(filled) }));
+}
 
 const rowsCount = computed(() => (rows.value.length ? rows.value.length : 1));
 const labelCount = computed(() => rowsCount.value * form.copies);
@@ -191,16 +321,27 @@ function useSample() {
 
 async function submit() {
   if (!form.templateId || !form.printerId) { ElMessage.warning('请先选择模板和打印机'); return; }
+  if (printFields.value.length && !checkForm()) {
+    ElMessage.error('打印时填写的数据没填对，已标红的字段改一下再提交');
+    return;
+  }
   const payload: any = {
     templateId: form.templateId,
     printerId: form.printerId,
     copies: form.copies,
   };
-  if (rows.value.length) payload.rows = rows.value;
+  const hasForm = printFields.value.length > 0;
+  if (hasForm) {
+    // 表单值交给后端：它按模板 variables 再做一次必填/格式校验（前端预检不是唯一防线）
+    payload.formValues = Object.fromEntries(Object.entries(formValues).filter(([, v]) => v !== '' && v != null));
+    // rows 先并入表单值，让治理防重/数量检查看到的是最终值
+    payload.rows = rowsWithForm(rows.value.length ? rows.value : [{}]);
+  } else if (rows.value.length) payload.rows = rows.value;
   submitting.value = true;
   try {
     const r: any = await apiCreatePrintJob(payload);
     result.value = r;
+    if (printFields.value.length) rememberForm();
     ElMessage.success('打印任务已提交');
   } finally { submitting.value = false; }
 }
@@ -218,7 +359,7 @@ async function preview() {
   if (!form.templateId) { ElMessage.warning('请先选择模板'); return; }
   try {
     const tpl = await apiGetTemplate(form.templateId);
-    const data = rows.value.length ? rows.value : [sampleRowOf(tpl.content)];
+    const data = rowsWithForm(rows.value.length ? rows.value : [sampleRowOf(tpl.content)]);
     previewHtml.value = buildPrintHtml(tpl.content, data, {
       copies: form.copies,
       title: tpl.name || 'LabelFlow 打印',
@@ -246,4 +387,13 @@ onMounted(() => { load(); loadSources(); });
 .prev th, .prev td { border-top: 1px solid #ebeef5; padding: 4px 8px; text-align: left; }
 .prev th { background: #fafafa; }
 .pp-frame { width: 100%; height: 70vh; border: 0; background: #fff; }
+.pf-box { width: 100%; border: 1px solid #ebeef5; border-radius: 8px; padding: 10px 12px; background: #fafcff; }
+.pf-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.pf-title { font-size: 13px; font-weight: 600; color: #303133; }
+.pf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 14px; }
+.pf-item { display: flex; flex-direction: column; gap: 4px; }
+.pf-label { font-size: 12px; color: #606266; }
+.pf-star { color: #d9534f; font-style: normal; margin-left: 2px; }
+.pf-rule { font-size: 11px; color: #909399; margin-left: 6px; cursor: help; border-bottom: 1px dashed #c0c4cc; }
+.pf-err { font-size: 11px; color: #d9534f; }
 </style>

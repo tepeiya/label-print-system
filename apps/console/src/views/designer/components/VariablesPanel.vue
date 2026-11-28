@@ -37,7 +37,14 @@
       <div class="var-row">
         <FCheck text="必填" :model-value="!!v.required" @update:model-value="patch(v, { required: $event })" />
         <FCheck text="唯一码" :model-value="!!v.unique" @update:model-value="patch(v, { unique: $event })" />
+        <FCheck
+          text="打印时录入"
+          :model-value="!!v.atPrint"
+          @update:model-value="patch(v, { atPrint: $event })"
+        />
       </div>
+      <span v-if="v.atPrint && v.expr" class="f-hint f-hint-warn">⚠ 这个变量有计算公式，值由公式算出，「打印时录入」不会生效</span>
+      <span v-else-if="v.atPrint" class="f-hint">打印页会给操作员一个输入框；如批号、有效期、序列号这种每次要换的值</span>
       <span class="f-hint">{{ ph(v.name) }}</span>
     </div>
 

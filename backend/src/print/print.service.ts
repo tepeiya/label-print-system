@@ -1,5 +1,5 @@
 // 打印服务：编排模板+数据+流水号，入 BullMQ 队列（异步、不阻塞）
-import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Repository } from 'typeorm';
@@ -11,6 +11,7 @@ import { SerialModuleService } from '../serial/serial.service';
 import { AuditService } from '../audit/audit.module';
 import { UsageService } from '../billing/usage.service';
 import { QuotaExceededException } from '../common/business.errors';
+import { buildPrintFields, describePrintFormErrors, mergeFormValues, validateFormValues, validateRows } from './print-form.calc';
 // P8.3：治理前置校验（默认宽松，存量租户零行为变化）
 import { GovernanceService } from '../governance/governance.service';
 
@@ -117,6 +118,7 @@ export class PrintService {
   async createJob(dto: {
     templateId?: number; printerId?: number; rows?: any[]; copies?: number; params?: any;
     templateContent?: any; serialMap?: Record<string, string[]>; requirePrinter?: boolean;
+    formValues?: Record<string, any>;
   }) {
     const tenantId = useTenantId();
     const tpl = dto.templateContent
@@ -124,7 +126,37 @@ export class PrintService {
       : await this.tpls.findOne({ where: { id: dto.templateId, tenantId } });
     if (!tpl) throw new NotFoundException('模板不存在');
 
-    const rows: any[] = Array.isArray(dto.rows) && dto.rows.length ? dto.rows : [{}];
+    // 打印时表单：字段来自模板 variables 的 atPrint 标记。必填缺失/格式不符在这里就拦，
+    // 不能等渲染出来打成空标签——那一张纸已经废了。
+    const formFields = buildPrintFields((tpl.content as any)?.variables ?? []);
+    const formValues = dto.formValues && typeof dto.formValues === 'object' ? dto.formValues : undefined;
+    // 先校验操作员当场填的值（填了但格式不对当场报），再看"最终每一行"是否齐全：
+    // 打印页/ pack-print / WMS 自动打印三个入口共用同一份字段定义，谁都不许打出空变量的标签。
+    if (formValues) {
+      const v = validateFormValues(formFields, formValues);
+      if (!v.ok) {
+        throw new BadRequestException({
+          message: `打印时填写的数据不合规：${describePrintFormErrors(v.errors)}`,
+          fields: v.errors,
+        });
+      }
+    }
+
+    const baseRows: any[] = Array.isArray(dto.rows) && dto.rows.length ? dto.rows : [{}];
+    // 表单值优先并入每一行（同一批标签共用同一批表单值）
+    const rows: any[] = (formFields.length || formValues)
+      ? baseRows.map((r) => mergeFormValues(r ?? {}, formValues, formFields))
+      : baseRows;
+
+    if (formFields.length) {
+      const vr = validateRows(formFields, rows);
+      if (!vr.ok) {
+        throw new BadRequestException({
+          message: `标签必填字段缺失或不合法：${describePrintFormErrors(vr.errors)}`,
+          fields: vr.errors,
+        });
+      }
+    }
     const copies = Math.max(1, Math.min(500, dto.copies ?? 1));
     const count = rows.length * copies;
 
