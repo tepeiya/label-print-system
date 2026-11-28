@@ -233,6 +233,7 @@ export function buildLabelLayout(opts: LayoutOptions): LayoutResult {
       label: titleField.label || titleField.name,
       defaultValue: titleField.sample ?? '',
       required: !!titleField.required,
+      atPrint: !!titleField.required,
     });
   }
   for (const f of fieldsToPlace) {
@@ -242,10 +243,12 @@ export function buildLabelLayout(opts: LayoutOptions): LayoutResult {
       label: f.label || f.name,
       defaultValue: f.sample ?? '',
       required: !!f.required,
+      // 「打印必填」= 每次打印都要录（atPrint），P0-2 打印时表单按此出字段
+      atPrint: !!f.required,
     });
   }
-  if (barField) variables.push({ name: barField.name, type: 'text', label: barField.label || '条码', defaultValue: barField.sample ?? '', required: !!barField.required });
-  if (qrField) variables.push({ name: qrField.name, type: 'text', label: qrField.label || '二维码', defaultValue: qrField.sample ?? '', required: !!qrField.required });
+  if (barField) variables.push({ name: barField.name, type: 'text', label: barField.label || '条码', defaultValue: barField.sample ?? '', required: !!barField.required, atPrint: !!barField.required });
+  if (qrField) variables.push({ name: qrField.name, type: 'text', label: qrField.label || '二维码', defaultValue: qrField.sample ?? '', required: !!qrField.required, atPrint: !!qrField.required });
 
   // ---- 外框 ----
   if (opts.border !== false) {
