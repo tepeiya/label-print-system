@@ -4,6 +4,7 @@
 import { safeEval } from '../../core/formula-engine';
 import { resolveComputedVars, type ComputedVariable } from '../../core/computed-vars';
 import { runsToPlainText } from '../../core/rich-text';
+import { stripEmptyGs1Ais } from '../../core/gs1-ai';
 
 /** 第四层：指令通道的文本降级——富文本取 runs 拼接，DB 字段取 rendered，其余取原逻辑 */
 function commandTextOf(e: any): string {
@@ -105,6 +106,28 @@ export class RenderService {
         (e as any)._boundTo = bindId;
         if (e.type === 'richtext' && Array.isArray((e as any).runs) && (e as any).runs.length) {
           (e as any).runs = [{ ...(e as any).runs[0], text: v }];
+        }
+      }
+    }
+    // 第三遍：剔除「值为空」的 GS1 AI 段（如没填序列号时的孤立 (21)）。
+    // 不这么做，bwip 会抛 GS1valueTooShort 把整单打废，故障点还落在打印环节而不是录入环节。
+    for (const e of out) {
+      const bc = e?.barcode;
+      if (e?.type === 'barcode' && bc?.gs1 && typeof bc.content === 'string') {
+        e.barcode = { ...bc, content: stripEmptyGs1Ais(bc.content) };
+        continue;
+      }
+      const q = e?.qrcode;
+      if (e?.type === 'qrcode' && q?.gs1 && typeof q.content === 'string') {
+        e.qrcode = { ...q, content: stripEmptyGs1Ais(q.content) };
+        continue;
+      }
+      if (e?.type === 'text' || e?.type === 'richtext') {
+        const t = String(e.text ?? '');
+        // 仅处理 HRI 形态的文本（至少两段 (AI)），避免误伤普通标签文字
+        if (((t.match(/\(\d{2,4}\)/g) || []).length) >= 2) {
+          e.text = stripEmptyGs1Ais(t);
+          if (Array.isArray(e.runs)) e.runs = e.runs.map((r: any) => ({ ...r, text: stripEmptyGs1Ais(String(r?.text ?? '')) }));
         }
       }
     }

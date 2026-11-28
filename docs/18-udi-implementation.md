@@ -31,6 +31,7 @@
 | POST | `/udi/scan-verify` | PDA 复核：`{ code, expect:{gtin,expiry,lot,serial}, strict? }` |
 | POST | `/udi/batch` | 批量构造（≤5000 行，逐行返回） |
 | POST | `/udi/pack-print` | **主从层级打印**：一箱 N 件，出 N 张单件标 + 1 张箱标，编号与装箱关系同事务写入台账 |
+| GET | `/templates/:id/print-form` | **打印时表单**：模板里 `atPrint=true` 的变量→表单字段定义（label/必填/类型/校验） |
 | GET | `/udi/pack-print/meta` | 表单元信息：上限件数、公司前缀、单件模板 `unitTemplates` / 箱级模板 `cartonTemplates` / 全部模板 |
 
 示例：
@@ -127,3 +128,35 @@ curl -X POST http://localhost:3200/api/v1/udi/encode -H 'Authorization: Bearer <
 单测：`src/udi/__tests__/udi.batchprint.calc.test.ts` 16 例（起号/补零/溢出/清单查重/箱标行/SSCC 流水与校验位/上限）。
 
 **仍未验收**：真打印机出纸（本机 printers 为空，需现场配机）；箱标模板 `UDI_CARTON_V1` 的 HRI 仍缺 `(00)` 明文与单件 HRI 缺 `(11)` 生产日期（模板内容问题，不影响扫码解析）。
+
+### 4.4 打印时表单（2026-11-28 新增，P0-2）
+
+问题：UDI 单件标的批号、有效期、序列号是**每次打印才确定**的，过去只能在打印页的「数据行」里手填 JSON/表格，车间操作员用不了。
+
+定稿口径：**字段定义只有一份**——模板 `content.variables` 里标了 `atPrint: true` 的变量就是「打印时录入」字段，复用既有的 `required / label / validation / regex / defaultValue`。后端算字段、后端做校验、前端照后端结果渲染表单，避免前后端两套口径漂移。
+
+| 环节 | 行为 |
+|---|---|
+| 取字段 | `GET /templates/:id/print-form` → `{templateId, templateName, hasForm, fields:[{name,label,type,required,defaultValue?,validation?,regex?,maxLength?}]}`；`expr` 计算变量不取 |
+| 校验 | `POST /print/jobs` 带 `formValues`：先校验当场填的值（必填/数字/整数/日期/长度/正则），再并入每行，最后逐行兜底校验；不通过 400，`fields[]` 点名哪个字段、第几行 |
+| 合并 | 表单值优先并入行，空值不覆盖行里已有值，`defaultValue` 兜底；`POST /print/preview`、`POST /print/commands` 同样并入（预览所见即所得） |
+| 放行 | pack-print / WMS 自动打印由数据行给值，不会被打印表单挡住（校验口径一致） |
+| 模板正则 | 模板里的正则写坏时报「模板里的正则无效，请回设计器改」，不让操作员看到正则源码 |
+
+前端：设计器「变量」面板每个变量有「打印时录入」勾选（`expr` 变量给"不生效"提示）；打印页按 type 渲染 date-picker / input-number / input，必填红星、正则「规则」角标、字段级错误、`沿用上次` / `记住本次填写`（localStorage）。
+
+内置 UDI 模板已标 atPrint 并补中文 label：单件 `有效期 (YYMMDD) / 批号 / 序列号（留空=不带 21）`，箱标 `有效期 / 批号 / SSCC 箱码`。
+
+**真机验证（2026-11-28，Windows 本机 API + PG，image 通道）**：`GET /templates/8/print-form` 返回三字段（`expiry` 正则 `^\d{6}$`、`lot` 最长 20、`serial` 选填）；必填齐 + 序列号留空 → 任务 `success done=1`；三字段全填 → `success`；完全不填 → 400 `标签必填字段缺失或不合法：有效期 (YYMMDD)（expiry）：必填，整批都没有值；批号（lot）…`；`expiry='2027-10-31'` → 400 点名格式不合规；预览接口返回的渲染结果里能查到填入的 `271031 / PF2601 / SN9002`。
+
+单测：`src/print/__tests__/print-form.calc.test.ts` 14 例（字段提取/对象式与字符串式 validation/必填/数字/日期/长度/正则/逐行兜底/合并优先级/错误文案）。
+
+### 4.5 空值 AI 段剔除（2026-11-28 修复，真机暴露）
+
+模板里把 `(21){{serial}}` 写死时，操作员不填序列号 → 下发内容成了 `…(21)`，bwip 抛 `GS1valueTooShort` 让**整单打印失败**，故障点还落在打印环节而不是录入环节。
+
+修法：渲染第三遍对 GS1 码内容与 HRI 文本剔除「后面没有值」的 AI 段（`core/gs1-ai.ts` 的 `stripEmptyGs1Ais`），码与 HRI 同步改，保证"码里有什么、人眼读什么"。只处理 HRI 形态（至少两段 `(AI)`）的文本，避免误伤普通标签文字；纯数据流原样返回。
+
+真机验证：单件模板 8 序列号留空 → 任务 `success done=1`（修复前 `failed`，日志 `[DATAMATRIX] 编码失败：bwipp.GS1valueTooShort#3842: AI 01: Too short` 后续空 AI 段）。
+
+单测：`core/__tests__/gs1-ai.test.ts` 2 例 + `core/__tests__/render.test.ts` 1 例（条码与 HRI 同步剔除、填了值则保留）。全量 `print / udi / template / gs1-ai / render` 327 例通过。

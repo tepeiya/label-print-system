@@ -34,3 +34,17 @@ test('渲染-流水号按行切片', () => {
     assert.equal(out[0].rendered, serials.s1[i]);
   });
 });
+
+test('渲染-GS1 空值 AI 段剔除（条码与 HRI 同步）', () => {
+  const svc = new RenderService();
+  const els: any[] = [
+    { id: 'dm', type: 'qrcode', qrcode: { gs1: true, sym: 'DATAMATRIX', content: '(01){{gtin}}(17){{expiry}}(10){{lot}}(21){{serial}}' } },
+    { id: 'hri', type: 'text', text: '(01){{gtin}}\n(17){{expiry}}\n(10){{lot}}\n(21){{serial}}' },
+  ];
+  const out = svc.renderRow(els, { gtin: '06901234567892', expiry: '271031', lot: 'PF2601', serial: '' }, {}, {});
+  assert.equal(out[0].qrcode.content, '(01)06901234567892(17)271031(10)PF2601');
+  assert.equal(out[1].text, '(01)06901234567892\n(17)271031\n(10)PF2601');
+  // 填了序列号则保留 (21)
+  const out2 = svc.renderRow(els, { gtin: '06901234567892', expiry: '271031', lot: 'PF2601', serial: 'SN9001' }, {}, {});
+  assert.match(out2[0].qrcode.content, /\(21\)SN9001$/);
+});

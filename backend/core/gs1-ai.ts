@@ -329,3 +329,18 @@ export function gs1FieldHelp(ai: string): { found: boolean; ai: string; hint: st
     example: def.example,
   };
 }
+
+/**
+ * 剔除「值为空」的 AI 段：`(21)` 这类后面没有任何值的段整段去掉。
+ * 产品背景：模板里常把 `(21){{serial}}` 写死，操作员没填序列号时若原样下发，
+ * bwip 抛 GS1valueTooShort 导致整单打印失败；剔除后码合法，HRI 也与码保持一致。
+ * 只在 HRI 形式（含括号）下处理；已经是编码数据流的串原样返回。
+ */
+export function stripEmptyGs1Ais(text: string): string {
+  const s = String(text ?? '');
+  if (!s.includes('(')) return s;
+  return s
+    .replace(/\(\d{2,4}\)(?=\s*(?:\r?\n|$))/gm, '')
+    .replace(/[ \t]+$/gm, '')
+    .replace(/\s+$/, '');
+}

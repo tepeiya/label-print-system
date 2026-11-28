@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  GS1_AI, lookupAi, gs1Catalog, gs1FieldHelp, validateAiValue, validateGs1,
+  GS1_AI, lookupAi, gs1Catalog, gs1FieldHelp, validateAiValue, validateGs1, stripEmptyGs1Ais,
 } from '../gs1-ai';
 import { encodeGs1 } from '../symbology.capabilities';
 
@@ -192,4 +192,25 @@ test('L3 全量长尾 AI 参与字符/长度校验', () => {
   assert.equal(validateAiValue('3624', '123456').errors.length, 0);
   assert.match(validateAiValue('3624', '123').errors.join(' '), /应为 6 位/);
   assert.match(validateAiValue('3624', '12AB56').errors.join(' '), /仅允许数字/);
+});
+
+// ------------------------------ 空值 AI 段剔除 ------------------------------
+test('stripEmptyGs1Ais：没填序列号时去掉孤立 (21)', () => {
+  assert.equal(
+    stripEmptyGs1Ais('(01)06901234567892(17)271031(10)PF2601(21)'),
+    '(01)06901234567892(17)271031(10)PF2601',
+  );
+  // 多行 HRI（换行分隔）同样处理
+  assert.equal(
+    stripEmptyGs1Ais('(01)06901234567892\n(17)271031\n(10)PF2601\n(21)'),
+    '(01)06901234567892\n(17)271031\n(10)PF2601',
+  );
+});
+
+test('stripEmptyGs1Ais：值齐全/纯数据流时不动', () => {
+  const full = '(01)06901234567892(17)271031(10)PF2601(21)SN9001';
+  assert.equal(stripEmptyGs1Ais(full), full);
+  const sscc = '(00)069012340000000016';
+  assert.equal(stripEmptyGs1Ais(sscc), sscc);
+  assert.equal(stripEmptyGs1Ais('010690123456789221SN9'), '010690123456789221SN9');
 });
